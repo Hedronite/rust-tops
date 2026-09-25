@@ -1,12 +1,10 @@
 # Rust-TOPS drop-in. Place at .cargo-crap.toml
+# Schema is cargo-crap's Config: threshold, exclude, fail-above, …
+# `fail = true` is not a field (harvest). Pass --lcov on the CLI.
 threshold = 6.0
-fail = true
 exclude = [
   "src/generated/**",
   "tests/**",
   "benches/**",
   "examples/**",
 ]
-
-[coverage]
-lcov = "target/coverage/lcov.info"
