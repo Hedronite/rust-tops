@@ -35,7 +35,7 @@ Rust-TOPS (Rust Testing and Optimization Protocol Suite) is a protocol: a writte
 
 It is for Rust library and binary authors, and for the people who own their CI, who want one gate order: lint, tests, coverage, CRAP, mutation on the diff, then the extra layers the crate class names.
 
-The Bend2 laws pack under [`laws/`](laws/) is provisional and non-normative. Protocol 1.0.0 and its schema stay Bend-free. Package 0.1.3 ships the pack as an overlay.
+The Bend2 laws pack under [`laws/`](laws/) is provisional and non-normative. Protocol and its schema stay Bend-free. Package 0.1.3 ships the pack as an overlay.
 
 ## Pins
 
