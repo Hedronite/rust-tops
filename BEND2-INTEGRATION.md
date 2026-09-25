@@ -96,7 +96,7 @@ rust-tops PROTOCOL ──encode──► LAWS.bend ──steer──► agent ed
         └────────────── apply (gates) ◄────────────────┘
 ```
 
-A `LAWS.bend` pack **ships in v0.1.2** as a **provisional kit overlay**, not protocol 1.0.
+A `LAWS.bend` pack **ships in v0.1.3** as a **provisional kit overlay**, not protocol 1.0.
 Schema stays Bend-free. Hard rows encode as `Refuse`; soft rows as `Ack`.
 
 | Path | What |

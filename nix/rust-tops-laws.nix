@@ -5,7 +5,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "rust-tops-laws";
-  version = "0.1.2";
+  version = "0.1.3";
 
   src = ../laws;
 
