@@ -7,8 +7,18 @@ rust-version.workspace = true
 repository.workspace = true
 description = "init / check / gate for the Rust-TOPS protocol. Orchestrates existing Cargo tools; does not replace them."
 readme = "../../README.md"
+homepage = "https://github.com/Hedronite/rust-tops"
+documentation = "https://docs.rs/cargo-tops"
 keywords = ["testing", "protocol", "ci"]
 categories = ["command-line-utilities", "development-tools"]
+include = [
+    "src/**",
+    "templates/**",
+    "Cargo.toml",
+    "LICENSE",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
 publish = true
 
 [[bin]]

@@ -1,0 +1,134 @@
+# rust-tops reference workflow (v0.1.0 harvest) — FLOOR, not ceiling.
+# Copy to .github/workflows/rust-tops.yml; edit {TOKENS}; add instance
+# sysdeps / feature-matrix cells / class overlays. Never remove a job
+# your class requires to look greener on a headerless runner.
+#
+# Harvested applying this protocol to a parser-codec + binary-cli workspace
+# with optional FFI:
+#   1. A feature that links FFI is a *build* requirement. --all-features
+#      counts. ubuntu-latest ships no C-ABI headers. Install sysdeps in
+#      every job that enables the feature (law.sysdeps_before_all_features).
+#   2. Declared MSRV must equal the locked graph's max rustc, including
+#      target-gated deps (Darwin 1.88 != Linux 1.89 is not a vote).
+#   3. -D warnings belongs on the clippy command, not job-level RUSTFLAGS.
+#   4. Record-only still fails when the artifact is empty. test -s is its
+#      own shell block, never an indented orphan.
+#   5. Job ids are load-bearing if branch protection pins them. Rename is
+#      a product change. Extra matrix keys rename GitHub checks.
+#   6. Drop-in is a floor. Instance matrices may add Darwin / mutants /
+#      fuzz / composite sysdeps actions; they may not drop sysdeps or MSRV.
+#   7. Do not put --fail-under-lines in this floor. Coverage floors live
+#      in rust-tops.yaml by class. Record the LCOV; assert it is nonempty.
+name: rust-tops
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Do NOT set RUSTFLAGS=-D warnings here.
+
+jobs:
+  fmt-clippy-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - uses: taiki-e/install-action@cargo-deny
+      - run: cargo deny check
+
+  nextest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS}
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace --all-features --profile ci
+      - run: cargo test --doc --workspace --all-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@{MSRV}
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS}
+      - run: cargo check --workspace --all-features --locked
+
+  feature-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: "{PRIMARY_PKG}"
+            features: --no-default-features
+          # {FEATURE_CELLS: every shipped feature on its real OS.
+          #  Gate sysdeps with contains(matrix.features, 'name') so extra
+          #  matrix keys do not rename required checks.}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
+      - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
+
+  coverage-crap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS}
+      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@cargo-crap
+      - run: |
+          mkdir -p target/coverage
+          cargo llvm-cov nextest --workspace --all-features \
+            --lcov --output-path target/coverage/lcov.info
+          test -s target/coverage/lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: target/coverage/lcov.info
+          if-no-files-found: error
+      - run: |
+          cargo crap --lcov target/coverage/lcov.info --format json --output target/crap.json
+          test -s target/crap.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crap
+          path: target/crap.json
+          if-no-files-found: error
+
+  # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
+  # features usually need no FFI sysdeps. Do not mark required until one
+  # GHA run has a measured wall time.
+  #
+  # darwin-check: every cfg(target_os) needs a lane. brew/cask the headers
+  # the non-Linux build.rs probes. Cadence if the cask is unstable; file
+  # the gap, do not drop the cfg.
+  #
+  # fuzz-smoke: parser-codec overlay, scheduled/manual, not a PR gate
+  # while a known crash is open. Crash = fail; timeout = infra.

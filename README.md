@@ -10,7 +10,7 @@ policy suite — not a product crate's CI history.
 | Plane | Number | Lives in |
 | --- | --- | --- |
 | Protocol | **1.0.0** | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/`](schema/) |
-| Package / git tag | **0.1.0** | Cargo workspace, tag `v0.1.0` |
+| Package / git tag | **0.1.1** | Cargo workspace, tag `v0.1.1`, crates.io `cargo-tops` |
 
 ## Files
 
@@ -42,7 +42,12 @@ cp config/drop-in/deny.toml             ./deny.toml
 cp config/drop-in/rust-tops.yml         ./.github/workflows/rust-tops.yml
 ```
 
-Or: `cargo install --path crates/cargo-tops && cargo tops init --class parser-codec`.
+Or:
+
+```bash
+cargo install cargo-tops
+cargo tops init --class parser-codec
+```
 
 Then edit `{TOKENS}` in the workflow (sysdeps, MSRV, primary package, feature
 cells). Edit `crate.class`, `hot_paths`, coverage floors, and `exemptions` in

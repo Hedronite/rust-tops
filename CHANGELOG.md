@@ -7,11 +7,19 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.0.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | `v0.1.0`, Cargo `0.1.0` |
+| Package | `cargo-tops` and git tag | `v0.1.1`, Cargo `0.1.1` |
 
-Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.0`.
+Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.1`.
 
 ## [Unreleased]
+
+## [0.1.1] — 2026-09-25
+
+Compatible 0.x patch. `cargo-tops` is now a crates.io crate (`cargo install cargo-tops`). Drop-in kit is vendored under `crates/cargo-tops/templates/` so `cargo package` is self-contained. CLI verbs `init` / `check` / `gate` unchanged. Protocol plane stays 1.0.0.
+
+### Fixed
+
+- `include_str!` paths pointed at workspace files outside the crate, so `cargo publish` could not verify the tarball.
 
 ## [0.1.0] — 2026-09-25
 
@@ -28,5 +36,6 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
-[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Hedronite/rust-tops/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Hedronite/rust-tops/releases/tag/v0.1.0

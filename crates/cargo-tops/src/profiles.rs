@@ -1,12 +1,12 @@
-pub const AGENTS_MD: &str = include_str!("../../../AGENTS.md");
-pub const CLIPPY_TOML: &str = include_str!("../../../config/drop-in/clippy.toml");
-pub const NEXTEST_TOML: &str = include_str!("../../../config/drop-in/nextest.toml");
-pub const MUTANTS_TOML: &str = include_str!("../../../config/drop-in/mutants.toml");
-pub const CARGO_CRAP_TOML: &str = include_str!("../../../config/drop-in/cargo-crap.toml");
-pub const DENY_TOML: &str = include_str!("../../../config/drop-in/deny.toml");
-pub const WORKFLOW_YML: &str = include_str!("../../../config/drop-in/rust-tops.yml");
+pub const AGENTS_MD: &str = include_str!("../templates/AGENTS.md");
+pub const CLIPPY_TOML: &str = include_str!("../templates/drop-in/clippy.toml");
+pub const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest.toml");
+pub const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml");
+pub const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
+pub const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
+pub const WORKFLOW_YML: &str = include_str!("../templates/drop-in/rust-tops.yml");
 
-const PROFILE_LIBRARY_CORE: &str = include_str!("../../../config/rust-tops.example.yaml");
+const PROFILE_LIBRARY_CORE: &str = include_str!("../templates/rust-tops.example.yaml");
 
 pub fn profile_yaml(class: &str, crate_name: &str) -> String {
     let mut yaml = PROFILE_LIBRARY_CORE.to_string();
