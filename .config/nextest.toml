@@ -17,5 +17,7 @@ path = "junit.xml"
 [test-groups]
 exclusive-fs = { max-threads = 1 }
 
-[profile.ci.overrides]
-# 'filter = "test(exclusive_fs)"'  group = "exclusive-fs"
+# overrides must be an array (nextest rejects an empty table).
+# [[profile.ci.overrides]]
+# filter = 'test(exclusive_fs)'
+# group = "exclusive-fs"
