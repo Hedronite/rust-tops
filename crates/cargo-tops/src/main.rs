@@ -192,6 +192,7 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
         profiles::WORKFLOW_YML,
         force,
     )?;
+    write_file(dir.join("LAWS.bend"), profiles::LAWS_BEND, force)?;
 
     println!(
         "initialized rust-tops for {crate_name} ({}) in {}",

@@ -96,6 +96,14 @@ rust-tops PROTOCOL ──encode──► LAWS.bend ──steer──► agent ed
         └────────────── apply (gates) ◄────────────────┘
 ```
 
-A `LAWS.bend` pack is **not** shipped in v0.1.0. This table is the harvest
-so a later pack has named intents. Schema stays Bend-free until those laws
-stabilize.
+A `LAWS.bend` pack **ships in v0.1.2** as a **provisional kit overlay**, not protocol 1.0.
+Schema stays Bend-free. Hard rows encode as `Refuse`; soft rows as `Ack`.
+
+| Path | What |
+| --- | --- |
+| [`laws/LAWS.bend`](laws/LAWS.bend) | 53 laws + proofs |
+| [`laws/PROOF.bend`](laws/PROOF.bend) | names every law |
+| [`flake.nix`](flake.nix) | Nix overlay (`rust-tops-laws`, `cargo-tops`) |
+| `./scripts/bend-gate.sh` | names + `bend PROOF.bend` when bend is on PATH |
+
+Promote a row into `RUST_TOPS.md` only with an explicit spec bump.

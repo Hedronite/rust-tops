@@ -5,6 +5,7 @@ pub const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml")
 pub const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
 pub const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
 pub const WORKFLOW_YML: &str = include_str!("../templates/drop-in/rust-tops.yml");
+pub const LAWS_BEND: &str = include_str!("../templates/LAWS.bend");
 
 const PROFILE_LIBRARY_CORE: &str = include_str!("../templates/rust-tops.example.yaml");
 

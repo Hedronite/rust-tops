@@ -74,8 +74,9 @@ A density extract must have a **domain name**.
 | Darwin / other `cfg(target_os)` | every cfg needs a lane; file the gap, do not drop the cfg |
 | fuzz-smoke | parser-codec; scheduled/manual until a known crash is closed. Crash = fail; timeout = infra |
 | Callgrind / Criterion | no runner → not a gate |
+| Bend2 pack (`LAWS.bend`) | kit overlay via flake / `cargo tops init`; not a merge floor; not protocol 1.0 |
 
 ## Agent standing orders
 
 See [`AGENTS.md`](AGENTS.md). Coding agents fail closed on the gates above.
-Bend2 encode of these policies: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) (candidates, not protocol 1.0).
+Bend2 encode of these policies: [`laws/LAWS.bend`](laws/LAWS.bend) (provisional pack, not protocol 1.0). Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md).

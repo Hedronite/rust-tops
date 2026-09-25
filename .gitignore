@@ -6,3 +6,6 @@
 junit.xml
 target/coverage/
 target/crap.json
+result
+result-*
+.direnv
