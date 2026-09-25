@@ -22,7 +22,7 @@ Spec, schema, class gates, and a thin orchestrator for the Cargo tools you alrea
 
 <p align="center">
   Built by <a href="https://github.com/Hedronite">Hedronite</a>.<br/>
-  CRAP scores use the Savoia &amp; Evans (2007) formula, which predates this kit.
+  CRAP scores use the 2007 Change Risk Anti-Patterns formula. This kit did not originate that metric.
 </p>
 
 ---
@@ -192,4 +192,4 @@ Package history is [`CHANGELOG.md`](CHANGELOG.md).
 
 Built by Hedronite. Licensed under MIT OR Apache-2.0, at your option. See [`LICENSE`](LICENSE), [`LICENSE-MIT`](LICENSE-MIT), and [`LICENSE-APACHE`](LICENSE-APACHE).
 
-The CRAP formula is Savoia & Evans, Change Risk Anti-Patterns (2007). Names such as `cargo-llvm-cov`, `cargo-mutants`, `cargo-crap`, nextest, and `cargo-deny` refer to those tools.
+The CRAP formula is Change Risk Anti-Patterns (2007), cited in [`RUST_TOPS.md`](RUST_TOPS.md). Names such as `cargo-llvm-cov`, `cargo-mutants`, `cargo-crap`, nextest, and `cargo-deny` refer to those tools.
