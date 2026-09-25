@@ -1,0 +1,17 @@
+# First-class profile: parser-codec
+class: parser-codec
+coverage:
+  line_min_pct: 95
+  region_min_pct: 90
+crap:
+  threshold_human: 4
+  threshold_agent: 6
+mutation:
+  scope: diff
+  kill_rate_min_pct: 95
+  unexplained_survivors_max: 0
+property: required-roundtrip
+fuzz: required
+miri: if-unsafe
+kani: framing-kernels
+callgrind: decode-hot-path

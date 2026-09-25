@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.DS_Store
+*.swp
+/tmp
+junit.xml
+target/coverage/
+target/crap.json

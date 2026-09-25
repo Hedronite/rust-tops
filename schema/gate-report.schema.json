@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specs.local/rust-tops/v1.0.0/gate-report.schema.json",
+  "title": "Rust-TOPS gate report",
+  "description": "Optional unified report object that CI or an agent may emit after a protocol run.",
+  "type": "object",
+  "required": ["protocol_version", "crate", "ok", "layers"],
+  "properties": {
+    "protocol_version": { "type": "string" },
+    "crate": { "type": "string" },
+    "git_sha": { "type": "string" },
+    "ok": { "type": "boolean" },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "ok"],
+        "properties": {
+          "id": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "detail": { "type": "string" },
+          "metrics": { "type": "object", "additionalProperties": true }
+        }
+      }
+    },
+    "crap": {
+      "type": "object",
+      "properties": {
+        "max": { "type": "number" },
+        "over_threshold": { "type": "integer" },
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": { "type": "string" },
+              "file": { "type": "string" },
+              "cc": { "type": "number" },
+              "cov": { "type": "number" },
+              "crap": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "properties": {
+        "caught": { "type": "integer" },
+        "survived": { "type": "integer" },
+        "unviable": { "type": "integer" },
+        "kill_rate_pct": { "type": "number" },
+        "survivors": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "line_pct": { "type": "number" },
+        "region_pct": { "type": "number" },
+        "branch_pct": { "type": ["number", "null"] }
+      }
+    }
+  }
+}

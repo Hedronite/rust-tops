@@ -1,0 +1,12 @@
+# Rust-TOPS drop-in. Place at .cargo-crap.toml
+threshold = 6.0
+fail = true
+exclude = [
+  "src/generated/**",
+  "tests/**",
+  "benches/**",
+  "examples/**",
+]
+
+[coverage]
+lcov = "target/coverage/lcov.info"

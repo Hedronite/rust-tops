@@ -1,0 +1,18 @@
+# First-class profile: unsafe-kernel
+class: unsafe-kernel
+coverage:
+  line_min_pct: 95
+  region_min_pct: 90
+crap:
+  threshold_human: 4
+  threshold_agent: 6
+mutation:
+  scope: diff
+  kill_rate_min_pct: 95
+  unexplained_survivors_max: 0
+property: required
+fuzz: encouraged
+miri: required
+kani: required
+callgrind: required
+unsafe_policy: required-kernel

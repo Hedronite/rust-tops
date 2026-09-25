@@ -1,0 +1,18 @@
+# First-class profile: binary-cli
+class: binary-cli
+coverage:
+  line_min_pct: 80
+  region_min_pct: 75
+crap:
+  threshold_human: 6
+  threshold_agent: 8
+mutation:
+  scope: diff
+  kill_rate_min_pct: 85
+  unexplained_survivors_max: 0
+property: flags-and-parse
+fuzz: parse-path
+miri: false
+kani: false
+callgrind: false
+acceptance: required-on-binary

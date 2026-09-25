@@ -1,0 +1,21 @@
+# Rust-TOPS drop-in. Place at .config/nextest.toml
+
+[profile.default]
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+[profile.ci]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "10s", terminate-after = 2 }
+status-level = "fail"
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# Example of a nextest-native serial group. #[serial] does NOT serialize across
+# nextest processes. Prefer isolation (tempdir, random port) over this.
+[test-groups]
+exclusive-fs = { max-threads = 1 }
+
+[profile.ci.overrides]
+# 'filter = "test(exclusive_fs)"'  group = "exclusive-fs"

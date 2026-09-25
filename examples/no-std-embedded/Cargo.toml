@@ -1,0 +1,17 @@
+[package]
+name = "no-std-embedded"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+description = "Rust-TOPS fixture: no_std ring buffer"
+publish = false
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+
+[lints]
+workspace = true

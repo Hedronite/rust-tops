@@ -1,0 +1,18 @@
+# First-class profile: library-core
+# Copy via `cargo tops init --class library-core`
+class: library-core
+coverage:
+  line_min_pct: 95
+  region_min_pct: 90
+crap:
+  threshold_human: 4
+  threshold_agent: 6
+mutation:
+  scope: diff
+  kill_rate_min_pct: 95
+  unexplained_survivors_max: 0
+property: required-on-pure-functions
+fuzz: optional
+miri: if-unsafe
+kani: kernels
+callgrind: hot-paths

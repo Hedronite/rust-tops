@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specs.local/rust-tops/v1.0.0/schema.json",
+  "title": "Rust Testing and Optimization Protocol Suite (Rust-TOPS)",
+  "description": "Machine-readable protocol for correctness, risk, mutation, property, fuzz, formal, and performance gates on Rust crates. Production code aims for highest function per line; tests are allowed to be larger than production as long as they do not scar design.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "crate",
+    "goals",
+    "layers",
+    "gates",
+    "density",
+    "performance",
+    "exemptions"
+  ],
+  "properties": {
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "spec_uri"],
+      "properties": {
+        "id": { "const": "rust-tops" },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "spec_uri": { "type": "string", "format": "uri-reference" },
+        "adopted": { "type": "string", "format": "date" }
+      }
+    },
+    "crate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "class", "edition", "unsafe_policy"],
+      "properties": {
+        "name": { "type": "string" },
+        "class": {
+          "description": "Selects default gate tightness.",
+          "type": "string",
+          "enum": [
+            "library-core",
+            "library-util",
+            "binary-cli",
+            "binary-service",
+            "parser-codec",
+            "concurrency-runtime",
+            "unsafe-kernel",
+            "ffi-bridge",
+            "no-std-embedded",
+            "proc-macro",
+            "workspace-root"
+          ]
+        },
+        "edition": { "type": "string", "enum": ["2021", "2024"] },
+        "msrv": { "type": "string" },
+        "unsafe_policy": {
+          "type": "string",
+          "enum": ["forbid", "allow-documented", "required-kernel"]
+        },
+        "hot_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "goals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctness", "density", "performance"],
+      "properties": {
+        "correctness": {
+          "const": "behavior matches specified invariants under all applicable layers"
+        },
+        "density": {
+          "const": "fewest necessary production lines that preserve clarity and performance"
+        },
+        "performance": {
+          "const": "no unexplained regression on gated hot paths; prefer algorithmic then codegen then micro"
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enabled", "runner"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "static-lint",
+              "unit",
+              "doc",
+              "integration",
+              "acceptance",
+              "snapshot",
+              "compile-fail",
+              "coverage",
+              "crap",
+              "mutation",
+              "property",
+              "fuzz",
+              "concurrency",
+              "miri",
+              "sanitizer",
+              "formal-kani",
+              "bench-criterion",
+              "bench-callgrind",
+              "security-advisory",
+              "density-audit"
+            ]
+          },
+          "enabled": { "type": "boolean" },
+          "tier": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "description": "0 always-on PR gate, 5 nightly/manual"
+          },
+          "runner": { "type": "string" },
+          "scope": {
+            "type": "string",
+            "enum": ["lib", "bins", "tests", "benches", "workspace", "hot-paths", "unsafe", "diff"]
+          },
+          "config_ref": { "type": "string" }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "coverage", "crap", "mutation", "lint"],
+      "properties": {
+        "lint": {
+          "type": "object",
+          "properties": {
+            "clippy_deny": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "fmt_check": { "type": "boolean" },
+            "cognitive_complexity_max": { "type": "integer", "minimum": 1 },
+            "too_many_lines_max": { "type": "integer", "minimum": 1 },
+            "too_many_arguments_max": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "unit": {
+          "type": "object",
+          "properties": {
+            "must_pass": { "type": "boolean" },
+            "allow_ignored": { "type": "boolean" },
+            "nextest_profile": { "type": "string" }
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "tool": { "const": "cargo-llvm-cov" },
+            "line_min_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+            "region_min_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+            "branch_min_pct": { "type": ["number", "null"] },
+            "per_file_line_min_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+            "exclude_globs": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "crap": {
+          "type": "object",
+          "description": "CRAP(m) = CC(m)^2 * (1 - cov(m))^3 + CC(m) where cov is 0..1",
+          "properties": {
+            "tool": { "type": "string", "enum": ["cargo-crap", "cargo-crappy", "cargo-crap4rust"] },
+            "formula": { "const": "CC^2 * (1 - cov)^3 + CC" },
+            "threshold_production": { "type": "number", "minimum": 1 },
+            "threshold_agent": { "type": "number", "minimum": 1 },
+            "threshold_human": { "type": "number", "minimum": 1 },
+            "classic_crappy": { "const": 30 },
+            "fail_on": {
+              "type": "string",
+              "enum": ["any-over-threshold", "percent-over-project", "delta-regression"]
+            },
+            "scar_guard": {
+              "type": "boolean",
+              "description": "If true, splitting a function solely to beat CRAP without a named design reason is a protocol violation."
+            }
+          }
+        },
+        "mutation": {
+          "type": "object",
+          "properties": {
+            "tool": { "const": "cargo-mutants" },
+            "scope": { "type": "string", "enum": ["diff", "package", "hot-paths", "workspace"] },
+            "kill_rate_min_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+            "unexplained_survivors_max": { "type": "integer", "minimum": 0 },
+            "timeout_multiplier": { "type": "number", "minimum": 1 }
+          }
+        },
+        "property": {
+          "type": "object",
+          "properties": {
+            "framework": { "type": "string", "enum": ["proptest", "quickcheck", "arbtest"] },
+            "cases_ci": { "type": "integer", "minimum": 1 },
+            "cases_nightly": { "type": "integer", "minimum": 1 },
+            "required_on_classes": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "fuzz": {
+          "type": "object",
+          "properties": {
+            "engine": { "type": "string", "enum": ["libfuzzer", "afl", "honggfuzz"] },
+            "pr_smoke_seconds": { "type": "integer", "minimum": 0 },
+            "nightly_seconds": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "formal": {
+          "type": "object",
+          "properties": {
+            "kani_required_on_unsafe_kernels": { "type": "boolean" },
+            "unwind_bound_default": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "performance": {
+          "type": "object",
+          "properties": {
+            "ci_tool": { "type": "string", "enum": ["gungraun", "iai-callgrind"] },
+            "local_tool": { "const": "criterion" },
+            "instruction_regression_max_pct": { "type": "number" },
+            "estimated_cycles_regression_max_pct": { "type": "number" }
+          }
+        }
+      }
+    },
+    "density": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["production_sloc_policy", "rules"],
+      "properties": {
+        "production_sloc_policy": {
+          "const": "minimum necessary lines that preserve named invariants, performance, and reviewability"
+        },
+        "max_fn_sloc": { "type": "integer" },
+        "max_fn_cc": { "type": "integer" },
+        "allow_long_table_functions": { "type": "boolean" },
+        "rules": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "properties": {
+        "release_profile": { "type": "object" },
+        "hot_path_requirements": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "Light harness for coding agents. Not a process prison.",
+      "properties": {
+        "guidelines_file": { "type": "string" },
+        "may_run_tools": { "type": "boolean" },
+        "must_not_write_tests_from_impl": { "type": "boolean" },
+        "must_not_split_for_crap_alone": { "type": "boolean" },
+        "required_before_pr": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "exemptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "layer", "reason", "owner", "expires"],
+        "properties": {
+          "path": { "type": "string" },
+          "symbol": { "type": "string" },
+          "layer": { "type": "string" },
+          "reason": { "type": "string", "minLength": 16 },
+          "owner": { "type": "string" },
+          "expires": { "type": "string", "format": "date" }
+        }
+      }
+    }
+  }
+}

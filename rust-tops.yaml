@@ -1,0 +1,156 @@
+# Example instance of Rust-TOPS 1.0.0
+# Copy to the crate root as rust-tops.yaml and edit class / hot_paths / exemptions.
+# Validate against ../schema/rust-tops.schema.json
+
+protocol:
+  id: rust-tops
+  version: "1.0.0"
+  spec_uri: "./RUST_TOPS.md"
+  adopted: "2026-09-25"
+
+crate:
+  name: cargo-tops
+  class: binary-cli
+  edition: "2021"
+  msrv: "1.85"
+  unsafe_policy: allow-documented
+  hot_paths:
+    - crates/cargo-tops/src/main.rs::gate
+
+goals:
+  correctness: behavior matches specified invariants under all applicable layers
+  density: fewest necessary production lines that preserve clarity and performance
+  performance: no unexplained regression on gated hot paths; prefer algorithmic then codegen then micro
+  notes: >
+    Public API is cargo-tops init/check/gate. Orchestrator only; no test engine.
+
+layers:
+  - { id: static-lint,       enabled: true,  tier: 0, runner: "cargo clippy/fmt/deny", scope: workspace }
+  - { id: unit,              enabled: true,  tier: 0, runner: "cargo nextest",         scope: lib }
+  - { id: doc,               enabled: true,  tier: 0, runner: "cargo test --doc",      scope: lib }
+  - { id: integration,       enabled: true,  tier: 1, runner: "cargo nextest",         scope: tests }
+  - { id: acceptance,        enabled: true,  tier: 1, runner: "assert_cmd journeys",   scope: tests }
+  - { id: snapshot,          enabled: false, tier: 2, runner: insta,                   scope: tests }
+  - { id: compile-fail,      enabled: false, tier: 2, runner: trybuild,                scope: tests }
+  - { id: coverage,          enabled: true,  tier: 0, runner: cargo-llvm-cov,          scope: lib }
+  - { id: crap,              enabled: true,  tier: 0, runner: cargo-crap,              scope: lib }
+  - { id: mutation,          enabled: true,  tier: 1, runner: cargo-mutants,           scope: diff }
+  - { id: property,          enabled: true,  tier: 1, runner: proptest,                scope: lib }
+  - { id: fuzz,              enabled: true,  tier: 3, runner: cargo-fuzz,              scope: lib }
+  - { id: concurrency,       enabled: false, tier: 3, runner: loom,                    scope: lib }
+  - { id: miri,              enabled: true,  tier: 3, runner: "cargo +nightly miri",   scope: unsafe }
+  - { id: sanitizer,         enabled: true,  tier: 3, runner: "asan/tsan nightly",     scope: unsafe }
+  - { id: formal-kani,       enabled: true,  tier: 4, runner: cargo-kani,              scope: hot-paths }
+  - { id: bench-criterion,   enabled: true,  tier: 5, runner: criterion,               scope: hot-paths }
+  - { id: bench-callgrind,   enabled: true,  tier: 4, runner: gungraun,                scope: hot-paths }
+  - { id: security-advisory, enabled: true,  tier: 0, runner: cargo-deny,              scope: workspace }
+  - { id: density-audit,     enabled: true,  tier: 5, runner: review+clippy,           scope: workspace }
+
+gates:
+  lint:
+    clippy_deny:
+      - warnings
+      - clippy::correctness
+      - clippy::suspicious
+      - clippy::perf
+      - clippy::complexity
+      - clippy::dbg_macro
+    fmt_check: true
+    cognitive_complexity_max: 12
+    too_many_lines_max: 40
+    too_many_arguments_max: 6
+  unit:
+    must_pass: true
+    allow_ignored: false
+    nextest_profile: ci
+  coverage:
+    tool: cargo-llvm-cov
+    line_min_pct: 80
+    region_min_pct: 75
+    branch_min_pct: null
+    per_file_line_min_pct: 90
+    exclude_globs:
+      - tests/**
+      - benches/**
+      - examples/**
+      - src/generated/**
+  crap:
+    tool: cargo-crap
+    formula: "CC^2 * (1 - cov)^3 + CC"
+    threshold_production: 6
+    threshold_agent: 6
+    threshold_human: 4
+    classic_crappy: 30
+    fail_on: any-over-threshold
+    scar_guard: true
+  mutation:
+    tool: cargo-mutants
+    scope: diff
+    kill_rate_min_pct: 85
+    unexplained_survivors_max: 0
+    timeout_multiplier: 2
+  property:
+    framework: proptest
+    cases_ci: 256
+    cases_nightly: 2048
+    required_on_classes:
+      - parser-codec
+      - library-core
+      - unsafe-kernel
+  fuzz:
+    engine: libfuzzer
+    pr_smoke_seconds: 30
+    nightly_seconds: 7200
+  formal:
+    kani_required_on_unsafe_kernels: true
+    unwind_bound_default: 8
+  performance:
+    ci_tool: gungraun
+    local_tool: criterion
+    instruction_regression_max_pct: 2
+    estimated_cycles_regression_max_pct: 5
+
+density:
+  production_sloc_policy: minimum necessary lines that preserve named invariants, performance, and reviewability
+  max_fn_sloc: 40
+  max_fn_cc: 8
+  allow_long_table_functions: true
+  rules:
+    - one function, one named job
+    - enum+match over boolean modes
+    - no clone on hot_paths without a why-comment
+    - no trait or builder with a single impl
+    - unwrap only for programmer-invariant bugs
+    - tests may be table-driven; production may not be copy-pasted
+
+performance:
+  release_profile:
+    opt-level: 3
+    lto: thin
+    codegen-units: 1
+    panic: abort
+    debug: 0
+  hot_path_requirements:
+    - decode allocates nothing on the success path
+    - encode writes into impl Write; callers supply the buffer
+    - Callgrind Ir regression on listed symbols ≤ 2%
+
+agent:
+  guidelines_file: AGENTS.md
+  may_run_tools: true
+  must_not_write_tests_from_impl: true
+  must_not_split_for_crap_alone: true
+  required_before_pr:
+    - fmt
+    - clippy
+    - nextest
+    - llvm-cov
+    - crap
+    - mutants-diff
+
+exemptions:
+  - path: src/generated/**
+    layer: crap
+    reason: generated protobuf; public decode roundtrip is the oracle
+    owner: platform
+    expires: "2027-09-24"

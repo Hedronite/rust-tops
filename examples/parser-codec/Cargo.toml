@@ -1,0 +1,22 @@
+[package]
+name = "parser-codec"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+description = "Rust-TOPS fixture: a small frame + varint codec"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1"
+assert_cmd = "2"
+predicates = "3"
+
+[[bin]]
+name = "enc"
+path = "src/bin/enc.rs"
+
+[lints]
+workspace = true
