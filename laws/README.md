@@ -31,4 +31,4 @@ Nix overlay: `overlays.default` exposes `cargo-tops` and `rust-tops-laws` (`$out
 }
 ```
 
-Regenerate from the catalog: `python3 scripts/gen-laws.py`. Do not weaken a law to make a proof pass.
+Regenerate from the catalog: `cargo +nightly -Zscript scripts/gen-laws.rs` (native Cargo script, RFC 3502, std-only; stable `cargo script` is not on 1.96/1.98). Do not weaken a law to make a proof pass.

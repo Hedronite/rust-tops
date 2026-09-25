@@ -7,11 +7,24 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.0.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | `v0.1.2`, Cargo `0.1.2` |
+| Package | `cargo-tops` and git tag | `v0.1.3`, Cargo `0.1.3` |
 
-Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.2`.
+Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.3`.
 
-## [Unreleased]
+## [0.1.3] — 2026-09-25
+
+Compatible 0.x patch. Protocol plane stays **1.0.0**.
+
+Maintainer tooling: `scripts/gen-laws.py` → `scripts/gen-laws.rs` (native Cargo script, RFC 3502, std-only). Regenerated H-01..H-53 pack is byte-identical. Package-plane wiring bumped to 0.1.3.
+
+### Changed
+
+- `scripts/gen-laws.rs` replaces the Python generator; regenerate with `cargo +nightly -Zscript scripts/gen-laws.rs`.
+- Pins table and package metadata updated to 0.1.3.
+
+### Note
+
+Vendored `crates/cargo-tops/templates/LAWS.bend` is a byte-copy of `laws/LAWS.bend` today; a drift guard is queued for a later slice.
 
 ## [0.1.2] — 2026-09-25
 
@@ -48,7 +61,7 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
-[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.1.2...HEAD
+[0.1.3]: https://github.com/Hedronite/rust-tops/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Hedronite/rust-tops/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Hedronite/rust-tops/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Hedronite/rust-tops/releases/tag/v0.1.0
