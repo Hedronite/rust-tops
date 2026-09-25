@@ -31,7 +31,7 @@ Spec, schema, class gates, and a thin orchestrator for the Cargo tools you alrea
 
 ---
 
-Rust-TOPS (Rust Testing and Optimization Protocol Suite) is protocol **1.0.0**: a written spec, a JSON Schema, per-crate class floors, and the practice layer in [`POLICIES.md`](POLICIES.md). This repository is the public kit for adopting that protocol.
+Rust-TOPS (Rust Testing and Optimization Protocol Suite) is a protocol: a written spec, a JSON Schema, per-crate class floors, and the practice layer in [`POLICIES.md`](POLICIES.md). This repository is the public kit for adopting that protocol.
 
 It is for Rust library and binary authors, and for the people who own their CI, who want one gate order: lint, tests, coverage, CRAP, mutation on the diff, then the extra layers the crate class names.
 
