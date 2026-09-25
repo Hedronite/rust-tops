@@ -1,11 +1,15 @@
 # Rust-TOPS
 
+<p align="center">
+  <img src="docs/brand/rust-tops-banner.jpg" alt="rust-tops banner" width="720" />
+</p>
+
 <p align="center"><strong>A protocol and drop-in kit for Rust that is correct, dense, and fast.</strong><br/>
 Spec, schema, class gates, and a thin orchestrator for the Cargo tools you already run.</p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-5C5C5C?style=flat-square&labelColor=1A1A1A" /></a>
-  <a href="https://crates.io/crates/cargo-tops"><img alt="crates.io: cargo-tops" src="https://img.shields.io/crates/v/cargo-tops?style=flat-square&label=crates.io&labelColor=1A1A1A&color=CE422B" /></a>
+  <a href="LICENSE"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-C9A227?style=flat-square&labelColor=1A1A1A" /></a>
+  <a href="https://crates.io/crates/cargo-tops"><img alt="crates.io: cargo-tops" src="https://img.shields.io/crates/v/cargo-tops?style=flat-square&label=crates.io&labelColor=1A1A1A&color=B06038" /></a>
   <a href="https://github.com/Hedronite/rust-tops/actions/workflows/rust-tops.yml"><img alt="CI workflow: rust-tops" src="https://img.shields.io/github/actions/workflow/status/Hedronite/rust-tops/rust-tops.yml?branch=main&style=flat-square&label=ci&labelColor=1A1A1A" /></a>
 </p>
 
