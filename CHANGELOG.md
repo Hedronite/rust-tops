@@ -7,9 +7,27 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.0.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | `v0.1.3`, Cargo `0.1.3` |
+| Package | `cargo-tops` and git tag | `v0.1.4`, Cargo `0.1.4` |
 
-Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.3`.
+Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.4`.
+
+## [0.1.4] — 2026-10-19
+
+Compatible 0.x patch. Protocol plane stays **1.0.0**.
+
+Hard Bend gate (TOFU-pinned Bend 2.0.36), Lean 4.34.0 `--verdict` tier, and a law ownership guard. GitHub Actions in `.github/workflows/rust-tops.yml` are pinned by commit SHA. Protocol 1.0.0 is unchanged.
+
+### Added
+
+- `laws/bend.lock` pins Bend 2.0.36 (linux-x64, linux-arm64, darwin-arm64, darwin-x64) and `lean-4.34.0-linux.tar.zst`. The Bend upstream release is mutable and unsigned; the pin is trust-on-first-use.
+- `scripts/fetch-bend.sh` verifies sha256 on every run and refuses an unverified platform. `scripts/bend-proof-ci.sh` refuses `BEND_GATE_NAMES_ONLY` and `RUST_TOPS_LAWS`. A missing `bend` exits 1.
+- Jobs `bend-proof`, `bend-verdict` (cold wall time 21.87s, so it is a required check under the 5 minute line), `bend-gate-matrix`, and informational `bend-proof-macos` (never a required check).
+- `law-diff` in its own workflow, and `.github/CODEOWNERS` for `@VirtualMachinist`.
+- Template drift check: `laws/LAWS.bend` must match `crates/cargo-tops/templates/LAWS.bend`.
+
+### Note
+
+`config/drop-in/rust-tops.yml` and `crates/cargo-tops/templates/drop-in/rust-tops.yml` stay tag-pinned. Repinning them changes `cargo tops init` and is a follow-up. Nix `bend-proof` is local feedback: no CI job runs `nix flake check`. Darwin's `checks.bend-proof` is absent.
 
 ## [0.1.3] — 2026-09-25
 
@@ -61,6 +79,7 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
+[0.1.4]: https://github.com/Hedronite/rust-tops/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Hedronite/rust-tops/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Hedronite/rust-tops/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Hedronite/rust-tops/compare/v0.1.0...v0.1.1

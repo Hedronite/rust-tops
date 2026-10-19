@@ -1,0 +1,10 @@
+name: Setup Bend
+description: |
+  Download the TOFU-pinned Bend release via scripts/fetch-bend.sh and verify
+  its sha256. Does not cache ~/.bend. Does not run bend update.
+runs:
+  using: composite
+  steps:
+    - name: fetch and verify Bend
+      shell: bash
+      run: bash "$GITHUB_WORKSPACE/scripts/fetch-bend.sh"

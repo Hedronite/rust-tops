@@ -1,0 +1,15 @@
+# Law pack, gate scripts, and the workflows that run them.
+# GitHub ignores a line whose owner lacks write access. The CODEOWNERS
+# errors API must return {"errors": []} before this file is a real gate.
+
+/laws/**                                   @VirtualMachinist
+/rust-tops.lock                            @VirtualMachinist
+/crates/cargo-tops/templates/LAWS.bend     @VirtualMachinist
+/crates/cargo-tops/src/profiles.rs         @VirtualMachinist
+/scripts/                                  @VirtualMachinist
+/.github/workflows/                        @VirtualMachinist
+/.github/actions/                          @VirtualMachinist
+/.github/CODEOWNERS                        @VirtualMachinist
+/flake.nix                                 @VirtualMachinist
+/flake.lock                                @VirtualMachinist
+/nix/                                      @VirtualMachinist

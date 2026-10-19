@@ -35,17 +35,19 @@ Rust-TOPS (Rust Testing and Optimization Protocol Suite) is a protocol: a writte
 
 It is for Rust library and binary authors, and for the people who own their CI, who want one gate order: lint, tests, coverage, CRAP, mutation on the diff, then the extra layers the crate class names.
 
-The Bend2 laws pack under [`laws/`](laws/) is provisional and non-normative. Protocol and its schema stay Bend-free. Package 0.1.3 ships the pack as an overlay.
+The Bend2 laws pack under [`laws/`](laws/) is provisional and non-normative. Protocol and its schema stay Bend-free. Package 0.1.4 ships the pack as an overlay, with a TOFU-pinned Bend proof on this repository.
 
 ## Pins
 
 | Plane | Pin | Where |
 | --- | --- | --- |
 | Protocol | 1.0.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
-| Package | 0.1.3 | workspace [`Cargo.toml`](Cargo.toml), git tag `v0.1.3`, [crates.io](https://crates.io/crates/cargo-tops) |
+| Package | 0.1.4 | workspace [`Cargo.toml`](Cargo.toml), git tag `v0.1.4` (cut by the maintainer), [crates.io](https://crates.io/crates/cargo-tops) |
 | This package | edition 2021, MSRV 1.85 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.85.0 |
-| Crate page | 0.1.3 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
-| Tool lock | rustc 1.91.0, cargo-crap 0.5.0, and the other pins in the file | [`rust-tops.lock`](rust-tops.lock) |
+| Crate page | 0.1.3 published; this tree is 0.1.4 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
+| Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.5.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
+| Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
+| Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
 
 The tool lock is the version set used to evaluate gates. It is a different number from the MSRV. [`config/rust-tops.lock.example`](config/rust-tops.lock.example) is the same pin list, for copying into an adopting crate.
 
@@ -109,7 +111,7 @@ nix flake check
 ./scripts/bend-gate.sh
 ```
 
-`nix flake check` builds both packages and runs the law catalog in names-only mode. `bend-gate.sh` checks that [`laws/LAWS.bend`](laws/LAWS.bend) and [`laws/PROOF.bend`](laws/PROOF.bend) name every row in [`laws/NAMES`](laws/NAMES). It runs `bend` when that binary is on `PATH`.
+`nix flake check` builds both packages, runs `law-catalog-names`, and on Linux runs `bend-proof` (the real Bend proof, fetched by the lock sha256). Darwin has no `bend-proof` attribute: the Bun binary was not verified in the Nix darwin sandbox, and that name is never a names-only pass. No GitHub Actions job runs `nix flake check`, so Nix is local feedback, not a gate. `bend-gate.sh` checks names, template bytes, and the Bend version, then runs `bend PROOF.bend`. A missing `bend` exits 1. `BEND_GATE_NAMES_ONLY=1` is the local names-only opt-in and prints `NAMES-ONLY (not a proof)`.
 
 ## What you get
 
@@ -119,7 +121,7 @@ nix flake check
 | Class floors | None | Five profile files; the schema allows eleven class names |
 | Drop-in configs | None | clippy, nextest, mutants, cargo-crap, cargo-deny, GitHub Actions floor |
 | Orchestrator | You sequence the commands | `cargo tops init`, `check`, and `gate` |
-| CI on this repo | — | `fmt-clippy-deny`, `nextest`, `msrv`, `feature-matrix`, `coverage-crap` |
+| CI on this repo | — | `fmt-clippy-deny`, `nextest`, `msrv`, `feature-matrix`, `coverage-crap`, `bend-proof`, `bend-verdict`, `bend-gate-matrix`, plus `law-diff`. `bend-proof-macos` is informational |
 | CRAP config | — | [`.cargo-crap.toml`](.cargo-crap.toml): threshold `6.0`; excludes `src/generated/**`, `tests/**`, `benches/**`, `examples/**` |
 | Bend2 | — | Provisional pack, laws H-01 through H-53 |
 | Nix | — | Overlay and packages `cargo-tops`, `rust-tops-laws` |
@@ -133,7 +135,7 @@ nix flake check
 | Fuzz, Miri, Kani, loom, sanitizers, or Callgrind from `cargo tops gate` | Those layer ids have no command mapping. The gate prints `skip` and continues. |
 | Mutants, Darwin, or fuzz jobs in this repo | They are comments in [`.github/workflows/rust-tops.yml`](.github/workflows/rust-tops.yml). The feature matrix checks `cargo-tops` and `parser-codec` with `--no-default-features`, and `no-std-embedded` both with `--no-default-features` and with `--features std`. |
 | Bend2 as protocol 1.0 | The pack is provisional. The schema has no Bend fields. Hard rows encode as `Refuse`; soft rows as `Ack`. Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md). |
-| A Bend proof on every `bend-gate.sh` run | With no `bend` on `PATH`, the script reports the name check and exits 0. |
+| A green gate when `bend` is absent | Missing `bend` exits 1 (`H-37`). Names-only is the explicit opt-in `BEND_GATE_NAMES_ONLY=1`, and CI refuses that variable. |
 | `cargo tops init` for every schema class | The CLI classes are the five named above. The schema also lists `library-util`, `binary-service`, `concurrency-runtime`, `ffi-bridge`, `proc-macro`, and `workspace-root`. Those six have no profile file and no `--class` value. |
 | Published example crates | [`examples/parser-codec`](examples/parser-codec) and [`examples/no-std-embedded`](examples/no-std-embedded) set `publish = false`. |
 | A written gate report | [`schema/gate-report.schema.json`](schema/gate-report.schema.json) describes an optional report object. The CLI prints text and does not write that object. |
@@ -167,22 +169,23 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 | [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) | Candidate laws. Provisional. Outside the 1.0 spec |
 | [`laws/`](laws/) | `LAWS.bend`, `PROOF.bend`, `NAMES` (H-01..H-53) |
 | [`flake.nix`](flake.nix) | Nix overlay |
-| [`CHANGELOG.md`](CHANGELOG.md) | Package history. Protocol 1.0.0 and package 0.1.3 are separate version planes |
+| [`CHANGELOG.md`](CHANGELOG.md) | Package history. Protocol 1.0.0 and package 0.1.4 are separate version planes |
 
 ## Status
 
-`main` and git tag `v0.1.3` are package **0.1.3**, which is also the crates.io release. Protocol **1.0.0** stayed put on that tag.
+`main` is package **0.1.4**. Git tag `v0.1.3` and the crates.io release remain 0.1.3 until the maintainer tags `v0.1.4`. Protocol **1.0.0** stayed put.
 
-This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.85.0, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
+This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.85.0, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
-The Bend2 pack in this tag is 53 laws. [`scripts/bend-gate.sh`](scripts/bend-gate.sh) always checks names. A `bend` proof runs only when `bend` is on `PATH`. Moving a law into [`RUST_TOPS.md`](RUST_TOPS.md) takes an explicit spec bump.
+The Bend2 pack is 53 laws. [`scripts/bend-gate.sh`](scripts/bend-gate.sh) checks names and template bytes, requires `bend` 2.0.36 from [`laws/bend.lock`](laws/bend.lock), and uses the exit code of `bend PROOF.bend` as the verdict. Moving a law into [`RUST_TOPS.md`](RUST_TOPS.md) takes an explicit spec bump. Public [`RUST_TOPS.md`](RUST_TOPS.md) still stops at §24; the draft §25 review gate is not part of this package.
 
 Current limits:
 
 - `cargo tops gate` runs the mapped commands through tier 1.
 - `cargo tops init` covers five classes. The other six names exist in the schema and the spec table.
-- `bend-gate.sh` exits 0 when `bend` is absent.
-- Flake support for `x86_64-darwin` tracks `nixpkgs-26.05-darwin`, because the `nixos-unstable` pin dropped Intel macOS.
+- `bend-gate.sh` exits 1 when `bend` is absent.
+- `bend-proof-macos` is informational. A large Bend pack can overflow the macOS stack; this job does not change `ulimit`.
+- Flake support for `x86_64-darwin` tracks `nixpkgs-26.05-darwin`, because the `nixos-unstable` pin dropped Intel macOS. Darwin `checks.bend-proof` is absent.
 
 ## Contributing
 

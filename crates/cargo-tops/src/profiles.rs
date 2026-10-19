@@ -42,3 +42,17 @@ pub fn profile_yaml(class: &str, crate_name: &str) -> String {
     }
     yaml
 }
+
+#[cfg(test)]
+mod tests {
+    use super::LAWS_BEND;
+
+    #[test]
+    fn laws_bend_matches_pack() {
+        let pack = include_str!("../../../laws/LAWS.bend");
+        assert_eq!(
+            LAWS_BEND, pack,
+            "bend-gate: template drift (laws/LAWS.bend != crates/cargo-tops/templates/LAWS.bend)"
+        );
+    }
+}
