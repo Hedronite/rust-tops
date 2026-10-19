@@ -18,6 +18,9 @@
 #      fuzz / composite sysdeps actions; they may not drop sysdeps or MSRV.
 #   7. Do not put --fail-under-lines in this floor. Coverage floors live
 #      in rust-tops.yaml by class. Record the LCOV; assert it is nonempty.
+#
+# Bend jobs below are instance gates on this repo. They are not part of the
+# drop-in floor (config/drop-in/rust-tops.yml stays tag-pinned).
 name: rust-tops
 
 on:
@@ -41,34 +44,49 @@ jobs:
   fmt-clippy-deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - uses: taiki-e/install-action@cargo-deny
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deny@0.18
       - run: cargo deny check
 
   nextest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS}
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: nextest@0.9.145
       - run: cargo nextest run --workspace --all-features --profile ci
       - run: cargo test --doc --workspace --all-features
 
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: 1.85.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS}
       - run: cargo check --workspace --all-features --locked
 
@@ -87,30 +105,43 @@ jobs:
             features: --features std
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
       - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
 
   coverage-crap:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: stable
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS}
-      - uses: taiki-e/install-action@nextest
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: taiki-e/install-action@cargo-crap
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: nextest@0.9.145
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-crap@0.5.0
       - run: |
           mkdir -p target/coverage
           cargo llvm-cov nextest --workspace --all-features \
             --lcov --output-path target/coverage/lcov.info
           test -s target/coverage/lcov.info
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lcov
           path: target/coverage/lcov.info
@@ -118,11 +149,87 @@ jobs:
       - run: |
           cargo crap --lcov target/coverage/lcov.info --format json --output target/crap.json
           test -s target/crap.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crap
           path: target/crap.json
           if-no-files-found: error
+
+  # Required when branch protection lists it. Wall time on a cold
+  # `bend PROOF.bend --verdict` was 21.87s (see bend-verdict), under 5 min.
+  bend-proof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bend
+      # Best-effort only, not a control. Hosted runners reject unshare -rn
+      # with uid_map EPERM. The proof exit code is the gate either way.
+      - name: Proof
+        run: |
+          if unshare -rn true >/dev/null 2>&1; then
+            echo "bend-proof: unshare -rn succeeded; best-effort, not a control" >&2
+            unshare -rn -- "$GITHUB_WORKSPACE/scripts/bend-proof-ci.sh"
+          else
+            echo "bend-proof: unshare -rn unavailable; best-effort, not a control" >&2
+            "$GITHUB_WORKSPACE/scripts/bend-proof-ci.sh"
+          fi
+
+  # Required: cold wall time 21.87s on this pack, under Evan's 5 min line.
+  bend-verdict:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install GNU time and zstd
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time zstd
+      - uses: ./.github/actions/setup-bend
+      # Cache key is the lock's Lean version and sha256. Token stays
+      # contents:read; actions/cache v6.1.0 allows a read-only save.
+      # fetch-lean.sh sha256-checks the archive after every restore.
+      - uses: ./.github/actions/setup-lean
+      - name: Verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/bend-verdict-step.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verdict-timing
+          path: VERDICT-TIMING.md
+          if-no-files-found: error
+
+  # Permanently non-required (Evan, 2026-10-18). Never add this id to branch protection.
+  bend-proof-macos:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bend
+      - name: Proof
+        run: scripts/bend-proof-ci.sh
+
+  bend-gate-matrix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install GNU time and zstd
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time zstd
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/setup-bend
+      - uses: ./.github/actions/setup-lean
+      - name: Mutation matrix
+        run: scripts/test-bend-gate.sh
 
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
   # features usually need no FFI sysdeps. Do not mark required until one

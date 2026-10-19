@@ -1,0 +1,30 @@
+# Ownership guard for the Bend pack. Its own workflow so label events do not
+# re-run rust-tops.yml, and so that workflow's cancel-in-progress cannot
+# cancel this check.
+# Never pull_request_target. Never workflow_run on PR artifacts.
+name: law-diff
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  law-diff:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: stable
+      - name: law diff
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/law-diff.sh "$BASE_SHA" "$HEAD_SHA"

@@ -1,0 +1,41 @@
+name: Setup Lean
+description: |
+  Restore the sha256-pinned Lean archive and install it. The cache key is the
+  lock's Lean version and sha256. fetch-lean.sh checks that sha256 again after
+  a restore, including a hit. The workflow token stays contents:read;
+  actions/cache v6.1.0 tolerates a read-only save.
+runs:
+  using: composite
+  steps:
+    - name: Lean cache key
+      id: lean-key
+      shell: bash
+      run: |
+        set -euo pipefail
+        lock="$GITHUB_WORKSPACE/laws/bend.lock"
+        read_key() {
+          awk -v key="$1" '
+            $0 == "[lean.linux-x64]" { in_s = 1; next }
+            /^\[/ { in_s = 0 }
+            in_s && $1 == key {
+              v = $0
+              sub(/^[^=]*=[[:space:]]*/, "", v)
+              gsub(/"/, "", v)
+              print v
+              exit
+            }
+          ' "$lock"
+        }
+        ver=$(read_key version)
+        sha=$(read_key sha256)
+        test -n "$ver"
+        test -n "$sha"
+        echo "version=$ver" >> "$GITHUB_OUTPUT"
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/rust-tops/lean
+        key: lean-${{ steps.lean-key.outputs.version }}-${{ steps.lean-key.outputs.sha }}-${{ runner.os }}-${{ runner.arch }}
+    - name: Install pinned Lean
+      shell: bash
+      run: bash "$GITHUB_WORKSPACE/scripts/fetch-lean.sh"

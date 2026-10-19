@@ -74,7 +74,7 @@ A density extract must have a **domain name**.
 | Darwin / other `cfg(target_os)` | every cfg needs a lane; file the gap, do not drop the cfg |
 | fuzz-smoke | parser-codec; scheduled/manual until a known crash is closed. Crash = fail; timeout = infra |
 | Callgrind / Criterion | no runner → not a gate |
-| Bend2 pack (`LAWS.bend`) | kit overlay via flake / `cargo tops init`; not a merge floor; not protocol 1.0 |
+| Bend2 pack (`LAWS.bend`) | instance gate on this repo (`bend-proof`, `law-diff`, `bend-verdict`); not in the drop-in floor; not protocol 1.0 |
 
 ## Agent standing orders
 

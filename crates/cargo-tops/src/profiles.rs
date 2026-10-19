@@ -42,3 +42,34 @@ pub fn profile_yaml(class: &str, crate_name: &str) -> String {
     }
     yaml
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::LAWS_BEND;
+
+    #[test]
+    fn laws_bend_matches_pack() {
+        // `cargo package` does not ship the workspace laws tree. Skip there;
+        // the workspace checkout still compares the template to the pack.
+        let pack_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../laws/LAWS.bend");
+        if !pack_path.is_file() {
+            eprintln!(
+                "laws_bend_matches_pack: skipped, laws/LAWS.bend is outside the packaged crate ({})",
+                pack_path.display()
+            );
+            return;
+        }
+        let pack = std::fs::read_to_string(&pack_path).unwrap_or_else(|err| {
+            panic!(
+                "laws_bend_matches_pack: cannot read {}: {err}",
+                pack_path.display()
+            )
+        });
+        assert_eq!(
+            LAWS_BEND, pack,
+            "bend-gate: template drift (laws/LAWS.bend != crates/cargo-tops/templates/LAWS.bend)"
+        );
+    }
+}

@@ -5,7 +5,10 @@
 rustc = "1.91.0"
 clippy = "1.91.0"
 rustfmt = "1.91.0"
-cargo-nextest = "0.124.0"
+# cargo-nextest 0.9.145 is the release taiki-e/install-action can fetch.
+# nextest-runner 0.124.0 shipped the same day (2026-09-16) and is not a
+# cargo-nextest version. The old lock line named the runner.
+cargo-nextest = "0.9.145"
 cargo-llvm-cov = "0.9.1"
 cargo-mutants = "27.1.0"
 cargo-crap = "0.5.0"
