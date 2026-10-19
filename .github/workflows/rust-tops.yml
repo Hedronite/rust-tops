@@ -183,11 +183,10 @@ jobs:
       - name: Install GNU time and zstd
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time zstd
       - uses: ./.github/actions/setup-bend
-      # No actions/cache: that action needs actions:write, and this workflow's
-      # token stays contents:read. fetch-lean.sh still sha256-checks the archive
-      # on every run, including a file already in ~/.cache/rust-tops/lean.
-      - name: Install pinned Lean
-        run: scripts/fetch-lean.sh
+      # Cache key is the lock's Lean version and sha256. Token stays
+      # contents:read; actions/cache v6.1.0 allows a read-only save.
+      # fetch-lean.sh sha256-checks the archive after every restore.
+      - uses: ./.github/actions/setup-lean
       - name: Verdict
         shell: bash
         run: |
@@ -225,8 +224,7 @@ jobs:
         with:
           toolchain: stable
       - uses: ./.github/actions/setup-bend
-      - name: Install pinned Lean
-        run: scripts/fetch-lean.sh
+      - uses: ./.github/actions/setup-lean
       - name: Mutation matrix
         run: scripts/test-bend-gate.sh
 

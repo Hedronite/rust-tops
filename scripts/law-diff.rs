@@ -179,7 +179,14 @@ fn diff_proof(base: &str, head: &str) -> Vec<String> {
 fn append_rest<'a>(base: &str, head: &'a str) -> Option<&'a str> {
     let base = strip_one_nl(base);
     let head = strip_one_nl(head);
-    head.strip_prefix(base)
+    let rest = head.strip_prefix(base)?;
+    // The matched bytes must end on a line boundary. A longer last line is an
+    // edit of that line, not a new declaration appended after it.
+    if rest.is_empty() || rest.starts_with('\n') {
+        Some(rest)
+    } else {
+        None
+    }
 }
 
 fn strip_one_nl(text: &str) -> &str {

@@ -85,6 +85,23 @@ py() {
   python3 - "$@"
 }
 
+host_plat() {
+  os=$(uname -s)
+  mach=$(uname -m)
+  case "$os:$mach" in
+    Linux:x86_64) printf '%s\n' linux-x64 ;;
+    Linux:aarch64 | Linux:arm64) printf '%s\n' linux-arm64 ;;
+    Darwin:arm64 | Darwin:aarch64) printf '%s\n' darwin-arm64 ;;
+    Darwin:x86_64) printf '%s\n' darwin-x64 ;;
+    *)
+      printf 'test-bend-gate: unlisted platform %s:%s\n' "$os" "$mach" >&2
+      return 1
+      ;;
+  esac
+}
+
+plat=$(host_plat)
+
 # a. clean tree
 fresh "$work/a"
 expect_ok "a clean tree" "$work/a/scripts/bend-gate.sh"
@@ -94,29 +111,39 @@ fresh "$work/b"
 expect_msg "b" "bend-gate: bend not on PATH; refusing (H-37 missing_tool_not_green)" \
   env PATH=/usr/bin:/bin HOME="$work/home-b" "$work/b/scripts/bend-gate.sh"
 
-# c. linux-x64 sha256 altered by one hex digit
+# c. host platform sha256 altered by one hex digit
 fresh "$work/c"
-py << PY
+PLAT=$plat CASE=$work/c py << 'PY'
 from pathlib import Path
-p = Path("$work/c/laws/bend.lock")
+import os
+import re
+p = Path(os.environ["CASE"]) / "laws/bend.lock"
+plat = os.environ["PLAT"]
 text = p.read_text()
-old = "02089dc0eed0fd5fd6d73c74cc9cffcb2c6638dd3b02ae83f7b8cc57fbe381ba"
-new = "02089dc0eed0fd5fd6d73c74cc9cffcb2c6638dd3b02ae83f7b8cc57fbe381bb"
-assert old in text
-p.write_text(text.replace(old, new, 1))
+needle = f"[{plat}]\n"
+assert needle in text
+head, tail = text.split(needle, 1)
+rest, after = tail.split("\n[", 1)
+match = re.search(r'sha256 = "([0-9a-f]{64})"', rest)
+assert match, rest
+old = match.group(1)
+flipped = "b" if old[-1] != "b" else "c"
+rest = rest.replace(old, old[:-1] + flipped, 1)
+p.write_text(head + needle + rest + "\n[" + after)
 PY
-expect_msg "c" "fetch-bend: sha256 mismatch for linux-x64" \
+expect_msg "c" "fetch-bend: sha256 mismatch for $plat" \
   env HOME="$work/home-c" "$work/c/scripts/fetch-bend.sh"
 
 # c'. running platform marked unverified
 fresh "$work/c2"
-py << PY
+PLAT=$plat CASE=$work/c2 py << 'PY'
 from pathlib import Path
-p = Path("$work/c2/laws/bend.lock")
+import os
+p = Path(os.environ["CASE"]) / "laws/bend.lock"
+plat = os.environ["PLAT"]
 text = p.read_text()
-needle = "[linux-x64]\n"
+needle = f"[{plat}]\n"
 assert needle in text
-# Flip only the linux-x64 unverified flag, the first one after that header.
 head, tail = text.split(needle, 1)
 rest, after = tail.split("\n[", 1)
 old = "unverified = false"
@@ -124,7 +151,7 @@ assert old in rest
 rest = rest.replace(old, "unverified = true", 1)
 p.write_text(head + needle + rest + "\n[" + after)
 PY
-expect_msg "c'" "fetch-bend: linux-x64 is unverified; refusing" \
+expect_msg "c'" "fetch-bend: $plat is unverified; refusing" \
   env HOME="$work/home-c2" "$work/c2/scripts/fetch-bend.sh"
 
 # d. evidence_verdict FromImpl -> Allow. Bend must name the law.
@@ -443,6 +470,24 @@ PY
 expect_msg "n1" "law-diff: non-append change in laws/LAWS.bend" \
   "$root/scripts/law-diff.sh" --base-dir "$work/n1-base" --head-dir "$work/n1"
 
+# o. an edit of the last line is not an append, even when the old line is a prefix
+fresh "$work/o-base"
+fresh "$work/o"
+py << PY
+from pathlib import Path
+p = Path("$work/o/laws/LAWS.bend")
+text = p.read_text()
+old = "  {==}\n"
+assert text.endswith(old)
+# Same line, longer: the old bytes are a prefix, so a byte-prefix diff would
+# accept "type NotAnAppend..." as a new declaration.
+p.write_text(text[: -len(old)] + "  {==}type NotAnAppend is Data:\n")
+PY
+expect_msg "o" "law-diff: non-append change in laws/LAWS.bend" \
+  "$root/scripts/law-diff.sh" --base-dir "$work/o-base" --head-dir "$work/o"
+expect_ok "o labeled" env LABELS='["laws-change-approved"]' \
+  "$root/scripts/law-diff.sh" --base-dir "$work/o-base" --head-dir "$work/o"
+
 # n4. --verdict checks the installed bend version against the lock
 mkdir -p "$work/n4/bin"
 cat > "$work/n4/bin/bend" << 'EOF'
@@ -453,6 +498,66 @@ EOF
 chmod +x "$work/n4/bin/bend"
 expect_msg "n4" "bend-proof-ci: bend version 9.9.9 != lock 2.0.36" \
   env PATH="$work/n4/bin:/usr/bin:/bin" "$root/scripts/bend-proof-ci.sh" --verdict
+
+# p. --verdict forces telemetry off, including when the caller set it to 0
+mkdir -p "$work/p/bin"
+cat > "$work/p/bin/bend" << 'EOF'
+#!/bin/sh
+if [ "${1:-}" = "version" ]; then
+  printf 'bend 2.0.36\n'
+  exit 0
+fi
+printf 'telemetry=%s\n' "${BEND_NO_TELEMETRY-unset}"
+exit 0
+EOF
+chmod +x "$work/p/bin/bend"
+run_capture "$work/cap" env BEND_NO_TELEMETRY=0 PATH="$work/p/bin:/usr/bin:/bin" \
+  "$root/scripts/bend-proof-ci.sh" --verdict
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] && grep -qxF 'telemetry=1' "$work/cap.out"; then
+  ok "p --verdict exports BEND_NO_TELEMETRY=1"
+else
+  bad "p telemetry" "$(cat "$work/cap.all")"
+fi
+
+# lean-cache. a restored archive with the wrong bytes is refused before install
+mkdir -p "$work/lean-cache" "$work/lean-bin"
+lean_archive=$(awk '
+  $0 == "[lean.linux-x64]" { in_s = 1; next }
+  /^\[/ { in_s = 0 }
+  in_s && $1 == "archive" {
+    v = $0
+    sub(/^[^=]*=[[:space:]]*/, "", v)
+    gsub(/"/, "", v)
+    print v
+    exit
+  }
+' "$root/laws/bend.lock")
+test -n "$lean_archive"
+printf 'not-a-lean-archive\n' > "$work/lean-cache/$lean_archive"
+cat > "$work/lean-bin/curl" << 'EOF'
+#!/bin/sh
+printf 'lean-cache-test: curl refused\n' >&2
+exit 1
+EOF
+cat > "$work/lean-bin/uname" << 'EOF'
+#!/bin/sh
+if [ "$1" = "-s" ]; then
+  printf 'Linux\n'
+  exit 0
+fi
+if [ "$1" = "-m" ]; then
+  printf 'x86_64\n'
+  exit 0
+fi
+printf 'lean-cache-test: unexpected uname %s\n' "$*" >&2
+exit 1
+EOF
+chmod +x "$work/lean-bin/curl" "$work/lean-bin/uname"
+expect_msg "lean-cache" "fetch-lean: cached archive failed sha256; re-downloading" \
+  env PATH="$work/lean-bin:$PATH" HOME="$work/home-lean" LEAN_ARCHIVE_DIR="$work/lean-cache" \
+  "$root/scripts/fetch-lean.sh"
 
 # b1. verdict step: the stub prints the success line and exits 1.
 # Without pipefail, tee masks that status and grep -qxF would pass.

@@ -16,6 +16,7 @@ if [ "${1:-}" = "--verdict" ]; then
     printf 'bend-proof-ci: --verdict takes no other argument\n' >&2
     exit 2
   fi
+  export BEND_NO_TELEMETRY=1
   lock=$root/laws/bend.lock
   if ! command -v bend >/dev/null 2>&1; then
     printf 'bend-gate: bend not on PATH; refusing (H-37 missing_tool_not_green)\n' >&2
