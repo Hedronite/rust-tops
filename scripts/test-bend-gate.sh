@@ -10,6 +10,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 pass=0
 fail=0
+skipped=0
 
 note() {
   printf '%s\n' "$*"
@@ -26,6 +27,11 @@ bad() {
   if [ -n "${2:-}" ]; then
     printf '%s\n' "$2"
   fi
+}
+
+skip() {
+  skipped=$((skipped + 1))
+  note "SKIP $1"
 }
 
 fresh() {
@@ -559,10 +565,13 @@ expect_msg "lean-cache" "fetch-lean: cached archive failed sha256; re-downloadin
   env PATH="$work/lean-bin:$PATH" HOME="$work/home-lean" LEAN_ARCHIVE_DIR="$work/lean-cache" \
   "$root/scripts/fetch-lean.sh"
 
-# b1. verdict step: the stub prints the success line and exits 1.
-# Without pipefail, tee masks that status and grep -qxF would pass.
-mkdir -p "$work/b1/bin"
-cat > "$work/b1/bin/bend" << 'EOF'
+# b1 / b1' drive bend-verdict-step.sh, which calls GNU time -v.
+# BSD /usr/bin/time rejects -v before the stub runs, so a bare non-zero
+# status would pass without proving the proof failed.
+if /usr/bin/time -v -o "$work/time-probe.txt" true >/dev/null 2>&1; then
+  # b1. stub prints the success line and exits 1. pipefail must surface that.
+  mkdir -p "$work/b1/bin"
+  cat > "$work/b1/bin/bend" << 'EOF'
 #!/bin/sh
 if [ "${1:-}" = "version" ]; then
   printf 'bend 2.0.36\n'
@@ -571,26 +580,54 @@ fi
 printf 'ALL PROOFS CHECK\n'
 exit 1
 EOF
-chmod +x "$work/b1/bin/bend"
-run_capture "$work/cap" env \
-  PATH="$work/b1/bin:/usr/bin:/bin" \
-  VERDICT_OUT="$work/b1/verdict.out" \
-  VERDICT_TIME="$work/b1/verdict-time.txt" \
-  VERDICT_TIMING_MD="$work/b1/VERDICT-TIMING.md" \
-  HOME="$work/home-b1" \
-  "$root/scripts/bend-verdict-step.sh"
-rc=$?
-set -e
-if [ "$rc" -eq 0 ]; then
-  bad "b1 failing bend stub exited 0" "$(cat "$work/cap.all")"
-elif [ -f "$work/b1/VERDICT-TIMING.md" ]; then
-  bad "b1 wrote VERDICT-TIMING.md after a failing proof" "$(cat "$work/b1/VERDICT-TIMING.md")"
+  chmod +x "$work/b1/bin/bend"
+  run_capture "$work/cap" env \
+    PATH="$work/b1/bin:/usr/bin:/bin" \
+    VERDICT_OUT="$work/b1/verdict.out" \
+    VERDICT_TIME="$work/b1/verdict-time.txt" \
+    VERDICT_TIMING_MD="$work/b1/VERDICT-TIMING.md" \
+    HOME="$work/home-b1" \
+    "$root/scripts/bend-verdict-step.sh"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    bad "b1 failing bend stub exited 0" "$(cat "$work/cap.all")"
+  elif ! grep -qxF 'ALL PROOFS CHECK' "$work/b1/verdict.out"; then
+    bad "b1 stub output missing" "$(cat "$work/cap.all")"
+  elif ! grep -F -q 'bend-verdict: proof exited 1' "$work/cap.all"; then
+    bad "b1 missing [bend-verdict: proof exited 1]" "$(cat "$work/cap.all")"
+  elif [ -f "$work/b1/VERDICT-TIMING.md" ]; then
+    bad "b1 wrote VERDICT-TIMING.md after a failing proof" "$(cat "$work/b1/VERDICT-TIMING.md")"
+  else
+    ok "b1: bend-verdict: proof exited 1"
+  fi
+
+  # b1'. stub exits 0 without the success line. The grep assert must fail.
+  mkdir -p "$work/b1p/bin"
+  cat > "$work/b1p/bin/bend" << 'EOF'
+#!/bin/sh
+if [ "${1:-}" = "version" ]; then
+  printf 'bend 2.0.36\n'
+  exit 0
+fi
+printf 'SOME PROOFS FAIL\n'
+exit 0
+EOF
+  chmod +x "$work/b1p/bin/bend"
+  expect_msg "b1'" "bend-verdict: missing ALL PROOFS CHECK" \
+    env PATH="$work/b1p/bin:/usr/bin:/bin" \
+    VERDICT_OUT="$work/b1p/verdict.out" \
+    VERDICT_TIME="$work/b1p/verdict-time.txt" \
+    VERDICT_TIMING_MD="$work/b1p/VERDICT-TIMING.md" \
+    HOME="$work/home-b1p" \
+    "$root/scripts/bend-verdict-step.sh"
 else
-  ok "b1 failing bend stub is non-zero"
+  skip "b1: /usr/bin/time -v is not available"
+  skip "b1': /usr/bin/time -v is not available"
 fi
 
 note "----"
-note "passed=$pass failed=$fail"
+note "passed=$pass failed=$fail skipped=$skipped"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
