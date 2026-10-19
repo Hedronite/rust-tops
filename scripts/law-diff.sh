@@ -8,11 +8,10 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-bin=$root/target/law-diff
-mkdir -p "$root/target"
-if [ ! -x "$bin" ] || [ "$root/scripts/law-diff.rs" -nt "$bin" ]; then
-  rustc --edition 2021 -D warnings -O -o "$bin" "$root/scripts/law-diff.rs"
-fi
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+bin=$tmp/law-diff
+rustc --edition 2021 -D warnings -O -o "$bin" "$root/scripts/law-diff.rs"
 
 approved=0
 if [ -n "${LABELS:-}" ]; then
@@ -21,11 +20,19 @@ if [ -n "${LABELS:-}" ]; then
   fi
 fi
 
+run_bin() {
+  set +e
+  "$bin" "$@"
+  rc=$?
+  set -e
+  exit "$rc"
+}
+
 if [ "${1:-}" = "--base-dir" ]; then
   if [ "$approved" -eq 1 ]; then
-    exec "$bin" --approved "$@"
+    run_bin --approved "$@"
   fi
-  exec "$bin" "$@"
+  run_bin "$@"
 fi
 
 if [ "$#" -ne 2 ]; then
@@ -35,8 +42,18 @@ fi
 
 base_sha=$1
 head_sha=$2
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+
+require_commit() {
+  role=$1
+  sha=$2
+  if ! git -C "$root" rev-parse --verify "${sha}^{commit}" >/dev/null 2>&1; then
+    printf 'law-diff: %s SHA does not resolve to a commit: %s\n' "$role" "$sha" >&2
+    exit 1
+  fi
+}
+
+require_commit base "$base_sha"
+require_commit head "$head_sha"
 
 extract() {
   sha=$1
@@ -55,14 +72,6 @@ extract "$base_sha" "$tmp/base"
 extract "$head_sha" "$tmp/head"
 
 if [ "$approved" -eq 1 ]; then
-  set +e
-  "$bin" --approved --base-dir "$tmp/base" --head-dir "$tmp/head"
-  rc=$?
-  set -e
-  exit "$rc"
+  run_bin --approved --base-dir "$tmp/base" --head-dir "$tmp/head"
 fi
-set +e
-"$bin" --base-dir "$tmp/base" --head-dir "$tmp/head"
-rc=$?
-set -e
-exit "$rc"
+run_bin --base-dir "$tmp/base" --head-dir "$tmp/head"

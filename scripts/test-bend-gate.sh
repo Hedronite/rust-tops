@@ -462,6 +462,11 @@ PY
 expect_msg "n" "bend-gate: proof does not name evidence_not" \
   env HOME="$work/home-n" "$work/n/scripts/bend-gate.sh"
 
+# q. a bogus base SHA is not an empty tree (that would look like an append)
+bogus=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+expect_msg "q" "law-diff: base SHA does not resolve to a commit: $bogus" \
+  "$root/scripts/law-diff.sh" "$bogus" HEAD
+
 # n1. indented append extends the last block
 fresh "$work/n1-base"
 fresh "$work/n1"

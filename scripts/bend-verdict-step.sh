@@ -28,6 +28,29 @@ if ! grep -qxF 'ALL PROOFS CHECK' "$out"; then
   exit 1
 fi
 
+lock=$root/laws/bend.lock
+lock_get() {
+  section=$1
+  key=$2
+  awk -v section="$section" -v key="$key" '
+    $0 == "[" section "]" { in_s = 1; next }
+    /^\[/ { in_s = 0 }
+    in_s && $1 == key {
+      v = $0
+      sub(/^[^=]*=[[:space:]]*/, "", v)
+      gsub(/"/, "", v)
+      print v
+      exit
+    }
+  ' "$lock"
+}
+bend_sha=$(lock_get linux-x64 sha256)
+lean_sha=$(lock_get lean.linux-x64 sha256)
+if [ -z "$bend_sha" ] || [ -z "$lean_sha" ]; then
+  printf 'bend-verdict: missing sha256 in %s\n' "$lock" >&2
+  exit 1
+fi
+
 elapsed=$(awk -F': ' '/Elapsed \(wall clock\)/ { print $2 }' "$timefile")
 rss=$(awk -F': ' '/Maximum resident set size/ { print $2 }' "$timefile")
 {
@@ -36,9 +59,9 @@ rss=$(awk -F': ' '/Maximum resident set size/ { print $2 }' "$timefile")
   echo "- wall_time: ${elapsed}"
   echo "- peak_rss_kbytes: ${rss}"
   echo "- bend: $(bend version | awk 'NR==1 { print $2 }')"
-  echo "- bend_sha256_linux_x64: 02089dc0eed0fd5fd6d73c74cc9cffcb2c6638dd3b02ae83f7b8cc57fbe381ba"
+  echo "- bend_sha256_linux_x64: ${bend_sha}"
   echo "- lean: $(lean --version)"
-  echo "- lean_sha256: caaa98356098c85dc0fcbbd28e1ec66f39eb6551829972b752ff20e1286b646b"
+  echo "- lean_sha256: ${lean_sha}"
   echo "- result: $(cat "$out")"
   echo "- runner: ubuntu-24.04"
 } > "$timing"

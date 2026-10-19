@@ -164,12 +164,15 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-bend
-      - name: Proof with networking off
+      # Best-effort only, not a control. Hosted runners reject unshare -rn
+      # with uid_map EPERM. The proof exit code is the gate either way.
+      - name: Proof
         run: |
-          if unshare -rn true; then
+          if unshare -rn true >/dev/null 2>&1; then
+            echo "bend-proof: unshare -rn succeeded; best-effort, not a control" >&2
             unshare -rn -- "$GITHUB_WORKSPACE/scripts/bend-proof-ci.sh"
           else
-            echo "bend-proof: unshare -rn unavailable on this runner; running the proof without a netns" >&2
+            echo "bend-proof: unshare -rn unavailable; best-effort, not a control" >&2
             "$GITHUB_WORKSPACE/scripts/bend-proof-ci.sh"
           fi
 
