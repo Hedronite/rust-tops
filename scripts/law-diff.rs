@@ -187,12 +187,25 @@ fn strip_one_nl(text: &str) -> &str {
 }
 
 fn append_is_blocks_only(rest: &str) -> bool {
-    rest.lines().all(|line| {
-        line.is_empty()
-            || line.starts_with(' ')
-            || line.starts_with('\t')
-            || decl_name(line).is_some()
-    })
+    let mut saw_decl = false;
+    for line in rest.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if !saw_decl {
+            // The first content line has to open a new top-level declaration.
+            // An indented line would extend the last block of BASE.
+            if decl_name(line).is_none() {
+                return false;
+            }
+            saw_decl = true;
+            continue;
+        }
+        if !(line.starts_with(' ') || line.starts_with('\t') || decl_name(line).is_some()) {
+            return false;
+        }
+    }
+    true
 }
 
 fn decl_names(src: &str) -> Vec<String> {

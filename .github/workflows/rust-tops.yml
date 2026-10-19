@@ -189,24 +189,10 @@ jobs:
       - name: Install pinned Lean
         run: scripts/fetch-lean.sh
       - name: Verdict
+        shell: bash
         run: |
-          set -eu
-          /usr/bin/time -v -o "$RUNNER_TEMP/verdict-time.txt" scripts/bend-proof-ci.sh --verdict | tee "$RUNNER_TEMP/verdict.out"
-          elapsed=$(awk -F': ' '/Elapsed \(wall clock\)/ { print $2 }' "$RUNNER_TEMP/verdict-time.txt")
-          rss=$(awk -F': ' '/Maximum resident set size/ { print $2 }' "$RUNNER_TEMP/verdict-time.txt")
-          {
-            echo "# Bend verdict timing"
-            echo
-            echo "- wall_time: ${elapsed}"
-            echo "- peak_rss_kbytes: ${rss}"
-            echo "- bend: $(bend version | awk 'NR==1 { print $2 }')"
-            echo "- bend_sha256_linux_x64: 02089dc0eed0fd5fd6d73c74cc9cffcb2c6638dd3b02ae83f7b8cc57fbe381ba"
-            echo "- lean: $(lean --version)"
-            echo "- lean_sha256: caaa98356098c85dc0fcbbd28e1ec66f39eb6551829972b752ff20e1286b646b"
-            echo "- result: $(cat "$RUNNER_TEMP/verdict.out")"
-            echo "- runner: ubuntu-24.04"
-          } > VERDICT-TIMING.md
-          test -s VERDICT-TIMING.md
+          set -euo pipefail
+          scripts/bend-verdict-step.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verdict-timing

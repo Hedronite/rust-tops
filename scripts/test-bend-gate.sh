@@ -303,7 +303,7 @@ PY
 expect_msg "i'" "law-diff: non-append change in laws/LAWS.bend" \
   "$root/scripts/law-diff.sh" --base-dir "$work/ip-base" --head-dir "$work/ip"
 
-# j. template differs by one byte. Gate message, and the byte equality the cargo test asserts.
+# j. template differs by one byte. Gate message, and cargo test laws_bend_matches_pack.
 fresh "$work/j"
 py << PY
 from pathlib import Path
@@ -314,11 +314,29 @@ p.write_bytes(data)
 PY
 expect_msg "j" "bend-gate: template drift (laws/LAWS.bend != crates/cargo-tops/templates/LAWS.bend)" \
   env HOME="$work/home-j" "$work/j/scripts/bend-gate.sh"
-if cmp -s "$work/j/laws/LAWS.bend" "$work/j/crates/cargo-tops/templates/LAWS.bend"; then
-  bad "j cargo byte equality still holds"
-else
-  ok "j cargo laws_bend_matches_pack would fail (profiles::LAWS_BEND != laws/LAWS.bend)"
+# Run the real unit test in a checkout whose template differs by one byte.
+jtree=$work/jtree
+mkdir -p "$jtree"
+tar -C "$root" --exclude target --exclude .git -cf - . | tar -C "$jtree" -xf -
+py << PY
+from pathlib import Path
+p = Path("$jtree/crates/cargo-tops/templates/LAWS.bend")
+data = bytearray(p.read_bytes())
+data[-1] = (data[-1] + 1) % 256
+p.write_bytes(data)
+PY
+cat > "$work/run-j-cargo" << EOF
+#!/bin/sh
+set -eu
+cd "$jtree"
+if cargo +1.85.0 --version >/dev/null 2>&1; then
+  exec cargo +1.85.0 test -p cargo-tops --locked profiles::tests::laws_bend_matches_pack -- --exact
 fi
+exec cargo test -p cargo-tops --locked profiles::tests::laws_bend_matches_pack -- --exact
+EOF
+chmod +x "$work/run-j-cargo"
+expect_msg "j cargo" "bend-gate: template drift (laws/LAWS.bend != crates/cargo-tops/templates/LAWS.bend)" \
+  "$work/run-j-cargo"
 
 # k. verdict on all 53 laws
 fresh "$work/k"
@@ -379,10 +397,13 @@ expect_msg "l''" "law-diff: append re-declares existing name evidence_verdict" \
 
 # m. each downgrade env var, under bend-proof-ci.sh
 fresh "$work/m"
-expect_msg "m NAMES_ONLY" "bend-proof-ci: BEND_GATE_NAMES_ONLY/RUST_TOPS_LAWS must be unset in CI" \
+ci_downgrade="bend-proof-ci: BEND_GATE_NAMES_ONLY/RUST_TOPS_LAWS/RUST_TOPS_ROOT must be unset in CI"
+expect_msg "m NAMES_ONLY" "$ci_downgrade" \
   env BEND_GATE_NAMES_ONLY=1 "$work/m/scripts/bend-proof-ci.sh"
-expect_msg "m RUST_TOPS_LAWS" "bend-proof-ci: BEND_GATE_NAMES_ONLY/RUST_TOPS_LAWS must be unset in CI" \
+expect_msg "m RUST_TOPS_LAWS" "$ci_downgrade" \
   env RUST_TOPS_LAWS="$work/other-laws" "$work/m/scripts/bend-proof-ci.sh"
+expect_msg "m RUST_TOPS_ROOT" "$ci_downgrade" \
+  env RUST_TOPS_ROOT="$work/other-root" "$work/m/scripts/bend-proof-ci.sh"
 
 # n. law X is a strict prefix of an existing name, present in LAWS and NAMES, absent from PROOF
 fresh "$work/n"
@@ -407,6 +428,61 @@ if not names.endswith("\n"):
 PY
 expect_msg "n" "bend-gate: proof does not name evidence_not" \
   env HOME="$work/home-n" "$work/n/scripts/bend-gate.sh"
+
+# n1. indented append extends the last block
+fresh "$work/n1-base"
+fresh "$work/n1"
+py << PY
+from pathlib import Path
+p = Path("$work/n1/laws/LAWS.bend")
+text = p.read_text()
+if not text.endswith("\n"):
+    text += "\n"
+p.write_text(text + "  {Refuse{}}\n")
+PY
+expect_msg "n1" "law-diff: non-append change in laws/LAWS.bend" \
+  "$root/scripts/law-diff.sh" --base-dir "$work/n1-base" --head-dir "$work/n1"
+
+# n4. --verdict checks the installed bend version against the lock
+mkdir -p "$work/n4/bin"
+cat > "$work/n4/bin/bend" << 'EOF'
+#!/bin/sh
+printf 'bend 9.9.9\n'
+exit 0
+EOF
+chmod +x "$work/n4/bin/bend"
+expect_msg "n4" "bend-proof-ci: bend version 9.9.9 != lock 2.0.36" \
+  env PATH="$work/n4/bin:/usr/bin:/bin" "$root/scripts/bend-proof-ci.sh" --verdict
+
+# b1. verdict step: the stub prints the success line and exits 1.
+# Without pipefail, tee masks that status and grep -qxF would pass.
+mkdir -p "$work/b1/bin"
+cat > "$work/b1/bin/bend" << 'EOF'
+#!/bin/sh
+if [ "${1:-}" = "version" ]; then
+  printf 'bend 2.0.36\n'
+  exit 0
+fi
+printf 'ALL PROOFS CHECK\n'
+exit 1
+EOF
+chmod +x "$work/b1/bin/bend"
+run_capture "$work/cap" env \
+  PATH="$work/b1/bin:/usr/bin:/bin" \
+  VERDICT_OUT="$work/b1/verdict.out" \
+  VERDICT_TIME="$work/b1/verdict-time.txt" \
+  VERDICT_TIMING_MD="$work/b1/VERDICT-TIMING.md" \
+  HOME="$work/home-b1" \
+  "$root/scripts/bend-verdict-step.sh"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  bad "b1 failing bend stub exited 0" "$(cat "$work/cap.all")"
+elif [ -f "$work/b1/VERDICT-TIMING.md" ]; then
+  bad "b1 wrote VERDICT-TIMING.md after a failing proof" "$(cat "$work/b1/VERDICT-TIMING.md")"
+else
+  ok "b1 failing bend stub is non-zero"
+fi
 
 note "----"
 note "passed=$pass failed=$fail"
