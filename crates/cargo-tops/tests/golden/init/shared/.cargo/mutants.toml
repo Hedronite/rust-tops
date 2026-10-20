@@ -1,0 +1,10 @@
+# Rust-TOPS drop-in. Place at .cargo/mutants.toml
+exclude_re = [
+  "src/generated/",
+  "/pb\\.rs$",
+  "tests/",
+  "benches/",
+  "examples/",
+]
+examine_re = ["src/"]
+timeout_multiplier = 2.0

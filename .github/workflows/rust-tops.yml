@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
-          toolchain: stable
+          toolchain: 1.99.1
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
@@ -68,7 +68,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS}
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
@@ -85,7 +85,8 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
-          toolchain: 1.85.0
+          # Workspace rust-version. `cargo check --locked` on this exact compiler.
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS}
       - run: cargo check --workspace --all-features --locked
@@ -110,7 +111,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
       - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
@@ -123,7 +124,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
-          toolchain: stable
+          toolchain: 1.99.1
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS}
@@ -225,7 +226,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time zstd
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
-          toolchain: stable
+          toolchain: 1.99.1
       - uses: ./.github/actions/setup-bend
       - uses: ./.github/actions/setup-lean
       - name: Mutation matrix

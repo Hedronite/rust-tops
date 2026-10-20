@@ -1,0 +1,29 @@
+protocol:
+  id: rust-tops
+  version: "1.0.0"
+crate:
+  name: golden-crate
+  class: library-core
+goals:
+  word_yes: yes
+  word_no: no
+  word_on: on
+  word_off: off
+  word_y: y
+  word_n: n
+  word_true: true
+  word_false: false
+  word_quoted: "yes"
+layers:
+  - id: unit
+    enabled: true
+    tier: 0
+gates:
+  coverage:
+    line_min_pct: 95
+  crap:
+    threshold_agent: 6
+  mutation:
+    unexplained_survivors_max: 0
+density:
+  note: plain
