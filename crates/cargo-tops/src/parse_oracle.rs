@@ -1,5 +1,12 @@
-//! Parsed `TopsConfig` for every bundled profile, frozen to the serde_yaml
-//! decode from main before the serde-saphyr migration.
+//! Canonical JSON of `TopsConfig` for every bundled profile.
+//!
+//! Recorded from main `968c390` by decoding with serde_yaml 0.9.34 into this
+//! struct (free-form fields as `serde_json::Value`) and sorting object keys.
+//! `crate.msrv` is not a field, so it is absent. The templates match that
+//! commit; `rust-tops.yaml` there differs from this branch only in `msrv`.
+//!
+//! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
+//! CI does not set it.
 use std::fs;
 use std::path::PathBuf;
 
@@ -88,16 +95,63 @@ fn bundled_profile_templates_parse_to_pre_migration_config() {
 fn workspace_instance_parses_to_pre_migration_config() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let instance = root.join("rust-tops.yaml");
-    if !instance.is_file() {
-        eprintln!(
-            "workspace_instance_parses_to_pre_migration_config: skipped, {} is outside the packaged crate",
-            instance.display()
-        );
-        return;
-    }
+    assert!(
+        instance.is_file(),
+        "workspace golden requires {}",
+        instance.display()
+    );
     let cfg = load_config(&root).unwrap_or_else(|err| panic!("parse workspace instance: {err:#}"));
     check(&cfg).unwrap_or_else(|err| panic!("check workspace instance: {err:#}"));
     assert_eq!(cfg.crate_.name, "cargo-tops");
     assert_eq!(cfg.crate_.class, "binary-cli");
     expect_config("workspace", &cfg);
+}
+
+const YAML11_BOOL_WORDS: &[&str] = &["yes", "no", "on", "off", "y", "n"];
+
+fn strict_bool_yaml() -> String {
+    include_str!("../tests/golden/strict-bool/instance.yaml").to_string()
+}
+
+/// Pins `strict_booleans`. This file is the serde-saphyr decode, not the
+/// `968c390` serde_yaml oracle above.
+#[test]
+fn strict_booleans_keep_yaml11_words_as_strings() {
+    let cfg = load_yaml("strict-bool", &strict_bool_yaml());
+    let goals = config_json(&cfg)
+        .get("goals")
+        .cloned()
+        .expect("goals present");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/strict-bool/goals.json");
+    let expected: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display())),
+    )
+    .expect("strict-bool goals golden");
+    assert_eq!(goals, expected);
+    assert!(cfg.layers[0].enabled);
+}
+
+#[test]
+fn strict_booleans_reject_yaml11_words_on_typed_bool() {
+    let base = strict_bool_yaml();
+    for word in YAML11_BOOL_WORDS {
+        let yaml = base.replace("enabled: true", &format!("enabled: {word}"));
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-bool-{word}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("mkdir {word}: {err}"));
+        fs::write(dir.join("rust-tops.yaml"), yaml)
+            .unwrap_or_else(|err| panic!("write {word}: {err}"));
+        let err = match load_config(&dir) {
+            Err(err) => err,
+            Ok(_) => panic!("typed bool accepted {word}"),
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("invalid boolean"),
+            "enabled: {word} did not reject as a strict bool: {message}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

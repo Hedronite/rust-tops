@@ -1,4 +1,7 @@
-//! `cargo tops init` file bytes and stdout, frozen to main before this migration.
+//! `cargo tops init` file bytes and stdout, recorded from main `968c390`.
+//!
+//! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
+//! CI does not set it.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

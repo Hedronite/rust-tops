@@ -15,8 +15,10 @@ Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.4`.
 
 ### Changed
 
-- `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
+- `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0 and `strict_booleans`. Unquoted `yes`, `no`, `on`, `off`, `y`, and `n` stay strings. A typed bool rejects `yes`. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
+- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, and duplicate keys are an error.
 - Workspace `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are Rust 1.99.1, the current stable. The `msrv` job still runs `cargo check --workspace --all-features --locked` on that exact compiler.
+- `RUST_TOPS_RECORD_GOLDEN` rewrites the golden files for a local re-record. CI does not set it.
 
 ## [0.1.4] — 2026-10-19
 

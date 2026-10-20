@@ -13,7 +13,7 @@ edition = "2021"
 //!
 //! Native cargo-script (RFC 3502), **std only**: tables + `format!` + `fs`.
 //! It is a maintainer tool: it is not a workspace member, it does not change
-//! the kit `rust-version = "1.99.1"`, and it is never pulled by the Nix
+//! the kit `rust-version = "1.85"`, and it is never pulled by the Nix
 //! `law-catalog` check (`scripts/bend-gate.sh` stays names-only POSIX).
 
 use std::collections::HashSet;
