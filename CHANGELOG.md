@@ -25,6 +25,17 @@ Hard Bend gate (TOFU-pinned Bend 2.0.36), Lean 4.34.0 `--verdict` tier, and a la
 - `law-diff` in its own workflow, and `.github/CODEOWNERS` for `@VirtualMachinist`.
 - Template drift check: `laws/LAWS.bend` must match `crates/cargo-tops/templates/LAWS.bend`.
 
+### Changed
+
+- `laws/PROOF.bend` is laid out one claim per line and one call per line, with a `#` comment above each group of laws (H-01..H-10, H-11..H-20, H-21..H-30, H-31..H-40, H-41..H-53). `scripts/gen-laws.rs` writes the layout and stays the only writer. The 53 claim strings are unchanged and in the same order; the call tuple is still right-nested. `laws/LAWS.bend` and `laws/NAMES` are byte-identical. Bend 2.0.36 passes `bend PROOF.bend` and `--verdict`.
+- `scripts/law-diff.rs` reads `main`'s signature from `def main(` to the header colon across lines, drops `#` comment lines, and compares the same claim strings. A layout change is no change; an edited claim still needs `laws-change-approved`. `scripts/testdata/PROOF.one-line.bend` keeps the old one-line proof as the fixture for that test.
+- `scripts/bend-verdict-step.sh` reads `PIPESTATUS` once. A `tee` failure now reports `bend-verdict: tee exited N` and writes no `VERDICT-TIMING.md`. The old second read was the assignment's status and was always 0.
+- `scripts/test-bend-gate.sh` exits 1 when `CI` is set and any case was skipped. A local run keeps its skips and exits 0.
+- `scripts/bend-gate.sh` and `scripts/fetch-bend.sh` refuse `RUST_TOPS_ROOT` when `CI` is set. Nix still sets it without `CI`.
+- `cargo-deny` is pinned to `0.18.9` in `.github/workflows/rust-tops.yml`.
+
+Protocol 1.0.0 is unchanged.
+
 ### Note
 
 `config/drop-in/rust-tops.yml` and `crates/cargo-tops/templates/drop-in/rust-tops.yml` stay tag-pinned. Repinning them changes `cargo tops init` and is a follow-up. Nix `bend-proof` is local feedback: no CI job runs `nix flake check`. Darwin's `checks.bend-proof` is absent.

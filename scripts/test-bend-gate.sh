@@ -34,6 +34,26 @@ skip() {
   note "SKIP $1"
 }
 
+# A SKIP is not a pass in CI. A local BSD run keeps its skips and exits 0.
+finish() {
+  note "----"
+  note "passed=$pass failed=$fail skipped=$skipped"
+  if [ "$fail" -ne 0 ]; then
+    exit 1
+  fi
+  if [ -n "${CI:-}" ] && [ "$skipped" -ne 0 ]; then
+    printf 'test-bend-gate: %s skipped under CI\n' "$skipped" >&2
+    exit 1
+  fi
+  exit 0
+}
+
+# Case s re-runs this harness with one forced skip and no other case.
+if [ -n "${TEST_BEND_GATE_FORCE_SKIP:-}" ]; then
+  skip "forced by TEST_BEND_GATE_FORCE_SKIP"
+  finish
+fi
+
 fresh() {
   dest=$1
   rm -rf "$dest"
@@ -297,20 +317,24 @@ if not names.endswith("\n"):
 (root / "laws/NAMES").write_text(names + "halo_witness_appended\n")
 proof = (root / "laws/PROOF.bend").read_text()
 lines = proof.splitlines(keepends=True)
+# The signature runs from `def main(` to the line ending in the header colon.
+suffix = ": Laws.Verdict}:"
+in_main = False
 found = False
 for i, line in enumerate(lines):
     if line.startswith("def main("):
-        nl = "\n" if line.endswith("\n") else ""
-        body = line.rstrip("\n")
-        suffix = ": Laws.Verdict}:"
-        if not body.endswith(suffix):
-            raise SystemExit("main signature suffix drifted: " + body[-40:])
-        body = body[: -len(suffix)] + ": Laws.Verdict} & {Laws.halo_witness_verdict(Laws.HaloOk{}) == Laws.Allow{} : Laws.Verdict}:"
+        in_main = True
+    if not in_main:
+        continue
+    nl = "\n" if line.endswith("\n") else ""
+    body = line.rstrip("\n")
+    if body.endswith(suffix):
+        body = body[: -len(suffix)] + ": Laws.Verdict}\n  & {Laws.halo_witness_verdict(Laws.HaloOk{}) == Laws.Allow{} : Laws.Verdict}:"
         lines[i] = body + nl
         found = True
         break
 if not found:
-    raise SystemExit("no main")
+    raise SystemExit("no main signature ending in " + suffix)
 text = "".join(lines)
 old_call = "Laws.single_deny_site()"
 new_call = "(Laws.single_deny_site(), Laws.halo_witness_appended())"
@@ -438,6 +462,14 @@ expect_msg "m RUST_TOPS_LAWS" "$ci_downgrade" \
 expect_msg "m RUST_TOPS_ROOT" "$ci_downgrade" \
   env RUST_TOPS_ROOT="$work/other-root" "$work/m/scripts/bend-proof-ci.sh"
 
+# m2. the lower scripts refuse RUST_TOPS_ROOT under CI. Nix sets it without CI.
+expect_msg "m2 bend-gate" "bend-gate: RUST_TOPS_ROOT must be unset in CI" \
+  env CI=true RUST_TOPS_ROOT="$work/m" "$work/m/scripts/bend-gate.sh"
+expect_msg "m2 fetch-bend" "fetch-bend: RUST_TOPS_ROOT must be unset in CI" \
+  env CI=true RUST_TOPS_ROOT="$work/m" HOME="$work/home-m2" "$work/m/scripts/fetch-bend.sh"
+expect_ok "m2 bend-gate without CI" env -u CI RUST_TOPS_ROOT="$work/m" BEND_GATE_NAMES_ONLY=1 \
+  "$work/m/scripts/bend-gate.sh"
+
 # n. law X is a strict prefix of an existing name, present in LAWS and NAMES, absent from PROOF
 fresh "$work/n"
 py << PY
@@ -498,6 +530,81 @@ expect_msg "o" "law-diff: non-append change in laws/LAWS.bend" \
   "$root/scripts/law-diff.sh" --base-dir "$work/o-base" --head-dir "$work/o"
 expect_ok "o labeled" env LABELS='["laws-change-approved"]' \
   "$root/scripts/law-diff.sh" --base-dir "$work/o-base" --head-dir "$work/o"
+
+# rc 0 and nothing on stdout or stderr.
+expect_silent_ok() {
+  name=$1
+  shift
+  run_capture "$work/cap" "$@"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] && [ ! -s "$work/cap.all" ]; then
+    ok "$name"
+  else
+    bad "$name rc=$rc" "$(cat "$work/cap.all")"
+  fi
+}
+
+# rc exactly 1 and the exact line.
+expect_rc1_line() {
+  name=$1
+  line=$2
+  shift 2
+  run_capture "$work/cap" "$@"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 1 ] && grep -qxF -- "$line" "$work/cap.all"; then
+    ok "$name: $line"
+  else
+    bad "$name rc=$rc missing [$line]" "$(cat "$work/cap.all")"
+  fi
+}
+
+# r. multi-line signature, same claims, comments and line breaks moved.
+fresh "$work/r-base"
+fresh "$work/r"
+py << PY
+from pathlib import Path
+p = Path("$work/r/laws/PROOF.bend")
+text = p.read_text()
+old = "  # Evidence and class. H-01 through H-10.\n"
+assert text.count(old) == 1
+text = text.replace(old, old + "  # an extra comment line\n    # indented comment\n", 1)
+# Join H-02 onto H-01's line and re-indent H-03.
+h2 = "\n  & {Laws.vector_verdict("
+assert text.count(h2) == 1
+text = text.replace(h2, " & {Laws.vector_verdict(", 1)
+h3 = "\n  & {Laws.port_verdict("
+assert text.count(h3) == 1
+text = text.replace(h3, "\n      & {Laws.port_verdict(", 1)
+p.write_text(text)
+PY
+expect_silent_ok "r same claims, new layout" \
+  "$root/scripts/law-diff.sh" --base-dir "$work/r-base" --head-dir "$work/r"
+
+# r'. one claim's text changed inside the multi-line signature.
+fresh "$work/rp"
+py << PY
+from pathlib import Path
+p = Path("$work/rp/laws/PROOF.bend")
+text = p.read_text()
+old = "  & {Laws.cap_verdict(Laws.MagicCap{}) == Laws.Refuse{} : Laws.Verdict}\n"
+new = "  & {Laws.cap_verdict(Laws.MagicCap{}) == Laws.Ack{} : Laws.Verdict}\n"
+assert text.count(old) == 1
+p.write_text(text.replace(old, new, 1))
+PY
+expect_rc1_line "r'" "law-diff: removed proof claim (needs laws-change-approved)" \
+  "$root/scripts/law-diff.sh" --base-dir "$work/r-base" --head-dir "$work/rp"
+
+# r1. the one-line PROOF.bend from 968c390 against the regenerated layout:
+# the 53 claims are the same.
+fresh "$work/r1-base"
+cp "$root/scripts/testdata/PROOF.one-line.bend" "$work/r1-base/laws/PROOF.bend"
+expect_silent_ok "r1 one-line base, same 53 claims" \
+  "$root/scripts/law-diff.sh" --base-dir "$work/r1-base" --head-dir "$work/r-base"
+# r1'. the one-line base parses to claims, so r1 is not vacuous.
+expect_rc1_line "r1'" "law-diff: removed proof claim (needs laws-change-approved)" \
+  "$root/scripts/law-diff.sh" --base-dir "$work/r1-base" --head-dir "$work/rp"
 
 # n4. --verdict checks the installed bend version against the lock
 mkdir -p "$work/n4/bin"
@@ -570,7 +677,18 @@ expect_msg "lean-cache" "fetch-lean: cached archive failed sha256; re-downloadin
   env PATH="$work/lean-bin:$PATH" HOME="$work/home-lean" LEAN_ARCHIVE_DIR="$work/lean-cache" \
   "$root/scripts/fetch-lean.sh"
 
-# b1 / b1' drive bend-verdict-step.sh, which calls GNU time -v.
+# s. one SKIP under CI fails the harness with rc 1. The same skip locally exits 0.
+run_capture "$work/cap" env CI=true TEST_BEND_GATE_FORCE_SKIP=1 "$root/scripts/test-bend-gate.sh"
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && grep -qxF 'test-bend-gate: 1 skipped under CI' "$work/cap.all"; then
+  ok "s: test-bend-gate: 1 skipped under CI"
+else
+  bad "s rc=$rc missing [test-bend-gate: 1 skipped under CI]" "$(cat "$work/cap.all")"
+fi
+expect_ok "s local skip" env -u CI TEST_BEND_GATE_FORCE_SKIP=1 "$root/scripts/test-bend-gate.sh"
+
+# b1 / b1' / b1'' drive bend-verdict-step.sh, which calls GNU time -v.
 # BSD /usr/bin/time rejects -v before the stub runs, so a bare non-zero
 # status would pass without proving the proof failed.
 if /usr/bin/time -v -o "$work/time-probe.txt" true >/dev/null 2>&1; then
@@ -626,13 +744,41 @@ EOF
     VERDICT_TIMING_MD="$work/b1p/VERDICT-TIMING.md" \
     HOME="$work/home-b1p" \
     "$root/scripts/bend-verdict-step.sh"
+
+  # b1''. the proof passes but tee cannot write VERDICT_OUT (a directory).
+  mkdir -p "$work/b1pp/bin" "$work/b1pp/verdict.out"
+  cat > "$work/b1pp/bin/bend" << 'EOF'
+#!/bin/sh
+if [ "${1:-}" = "version" ]; then
+  printf 'bend 2.0.36\n'
+  exit 0
+fi
+printf 'ALL PROOFS CHECK\n'
+exit 0
+EOF
+  chmod +x "$work/b1pp/bin/bend"
+  run_capture "$work/cap" env \
+    PATH="$work/b1pp/bin:/usr/bin:/bin" \
+    VERDICT_OUT="$work/b1pp/verdict.out" \
+    VERDICT_TIME="$work/b1pp/verdict-time.txt" \
+    VERDICT_TIMING_MD="$work/b1pp/VERDICT-TIMING.md" \
+    HOME="$work/home-b1pp" \
+    "$root/scripts/bend-verdict-step.sh"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    bad "b1'' tee failure exited 0" "$(cat "$work/cap.all")"
+  elif ! grep -F -q 'bend-verdict: tee exited' "$work/cap.all"; then
+    bad "b1'' missing [bend-verdict: tee exited]" "$(cat "$work/cap.all")"
+  elif [ -f "$work/b1pp/VERDICT-TIMING.md" ]; then
+    bad "b1'' wrote VERDICT-TIMING.md after a tee failure" "$(cat "$work/b1pp/VERDICT-TIMING.md")"
+  else
+    ok "b1'': bend-verdict: tee exited"
+  fi
 else
   skip "b1: /usr/bin/time -v is not available"
   skip "b1': /usr/bin/time -v is not available"
+  skip "b1'': /usr/bin/time -v is not available"
 fi
 
-note "----"
-note "passed=$pass failed=$fail skipped=$skipped"
-if [ "$fail" -ne 0 ]; then
-  exit 1
-fi
+finish

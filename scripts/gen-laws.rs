@@ -118,25 +118,48 @@ fn emit_binary_block(row: &Row) -> String {
     )
 }
 
-/// `a & (b & (c & …))` — right-nested, starting from the last item.
+/// Group comments in `main`'s signature: `(first H-number, last H-number, label)`.
+/// They follow NAMES order, so fuzz (H-14) sits in the second group.
+const PROOF_GROUPS: &[(usize, usize, &str)] = &[
+    (1, 10, "Evidence and class"),
+    (11, 20, "Contracts, fuzz, codecs"),
+    (21, 30, "Oracle and tier-0 toolchain"),
+    (31, 40, "Mutation, measurement, scars"),
+    (41, 53, "CI honesty"),
+];
+
+/// `a & b & c`, one claim per line, with a `#` comment above each group.
 ///
-/// Mirrors the catalog fold exactly: the first prop is the leftmost term and
-/// each earlier item wraps everything to its right.
+/// The claim strings and their order are the catalog fold's; only whitespace
+/// and comments are layout. Every line is indented two spaces under `def main`.
 fn fold_product(items: &[String]) -> String {
-    let mut acc = items[items.len() - 1].clone();
-    for item in items[..items.len() - 1].iter().rev() {
-        acc = format!("{item} & {acc}");
+    let mut lines = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let h = index + 1;
+        if let Some((first, last, label)) = PROOF_GROUPS.iter().find(|(first, _, _)| *first == h) {
+            lines.push(format!("  # {label}. H-{first:02} through H-{last:02}."));
+        }
+        if index == 0 {
+            lines.push(format!("  {item}"));
+        } else {
+            lines.push(format!("  & {item}"));
+        }
     }
-    acc
+    lines.join("\n")
 }
 
-/// `(a, (b, (c, …)))` — same shape as [`fold_product`], for the call tuple.
-fn fold_tuple(items: &[String]) -> String {
-    let mut acc = items[items.len() - 1].clone();
-    for item in items[..items.len() - 1].iter().rev() {
-        acc = format!("({item}, {acc})");
+/// `(a, (b, (c)))`, right-nested, one call per line. Each tuple opens on its
+/// own line and its two members sit one level deeper.
+fn fold_tuple(items: &[String], indent: usize) -> String {
+    let pad = " ".repeat(indent);
+    if items.len() == 1 {
+        return format!("{pad}{}", items[0]);
     }
-    acc
+    format!(
+        "{pad}(\n{pad}  {},\n{}\n{pad})",
+        items[0],
+        fold_tuple(&items[1..], indent + 2)
+    )
 }
 
 /// Where `laws/` lives: the parent of the directory holding this file.
@@ -226,6 +249,8 @@ fn main() {
     write_or_exit(&laws_dir.join("LAWS.bend"), &laws_body);
 
     // PROOF: one property per law, and the calls as one right-nested tuple.
+    // One claim per line and one call per line; `scripts/law-diff.rs` reads
+    // the signature across lines.
     let mut props: Vec<String> = Vec::new();
     let mut calls: Vec<String> = Vec::new();
     for row in BINARY {
@@ -247,10 +272,16 @@ fn main() {
         exit(1);
     }
 
+    let covered: usize = PROOF_GROUPS.iter().map(|(first, last, _)| last - first + 1).sum();
+    if covered != EXPECTED_LAWS {
+        eprintln!("proof groups cover {covered} laws, expected {EXPECTED_LAWS}");
+        exit(1);
+    }
+
     let proof = format!(
-        "import ./LAWS.bend as Laws\n\ndef main() -> {}:\n  {}\n",
+        "import ./LAWS.bend as Laws\n\ndef main() ->\n{}:\n{}\n",
         fold_product(&props),
-        fold_tuple(&calls)
+        fold_tuple(&calls, 2)
     );
     write_or_exit(&laws_dir.join("PROOF.bend"), &proof);
 
