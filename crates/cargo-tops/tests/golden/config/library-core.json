@@ -1,0 +1,200 @@
+{
+  "agent": {
+    "guidelines_file": "AGENTS.md",
+    "may_run_tools": true,
+    "must_not_split_for_crap_alone": true,
+    "must_not_write_tests_from_impl": true,
+    "required_before_pr": [
+      "fmt",
+      "clippy",
+      "nextest",
+      "llvm-cov",
+      "crap",
+      "mutants-diff"
+    ]
+  },
+  "crate": {
+    "class": "library-core",
+    "name": "golden-crate"
+  },
+  "density": {
+    "allow_long_table_functions": true,
+    "max_fn_cc": 8,
+    "max_fn_sloc": 40,
+    "production_sloc_policy": "minimum necessary lines that preserve named invariants, performance, and reviewability",
+    "rules": [
+      "one function, one named job",
+      "enum+match over boolean modes",
+      "no clone on hot_paths without a why-comment",
+      "no trait or builder with a single impl",
+      "unwrap only for programmer-invariant bugs",
+      "tests may be table-driven; production may not be copy-pasted"
+    ]
+  },
+  "exemptions": [
+    {
+      "expires": "2027-09-24",
+      "layer": "crap",
+      "owner": "platform",
+      "path": "src/generated/**",
+      "reason": "generated protobuf; public decode roundtrip is the oracle"
+    }
+  ],
+  "gates": {
+    "coverage": {
+      "line_min_pct": 95.0
+    },
+    "crap": {
+      "threshold_agent": 6.0
+    },
+    "mutation": {
+      "unexplained_survivors_max": 0
+    }
+  },
+  "goals": {
+    "correctness": "behavior matches specified invariants under all applicable layers",
+    "density": "fewest necessary production lines that preserve clarity and performance",
+    "notes": "Public API is decode/encode plus Error. No builders. No trait for a single impl.\n",
+    "performance": "no unexplained regression on gated hot paths; prefer algorithmic then codegen then micro"
+  },
+  "layers": [
+    {
+      "enabled": true,
+      "id": "static-lint",
+      "runner": "cargo clippy/fmt/deny",
+      "tier": 0
+    },
+    {
+      "enabled": true,
+      "id": "unit",
+      "runner": "cargo nextest",
+      "tier": 0
+    },
+    {
+      "enabled": true,
+      "id": "doc",
+      "runner": "cargo test --doc",
+      "tier": 0
+    },
+    {
+      "enabled": true,
+      "id": "integration",
+      "runner": "cargo nextest",
+      "tier": 1
+    },
+    {
+      "enabled": true,
+      "id": "acceptance",
+      "runner": "assert_cmd journeys",
+      "tier": 1
+    },
+    {
+      "enabled": false,
+      "id": "snapshot",
+      "runner": "insta",
+      "tier": 2
+    },
+    {
+      "enabled": false,
+      "id": "compile-fail",
+      "runner": "trybuild",
+      "tier": 2
+    },
+    {
+      "enabled": true,
+      "id": "coverage",
+      "runner": "cargo-llvm-cov",
+      "tier": 0
+    },
+    {
+      "enabled": true,
+      "id": "crap",
+      "runner": "cargo-crap",
+      "tier": 0
+    },
+    {
+      "enabled": true,
+      "id": "mutation",
+      "runner": "cargo-mutants",
+      "tier": 1
+    },
+    {
+      "enabled": true,
+      "id": "property",
+      "runner": "proptest",
+      "tier": 1
+    },
+    {
+      "enabled": true,
+      "id": "fuzz",
+      "runner": "cargo-fuzz",
+      "tier": 3
+    },
+    {
+      "enabled": false,
+      "id": "concurrency",
+      "runner": "loom",
+      "tier": 3
+    },
+    {
+      "enabled": true,
+      "id": "miri",
+      "runner": "cargo +nightly miri",
+      "tier": 3
+    },
+    {
+      "enabled": true,
+      "id": "sanitizer",
+      "runner": "asan/tsan nightly",
+      "tier": 3
+    },
+    {
+      "enabled": true,
+      "id": "formal-kani",
+      "runner": "cargo-kani",
+      "tier": 4
+    },
+    {
+      "enabled": true,
+      "id": "bench-criterion",
+      "runner": "criterion",
+      "tier": 5
+    },
+    {
+      "enabled": true,
+      "id": "bench-callgrind",
+      "runner": "gungraun",
+      "tier": 4
+    },
+    {
+      "enabled": true,
+      "id": "security-advisory",
+      "runner": "cargo-deny",
+      "tier": 0
+    },
+    {
+      "enabled": true,
+      "id": "density-audit",
+      "runner": "review+clippy",
+      "tier": 5
+    }
+  ],
+  "performance": {
+    "hot_path_requirements": [
+      "decode allocates nothing on the success path",
+      "encode writes into impl Write; callers supply the buffer",
+      "Callgrind Ir regression on listed symbols ≤ 2%"
+    ],
+    "release_profile": {
+      "codegen-units": 1,
+      "debug": 0,
+      "lto": "thin",
+      "opt-level": 3,
+      "panic": "abort"
+    }
+  },
+  "protocol": {
+    "id": "rust-tops",
+    "version": "1.0.0"
+  }
+}

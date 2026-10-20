@@ -2,10 +2,6 @@
 
 [advisories]
 yanked = "deny"
-ignore = [
-    # remove by 2026-11-30
-    { id = "RUSTSEC-2024-0449", reason = "informational unmaintained advisory, no CVE; it reaches us only through serde_yaml@0.9.34+deprecated parsing trusted local config; tracked for removal by the serde-saphyr migration; remove by 2026-11-30" },
-]
 
 [licenses]
 allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]

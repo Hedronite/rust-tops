@@ -11,6 +11,13 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 
 Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.4`.
 
+## [Unreleased]
+
+### Changed
+
+- `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
+- Workspace `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are Rust 1.99.1, the current stable. The `msrv` job still runs `cargo check --workspace --all-features --locked` on that exact compiler.
+
 ## [0.1.4] — 2026-10-19
 
 Compatible 0.x patch. Protocol plane stays **1.0.0**.

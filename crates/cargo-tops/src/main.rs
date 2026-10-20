@@ -7,6 +7,9 @@ use std::process::{Command, ExitCode};
 mod config;
 mod profiles;
 
+#[cfg(test)]
+mod parse_oracle;
+
 use config::TopsConfig;
 
 #[derive(Parser)]
@@ -122,8 +125,8 @@ fn load_config(path: &Path) -> Result<TopsConfig> {
     let file = config_path(path);
     let raw = fs::read_to_string(&file)
         .with_context(|| format!("missing {}; run `cargo tops init`", file.display()))?;
-    let cfg: TopsConfig =
-        serde_yaml::from_str(&raw).with_context(|| format!("invalid YAML: {}", file.display()))?;
+    let cfg: TopsConfig = serde_saphyr::from_str(&raw)
+        .with_context(|| format!("invalid YAML: {}", file.display()))?;
     Ok(cfg)
 }
 

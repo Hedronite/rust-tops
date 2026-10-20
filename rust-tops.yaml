@@ -12,7 +12,7 @@ crate:
   name: cargo-tops
   class: binary-cli
   edition: "2021"
-  msrv: "1.85"
+  msrv: "1.99.1"
   unsafe_policy: allow-documented
   hot_paths:
     - crates/cargo-tops/src/main.rs::gate
