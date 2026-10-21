@@ -13,18 +13,13 @@ Do not mix planes. A protocol 1.0.0 body can ship under git tag `v0.1.4`.
 
 ## [Unreleased]
 
-### Changed
-
-- `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0 and `strict_booleans`. Unquoted `yes`, `no`, `on`, `off`, `y`, and `n` stay strings. A typed bool rejects `yes`. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
-- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, and duplicate keys are an error.
-- Workspace `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are Rust 1.99.1, the current stable. The `msrv` job still runs `cargo check --workspace --all-features --locked` on that exact compiler.
-- `RUST_TOPS_RECORD_GOLDEN` rewrites the golden files for a local re-record. CI does not set it.
-
-## [0.1.4] — 2026-10-19
+## [0.1.4] — 2026-10-20
 
 Compatible 0.x patch. Protocol plane stays **1.0.0**.
 
 Hard Bend gate (TOFU-pinned Bend 2.0.36), Lean 4.34.0 `--verdict` tier, and a law ownership guard. GitHub Actions in `.github/workflows/rust-tops.yml` are pinned by commit SHA. Protocol 1.0.0 is unchanged.
+
+Compiling `cargo-tops` from source needs Rust **1.99.1**. Cargo reads `rust-version` and refuses an older compiler before the build.
 
 ### Added
 
@@ -42,6 +37,10 @@ Hard Bend gate (TOFU-pinned Bend 2.0.36), Lean 4.34.0 `--verdict` tier, and a la
 - `scripts/test-bend-gate.sh` exits 1 when `CI` is set and any case was skipped. A local run keeps its skips and exits 0.
 - `scripts/bend-gate.sh` and `scripts/fetch-bend.sh` refuse `RUST_TOPS_ROOT` when `CI` is set. Nix still sets it without `CI`.
 - `cargo-deny` is pinned to `0.18.9` in `.github/workflows/rust-tops.yml`.
+- `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0 and `strict_booleans`. Unquoted `yes`, `no`, `on`, `off`, `y`, and `n` stay strings. A typed bool rejects `yes`. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
+- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, and duplicate keys are an error.
+- Workspace `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are Rust 1.99.1, the current stable. The `msrv` job still runs `cargo check --workspace --all-features --locked` on that exact compiler.
+- `RUST_TOPS_RECORD_GOLDEN` rewrites the golden files for a local re-record. CI does not set it.
 
 Protocol 1.0.0 is unchanged.
 
