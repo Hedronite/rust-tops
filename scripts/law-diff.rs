@@ -276,14 +276,44 @@ fn rows(src: &str) -> Vec<String> {
 }
 
 fn claims(proof: &str) -> Vec<String> {
-    let Some(line) = proof.lines().find(|line| line.starts_with("def main(")) else {
+    let Some(header) = main_header(proof) else {
         return Vec::new();
     };
-    let Some((_, ty)) = line.split_once("->") else {
+    let Some((_, ty)) = header.split_once("->") else {
         return Vec::new();
     };
-    let ty = ty.trim().strip_suffix(':').unwrap_or(ty.trim()).trim();
-    split_top(ty, " & ")
+    split_top(ty.trim(), " & ")
+}
+
+/// `def main(` through the header colon, which is the first `:` at brace and
+/// paren depth 0. The colons inside `{... : Laws.Verdict}` are deeper.
+/// Lines whose first non-space is `#` are dropped and newlines become spaces,
+/// so a signature split one claim per line reads the same as one line.
+fn main_header(proof: &str) -> Option<String> {
+    let mut header = String::new();
+    let mut depth = 0i32;
+    let lines = proof
+        .lines()
+        .skip_while(|line| !line.starts_with("def main("));
+    for line in lines {
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        for (i, c) in line.char_indices() {
+            match c {
+                '{' | '(' => depth += 1,
+                '}' | ')' => depth -= 1,
+                ':' if depth == 0 => {
+                    header.push_str(&line[..i]);
+                    return Some(header);
+                }
+                _ => {}
+            }
+        }
+        header.push_str(line);
+        header.push(' ');
+    }
+    None
 }
 
 fn split_top(text: &str, sep: &str) -> Vec<String> {

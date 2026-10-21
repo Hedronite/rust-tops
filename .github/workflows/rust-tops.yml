@@ -57,7 +57,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cargo-deny@0.18
+          tool: cargo-deny@0.18.9
       - run: cargo deny check
 
   nextest:

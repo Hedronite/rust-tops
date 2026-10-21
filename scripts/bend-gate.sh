@@ -8,6 +8,11 @@ set -eu
 export BEND_NO_TELEMETRY="${BEND_NO_TELEMETRY:-1}"
 
 if [ -n "${RUST_TOPS_ROOT:-}" ]; then
+  # Nix points the gate at its source tree this way and does not set CI.
+  if [ -n "${CI:-}" ]; then
+    printf 'bend-gate: RUST_TOPS_ROOT must be unset in CI\n' >&2
+    exit 1
+  fi
   root=$RUST_TOPS_ROOT
 else
   root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)

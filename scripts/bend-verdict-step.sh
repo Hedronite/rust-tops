@@ -12,16 +12,18 @@ mkdir -p "$(dirname "$out")" "$(dirname "$timefile")" "$(dirname "$timing")"
 
 set +e
 /usr/bin/time -v -o "$timefile" "$root/scripts/bend-proof-ci.sh" --verdict | tee "$out"
-proof_rc=${PIPESTATUS[0]}
-pipe_rc=$?
+# Copy PIPESTATUS before any other command: the next assignment resets it.
+pipe_rcs=("${PIPESTATUS[@]}")
 set -euo pipefail
+proof_rc=${pipe_rcs[0]}
+tee_rc=${pipe_rcs[1]}
 if [ "$proof_rc" -ne 0 ]; then
   printf 'bend-verdict: proof exited %s\n' "$proof_rc" >&2
   exit "$proof_rc"
 fi
-if [ "$pipe_rc" -ne 0 ]; then
-  printf 'bend-verdict: proof exited %s\n' "$pipe_rc" >&2
-  exit "$pipe_rc"
+if [ "$tee_rc" -ne 0 ]; then
+  printf 'bend-verdict: tee exited %s\n' "$tee_rc" >&2
+  exit "$tee_rc"
 fi
 if ! grep -qxF 'ALL PROOFS CHECK' "$out"; then
   printf 'bend-verdict: missing ALL PROOFS CHECK\n' >&2
