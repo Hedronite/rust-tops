@@ -7,17 +7,31 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.1.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | Cargo `0.2.0` (latest tag `v0.1.4`) |
+| Package | `cargo-tops` and git tag | `v0.2.0`, Cargo `0.2.0` |
 
 Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0.
 
 ## [Unreleased]
 
-## [0.2.0] — unreleased
+## [0.2.0] — 2026-10-21
 
 **Breaking 0.x minor.** Protocol plane moves to **1.1.0** (additive `laws` layer). Package plane moves to **0.2.0**.
 
-`cargo tops gate` now runs the Bend laws on the adopter's own files and reports. With the `laws` layer enabled, `gate` needs Bend 2.0.36. If that binary is absent, `gate` runs the vendored `scripts/fetch-bend.sh`, and a failed fetch exits 1. In 0.1.4, `gate` never looked for Bend. A repo that adds the `laws` layer, or runs a fresh `init`, now fails `gate` when `bend` refuses a case.
+Pre-1.0 SemVer: the incompatible gate change below takes the minor from published `0.1.4` to `0.2.0`.
+
+### Breaking
+
+- `cargo tops gate` runs the Bend laws on the adopter's own files and reports. With the `laws` layer enabled, `gate` needs Bend 2.0.36. If that binary is absent, `gate` runs the vendored `scripts/fetch-bend.sh`, and a failed fetch exits 1. In 0.1.4, `gate` never looked for Bend. A repo that adds the `laws` layer, or runs a fresh `init`, now fails `gate` when `bend` refuses a case. This is the incompatible change since tag `v0.1.4` (PR #10).
+- `rust-tops.yaml` is read by serde-saphyr 2.0.0 with `strict_booleans: true` and every other option at the library default. That reader shipped in 0.1.4, which called the switch a compatible patch and omitted merge keys and non-finite floats. The same reader is in 0.2.0. Against serde_yaml 0.9 (0.1.3 and earlier):
+  - a leading-zero `017` reads as the number 17 (`legacy_octal_numbers` stays off)
+  - an integer outside the 64-bit range loses precision in a `serde_json::Value` (`18446744073709551616` becomes `1.8446744073709552e19`)
+  - custom tags are dropped (`!custom 4` is `4`; `reject_unsupported_tags` stays off)
+  - `~` in a `String` field is an error
+  - duplicate keys are an error (`DuplicateKeyPolicy::Error`)
+  - `<<` merge keys are applied (`MergeKeyPolicy::Merge`)
+  - `.inf`, `-.inf`, and `.nan` are rejected on a `serde_json::Value` field (`goals`, `density`, `performance`, `agent`, `exemptions`). An `f64` field (`gates.coverage.line_min_pct`, `gates.crap.threshold_agent`) still accepts those spellings
+  - strict booleans: unquoted `yes`, `no`, `on`, `off`, `y`, and `n` stay strings. A typed bool rejects them
+- MSRV is Rust 1.99.1, also since 0.1.4, and it stays 1.99.1 in 0.2.0. `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are that compiler. Cargo refuses an older compiler before the build. `scripts/test-bend-gate.sh` case `j cargo` runs plain `cargo`, so `rust-toolchain.toml` selects the compiler.
 
 ### Protocol 1.1.0
 
@@ -41,6 +55,7 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 
 - `cargo-tops` depends on `toml` 1 (kit file reads: `laws/bend.lock`, `Cargo.toml` lints, Cargo config rustflags, `rust-toolchain.toml`).
 - The gate summary counts problems instead of commands: `fail: N problem(s), M command(s) run`.
+- README badge block is two rows (PR #8). The Bend gate docs say what `bend PROOF.bend` proves on this repository and what an adopter's `laws` layer does not prove (PR #9).
 
 ### Not in this release
 
@@ -73,7 +88,7 @@ Compiling `cargo-tops` from source needs Rust **1.99.1**. Cargo reads `rust-vers
 - `scripts/bend-gate.sh` and `scripts/fetch-bend.sh` refuse `RUST_TOPS_ROOT` when `CI` is set. Nix still sets it without `CI`.
 - `cargo-deny` is pinned to `0.18.9` in `.github/workflows/rust-tops.yml`.
 - `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0 and `strict_booleans`. Unquoted `yes`, `no`, `on`, `off`, `y`, and `n` stay strings. A typed bool rejects `yes`. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
-- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, and duplicate keys are an error.
+- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, duplicate keys are an error, `<<` merge keys are applied, and `.inf` / `-.inf` / `.nan` are rejected on a `serde_json::Value` field (an `f64` field still accepts them). These reader and MSRV changes are incompatible with 0.1.3. They shipped in this patch. The 0.2.0 Breaking section lists them again, because this entry originally called the release compatible and omitted merge keys and non-finite floats.
 - Workspace `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are Rust 1.99.1, the current stable. The `msrv` job still runs `cargo check --workspace --all-features --locked` on that exact compiler.
 - `RUST_TOPS_RECORD_GOLDEN` rewrites the golden files for a local re-record. CI does not set it.
 
@@ -133,6 +148,7 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
+[0.2.0]: https://github.com/Hedronite/rust-tops/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Hedronite/rust-tops/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Hedronite/rust-tops/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Hedronite/rust-tops/compare/v0.1.1...v0.1.2
