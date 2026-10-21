@@ -43,7 +43,7 @@ The Bend2 laws pack under [`laws/`](laws/) is provisional and non-normative. Pro
 | --- | --- | --- |
 | Protocol | 1.0.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
 | Package | 0.1.4 | workspace [`Cargo.toml`](Cargo.toml), git tag `v0.1.4` (cut by the maintainer), [crates.io](https://crates.io/crates/cargo-tops) |
-| This package | edition 2021, MSRV 1.85 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.85.0 |
+| This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1 |
 | Crate page | 0.1.3 published; this tree is 0.1.4 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
 | Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.5.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
@@ -175,7 +175,7 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 
 `main` is package **0.1.4**. Git tag `v0.1.3` and the crates.io release remain 0.1.3 until the maintainer tags `v0.1.4`. Protocol **1.0.0** stayed put.
 
-This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.85.0, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
+This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
 The Bend2 pack is 53 laws. [`scripts/bend-gate.sh`](scripts/bend-gate.sh) checks names and template bytes, requires `bend` 2.0.36 from [`laws/bend.lock`](laws/bend.lock), and uses the exit code of `bend PROOF.bend` as the verdict. Moving a law into [`RUST_TOPS.md`](RUST_TOPS.md) takes an explicit spec bump. Public [`RUST_TOPS.md`](RUST_TOPS.md) still stops at §24; the draft §25 review gate is not part of this package.
 

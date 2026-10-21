@@ -386,9 +386,8 @@ cat > "$work/run-j-cargo" << EOF
 #!/bin/sh
 set -eu
 cd "$jtree"
-if cargo +1.85.0 --version >/dev/null 2>&1; then
-  exec cargo +1.85.0 test -p cargo-tops --locked profiles::tests::laws_bend_matches_pack -- --exact
-fi
+# rust-toolchain.toml selects the compiler when it is present.
+# Otherwise cargo uses the default toolchain.
 exec cargo test -p cargo-tops --locked profiles::tests::laws_bend_matches_pack -- --exact
 EOF
 chmod +x "$work/run-j-cargo"

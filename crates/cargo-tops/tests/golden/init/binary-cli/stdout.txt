@@ -1,0 +1,11 @@
+wrote {path}/rust-tops.yaml
+wrote {path}/AGENTS.md
+wrote {path}/clippy.toml
+wrote {path}/.config/nextest.toml
+wrote {path}/.cargo/mutants.toml
+wrote {path}/.cargo-crap.toml
+wrote {path}/deny.toml
+wrote {path}/.github/workflows/rust-tops.yml
+wrote {path}/LAWS.bend
+initialized rust-tops for golden-crate (binary-cli) in {path}
+next: cargo tops check && cargo tops gate
