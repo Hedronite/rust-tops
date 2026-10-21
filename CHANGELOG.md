@@ -7,31 +7,39 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.1.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | Cargo `0.2.0` (latest tag `v0.1.4`) |
+| Package | `cargo-tops` and git tag | `v0.2.0`, Cargo `0.2.0` |
 
 Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0.
 
 ## [Unreleased]
 
-## [0.2.0] — unreleased
+## [0.2.0] - 2026-10-21
 
 **Breaking 0.x minor.** Protocol plane moves to **1.1.0** (additive `laws` layer). Package plane moves to **0.2.0**.
 
-`cargo tops gate` now runs the Bend laws on the adopter's own files and reports. With the `laws` layer enabled, `gate` needs Bend 2.0.36. If that binary is absent, `gate` runs the vendored `scripts/fetch-bend.sh`, and a failed fetch exits 1. In 0.1.4, `gate` never looked for Bend. A repo that adds the `laws` layer, or runs a fresh `init`, now fails `gate` when `bend` refuses a case.
+Pre-1.0 SemVer: the incompatible gate change below takes the minor from published `0.1.4` to `0.2.0`.
 
-### Protocol 1.1.0
+### Breaking
 
-- `RUST_TOPS.md` §3.1 defines the `laws` layer. The runner chooses one case per law from the crate's files or this gate's reports. `bend` judges a program that imports `LAWS.bend`. A `Refuse` fails the run, an `Ack` is recorded, and a law with no fact is `not-evaluated`, never a pass.
-- `schema/rust-tops.schema.json` adds `laws` to the layer-id enum. Both schema `$id`s move to `v1.1.0`. A 1.0.0 instance that does not list `laws` still validates.
-- §15 lists `LAWS.bend`, `laws/bend.lock` and `scripts/fetch-bend.sh` in the repository layout. §22 makes a `Refuse` from an enabled `laws` layer normative.
+- With the `laws` layer enabled, and not on `--dry-run`, `cargo tops gate` resolves Bend before any other layer ([#10]). It needs the version in `laws/bend.lock` (2.0.36), looked up on `PATH` and then in `$HOME/.bend/bin`. If that binary is absent, `gate` runs `sh scripts/fetch-bend.sh`. A missing `laws/bend.lock`, or a lock with no `[bend] version`, exits 1 before any other layer runs. A missing `scripts/fetch-bend.sh` exits 1 before any other layer runs when that Bend is not already installed. A failed fetch exits 1 the same way. Those stops print `fail: laws: ...`. In 0.1.4, `gate` never looked for Bend. A `Refuse` from `bend` fails the run.
+- A failing run that gets past that check prints `fail: N problem(s), M command(s) run`. 0.1.4 printed `fail: N of M command(s)`. The success line stays `ok: N command(s) passed`.
+- `cargo tops init` writes `rust-toolchain.toml` with `channel` set from the profile's `crate.msrv`. Every bundled profile sets `crate.msrv` to `1.88`.
+- The drop-in workflow does not install `stable`. Each job reads `channel` from `rust-toolchain.toml` and passes it to `dtolnay/rust-toolchain` at commit `683b588`, which has no default toolchain. A missing `rust-toolchain.toml` fails that read. An empty `channel` fails the install. The `msrv` job lost its unsubstituted `@{MSRV}` placeholder.
+
+### Migration from 0.1.4
+
+- A config with `protocol.version: "1.0.0"` and no `laws` layer still validates. The schema accepts any `MAJOR.MINOR.PATCH` version, and `laws` is an optional layer id. `cargo tops check` accepts that file. `cargo tops gate` does not call Bend. The failure summary above is the change for that repo.
+- To adopt the layer, set `protocol.version: "1.1.0"` and add `{ id: laws, enabled: true, tier: 0, runner: bend }`. The schema requires `id`, `enabled`, and `runner` on every layer. The bundled template also sets `scope: workspace`.
+- Copy in `laws/bend.lock` and `scripts/fetch-bend.sh` (mode 0755) beside `LAWS.bend`. `cargo tops init` writes those files and `rust-toolchain.toml`.
+- `init` skips a file that already exists and prints `skip existing <path>`. The overwrite flag is `--force` (`cargo tops init --force`). `cargo-tops init --help` prints `--force` as "Overwrite existing protocol files". There is no short flag.
 
 ### Added
 
-- `cargo tops init` writes `protocol.version: "1.1.0"` and `{ id: laws, enabled: true, tier: 0, runner: bend }`. Beside `LAWS.bend` it copies `laws/bend.lock` and `scripts/fetch-bend.sh` (mode 0755). Both are byte copies, held by drift tests.
-- `cargo tops init` writes `rust-toolchain.toml` with `channel` set to the profile's `crate.msrv` (`1.88`).
-- The drop-in workflow no longer installs `stable`. Each job reads `channel` from `rust-toolchain.toml` and passes it to `dtolnay/rust-toolchain`, pinned by commit (`683b588`). That action has no default toolchain at a commit pin, so an empty channel fails the job. The `msrv` job lost its unsubstituted `@{MSRV}` placeholder; the toolchain file is the MSRV now.
+- `RUST_TOPS.md` §3.1 defines the `laws` layer. The runner chooses one case per law from the crate's files or this gate's reports. `bend` judges a program that imports `LAWS.bend`. A `Refuse` fails the run, an `Ack` is recorded, and a law with no fact is `not-evaluated`, never a pass. §15 lists `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. §22 makes a `Refuse` from an enabled `laws` layer normative.
+- `schema/rust-tops.schema.json` adds `laws` to the layer-id enum. Both schema `$id`s move to `v1.1.0`. `config/rust-tops.lock.example` sets `[notes] schema` to `1.1.0` (it was `1.0.0`). `init` does not write `rust-tops.lock`.
+- `cargo tops init` writes `protocol.version: "1.1.0"` and the enabled `laws` layer. Beside `LAWS.bend` it copies `laws/bend.lock` and `scripts/fetch-bend.sh`. Both are byte copies, held by drift tests.
 - `init` appends one job per job keyword §4 requires for the class: `fuzz-smoke` (parser-codec), `miri` (no-std-embedded, unsafe-kernel), `kani` and `callgrind-hot` (unsafe-kernel). Each runs the real tool and fails when it is missing: `cargo +nightly fuzz list` must name a target, `cargo +nightly miri test`, `cargo kani` (kani-verifier 0.68.0), `cargo bench --bench hot` under valgrind (gungraun-runner 0.20.0). library-core and binary-cli get no extra jobs. `config/drop-in/` mirrors the templates.
-- A fresh `cargo tops init && cargo tops gate` exits 0 for every class `init` offers (tested with a stubbed and with the real Bend).
+- A fresh `cargo tops init && cargo tops gate` exits 0 for every class `init` offers (tested with a stubbed Bend and with Bend 2.0.36).
 - `cargo tops gate` runs the `laws` layer after every other layer, by the same tier rule. It writes `target/rust-tops/cases.bend`, runs the pinned `bend` on it, and writes `target/rust-tops/cases.json` (law, verdict function, case, files read, `bend`'s verdict, or the `not-evaluated` reason). It prints every law.
 - Fifteen laws get a case: `ci_matrix_matches_class`, `fmt_is_tier0`, `lock_honesty`, `msrv_enforced`, `clippy_toolchain_pinned`, `no_pedantic_group`, `baseline_green_before_mutants`, `record_only_artifacts_are_nonempty`, `missing_tool_not_green`, `crap_wires_coverage`, `coverage_features_match_workspace`, `perf_without_runner_is_not_gate`, `artifact_check_is_its_own_step`, `drop_in_is_a_floor_not_a_ceiling`, and `single_deny_site`. Each can still be `not-evaluated` when its file or report is absent. The other 38 are always `not-evaluated`. `evidence_not_self_served` is one of them: no file shows intent.
 - Nix: `overlays.default` exposes `rust-tops-bend` (Bend 2.0.36 from the lock sha256) on `x86_64-linux` and `aarch64-linux`, and `checks.bend-proof` now uses it. Darwin has no Nix Bend. Use `scripts/fetch-bend.sh` there.
@@ -40,15 +48,17 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 ### Changed
 
 - `cargo-tops` depends on `toml` 1 (kit file reads: `laws/bend.lock`, `Cargo.toml` lints, Cargo config rustflags, `rust-toolchain.toml`).
-- The gate summary counts problems instead of commands: `fail: N problem(s), M command(s) run`.
+- README badge block is two rows ([#8]). The Bend gate docs say what `bend PROOF.bend` proves on this repository and what an adopter's `laws` layer does not prove ([#9]).
 
-### Not in this release
+### Note
+
+Carried from 0.1.4: `rust-tops.yaml` is still read by serde-saphyr 2.0.0 with `strict_booleans` (leading-zero numbers, integers outside 64 bits, dropped tags, `~` in a `String`, duplicate keys, `<<` merge keys, `.inf`/`.nan` rejected on a `serde_json::Value`, strict booleans), and building `cargo-tops` still needs Rust 1.99.1. That 1.99.1 floor is the tool's MSRV; `cargo tops init` writes the adopter's `crate.msrv` (`1.88` in every bundled profile) into `rust-toolchain.toml`. The parse list is under `[0.1.4]`.
 
 - No source scanner. Source laws wait for a Rust parser.
 - The Lean `--verdict` recheck stays this repository's proof of the catalog. An adopter's `gate` never downloads Lean.
 - `bend` stops at the first refusal. Laws after it print `unreported`.
 
-## [0.1.4] — 2026-10-20
+## [0.1.4] - 2026-10-20
 
 Compatible 0.x patch. Protocol plane stays **1.0.0**.
 
@@ -73,7 +83,7 @@ Compiling `cargo-tops` from source needs Rust **1.99.1**. Cargo reads `rust-vers
 - `scripts/bend-gate.sh` and `scripts/fetch-bend.sh` refuse `RUST_TOPS_ROOT` when `CI` is set. Nix still sets it without `CI`.
 - `cargo-deny` is pinned to `0.18.9` in `.github/workflows/rust-tops.yml`.
 - `cargo-tops` reads `rust-tops.yaml` with serde-saphyr 2.0.0 and `strict_booleans`. Unquoted `yes`, `no`, `on`, `off`, `y`, and `n` stay strings. A typed bool rejects `yes`. Free-form fields are `serde_json::Value`. `unsafe-libyaml` is no longer in the lock, and the `RUSTSEC-2024-0449` ignore is gone.
-- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, and duplicate keys are an error.
+- Against serde_yaml 0.9: a leading-zero `017` reads as a number, integers outside the 64-bit range lose precision, custom tags are dropped, `~` in a string field is an error, duplicate keys are an error, `<<` merge keys are applied, and `.inf` / `-.inf` / `.nan` are rejected on a `serde_json::Value` field (an `f64` field still accepts them). These reader and MSRV changes are incompatible with 0.1.3. They shipped in this patch. The 0.2.0 note "Carried from 0.1.4" points here. This entry originally called the release compatible and omitted merge keys and non-finite floats.
 - Workspace `rust-version`, `rust-toolchain.toml`, and the CI toolchain pins are Rust 1.99.1, the current stable. The `msrv` job still runs `cargo check --workspace --all-features --locked` on that exact compiler.
 - `RUST_TOPS_RECORD_GOLDEN` rewrites the golden files for a local re-record. CI does not set it.
 
@@ -83,7 +93,7 @@ Protocol 1.0.0 is unchanged.
 
 `config/drop-in/rust-tops.yml` and `crates/cargo-tops/templates/drop-in/rust-tops.yml` stay tag-pinned. Repinning them changes `cargo tops init` and is a follow-up. Nix `bend-proof` is local feedback: no CI job runs `nix flake check`. Darwin's `checks.bend-proof` is absent.
 
-## [0.1.3] — 2026-09-25
+## [0.1.3] - 2026-09-25
 
 Compatible 0.x patch. Protocol plane stays **1.0.0**.
 
@@ -98,7 +108,7 @@ Maintainer tooling: `scripts/gen-laws.py` → `scripts/gen-laws.rs` (native Carg
 
 Vendored `crates/cargo-tops/templates/LAWS.bend` is a byte-copy of `laws/LAWS.bend` today; a drift guard is queued for a later slice.
 
-## [0.1.2] — 2026-09-25
+## [0.1.2] - 2026-09-25
 
 Compatible 0.x patch. Protocol plane stays **1.0.0**.
 
@@ -110,7 +120,7 @@ Provisional Bend2 pack (`laws/LAWS.bend`, 53 harvest laws H-01..H-53) plus a Nix
 - Nix flake overlay. Adopting flakes take `overlays.default`.
 - `cargo tops init` writes `LAWS.bend`.
 
-## [0.1.1] — 2026-09-25
+## [0.1.1] - 2026-09-25
 
 Compatible 0.x patch. `cargo-tops` is now a crates.io crate (`cargo install cargo-tops`). Drop-in kit is vendored under `crates/cargo-tops/templates/` so `cargo package` is self-contained. CLI verbs `init` / `check` / `gate` unchanged. Protocol plane stays 1.0.0.
 
@@ -118,7 +128,7 @@ Compatible 0.x patch. `cargo-tops` is now a crates.io crate (`cargo install carg
 
 - `include_str!` paths pointed at workspace files outside the crate, so `cargo publish` could not verify the tarball.
 
-## [0.1.0] — 2026-09-25
+## [0.1.0] - 2026-09-25
 
 First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0.1.0** (first published tag; not `0.0.x`).
 
@@ -133,8 +143,13 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
+[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Hedronite/rust-tops/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Hedronite/rust-tops/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Hedronite/rust-tops/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Hedronite/rust-tops/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Hedronite/rust-tops/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Hedronite/rust-tops/releases/tag/v0.1.0
+[#8]: https://github.com/Hedronite/rust-tops/pull/8
+[#9]: https://github.com/Hedronite/rust-tops/pull/9
+[#10]: https://github.com/Hedronite/rust-tops/pull/10

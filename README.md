@@ -180,7 +180,7 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 
 ## Status
 
-This tree is package **0.2.0** and protocol **1.1.0**. Git tag `v0.1.4` and crates.io `cargo-tops` 0.1.4, on protocol 1.0.0, are still the last release.
+This tree is package **0.2.0** and protocol **1.1.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.2.0]`. Git tag `v0.2.0` and the crates.io publish are not part of this change. Published `cargo-tops` is still 0.1.4 (tag `v0.1.4`, protocol 1.0.0).
 
 This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
