@@ -27,7 +27,7 @@ The macOS job `bend-proof-macos` is permanently informational. It re-checks the 
 
 ## On an adopting crate
 
-`cargo tops init` copies `LAWS.bend` to the crate root, `bend.lock` to `laws/bend.lock`, and `fetch-bend.sh` to `scripts/fetch-bend.sh`. It writes `{ id: laws, enabled: true, tier: 0, runner: bend }` into `rust-tops.yaml`. `cargo tops gate` looks for a `bend` that reports the locked version, first on `PATH` and then in `~/.bend/bin`. If there is none, it runs `sh scripts/fetch-bend.sh`, which replaces `~/.bend`. A failed fetch exits 1. `gate` then chooses one case per law, writes `target/rust-tops/cases.bend` (and `cases.json`), and runs `bend` on it. `bend` stops at the first refusal. An adopter's gate never downloads Lean.
+`cargo tops init` copies `LAWS.bend` to the crate root, `bend.lock` to `laws/bend.lock`, and `fetch-bend.sh` to `scripts/fetch-bend.sh`. It writes `{ id: laws, enabled: true, tier: 0, runner: bend }` into `rust-tops.yaml`, `rust-toolchain.toml` pinned to `crate.msrv`, and a workflow with the class jobs §4 requires, so a fresh `init` passes its own `gate`. `cargo tops gate` looks for a `bend` that reports the locked version, first on `PATH` and then in `~/.bend/bin`. If there is none, it runs `sh scripts/fetch-bend.sh`, which replaces `~/.bend`. A failed fetch exits 1. `gate` then chooses one case per law, writes `target/rust-tops/cases.bend` (and `cases.json`), and runs `bend` on it. `bend` stops at the first refusal. An adopter's gate never downloads Lean.
 
 ## Nix
 

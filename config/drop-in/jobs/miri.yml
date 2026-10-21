@@ -1,0 +1,13 @@
+
+  # §4 Miri is required for this class (§11.2). Miri needs nightly.
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: nightly
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly miri setup
+      - run: cargo +nightly miri test --workspace

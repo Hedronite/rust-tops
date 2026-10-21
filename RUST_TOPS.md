@@ -791,6 +791,7 @@ Forbidden:
 .
 ├── rust-tops.yaml                 # instance of the schema
 ├── rust-tops.lock                 # pinned CLI versions
+├── rust-toolchain.toml            # channel = crate.msrv
 ├── LAWS.bend                      # Bend law pack (laws layer, §3.1)
 ├── laws/bend.lock                 # pinned Bend release and sha256
 ├── scripts/fetch-bend.sh          # fetches that release

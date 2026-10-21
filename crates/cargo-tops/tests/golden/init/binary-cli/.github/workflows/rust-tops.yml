@@ -1,7 +1,13 @@
 # rust-tops reference workflow (v0.1.0 harvest) — FLOOR, not ceiling.
 # Copy to .github/workflows/rust-tops.yml; edit {TOKENS}; add instance
-# sysdeps / feature-matrix cells / class overlays. Never remove a job
-# your class requires to look greener on a headerless runner.
+# sysdeps / feature-matrix cells. Never remove a job your class requires
+# to look greener on a headerless runner. `cargo tops init` appends the
+# class jobs §4 requires (fuzz-smoke, miri, kani, callgrind-hot).
+#
+# Toolchain: rust-toolchain.toml (written by init from crate.msrv) is the
+# pin. Each job reads its channel and hands it to dtolnay/rust-toolchain,
+# which is pinned by commit and has no default toolchain. No job installs
+# `stable` (law.clippy_toolchain_pinned).
 #
 # Harvested applying this protocol to a parser-codec + binary-cli workspace
 # with optional FFI:
@@ -43,8 +49,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
@@ -57,7 +66,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
       # {SYSDEPS}
       - uses: taiki-e/install-action@nextest
@@ -68,7 +81,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@{MSRV}
+      # rust-toolchain.toml is crate.msrv, so this checks the declared MSRV.
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
       # {SYSDEPS}
       - run: cargo check --workspace --all-features --locked
@@ -86,7 +104,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
       # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
       - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
@@ -95,8 +117,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       # {SYSDEPS}
@@ -129,6 +154,3 @@ jobs:
   # darwin-check: every cfg(target_os) needs a lane. brew/cask the headers
   # the non-Linux build.rs probes. Cadence if the cask is unstable; file
   # the gap, do not drop the cfg.
-  #
-  # fuzz-smoke: parser-codec overlay, scheduled/manual, not a PR gate
-  # while a known crash is open. Crash = fail; timeout = infra.

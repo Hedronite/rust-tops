@@ -493,7 +493,7 @@ fn layer_ran(ctx: &Ctx, layer: &str) -> bool {
 /// H-06. Jobs a class must show, from §4 ("required" in the fuzz, Miri,
 /// Kani and Callgrind columns; loom for concurrency-runtime) on top of the
 /// §17 jobs every PR runs.
-fn class_keywords(class: &str) -> Option<&'static [&'static str]> {
+pub fn class_keywords(class: &str) -> Option<&'static [&'static str]> {
     Some(match class {
         "library-core" | "library-util" | "binary-cli" | "binary-service" | "proc-macro"
         | "workspace-root" => &["clippy", "nextest", "coverage"],

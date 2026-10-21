@@ -1,7 +1,8 @@
 //! `cargo tops init` file bytes and stdout, recorded from main `968c390`.
 //! Re-recorded for protocol 1.1.0 / package 0.2.0: the `laws` layer and
-//! version in `rust-tops.yaml`, and the Bend kit (`laws/bend.lock`,
-//! `scripts/fetch-bend.sh`).
+//! version in `rust-tops.yaml`, the Bend kit (`laws/bend.lock`,
+//! `scripts/fetch-bend.sh`), `rust-toolchain.toml`, and the per-class
+//! workflow (drop-in floor plus the jobs §4 requires).
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
@@ -17,6 +18,13 @@ const CLASSES: &[&str] = &[
     "binary-cli",
 ];
 
+/// Files whose bytes depend on the class.
+const PER_CLASS: &[&str] = &[
+    "rust-tops.yaml",
+    "rust-toolchain.toml",
+    ".github/workflows/rust-tops.yml",
+];
+
 const SHARED: &[&str] = &[
     "AGENTS.md",
     "clippy.toml",
@@ -24,7 +32,6 @@ const SHARED: &[&str] = &[
     ".cargo/mutants.toml",
     ".cargo-crap.toml",
     "deny.toml",
-    ".github/workflows/rust-tops.yml",
     "LAWS.bend",
     "laws/bend.lock",
     "scripts/fetch-bend.sh",
@@ -103,9 +110,11 @@ fn init_output_matches_main_bytes() {
     for class in CLASSES {
         let (dir, stdout) = run_init(class);
         expect_text(&golden_root().join(class).join("stdout.txt"), &stdout);
-        let yaml = fs::read(dir.join("rust-tops.yaml"))
-            .unwrap_or_else(|err| panic!("read {class} rust-tops.yaml: {err}"));
-        expect_bytes(&golden_root().join(class).join("rust-tops.yaml"), &yaml);
+        for rel in PER_CLASS {
+            let bytes =
+                fs::read(dir.join(rel)).unwrap_or_else(|err| panic!("read {class} {rel}: {err}"));
+            expect_bytes(&golden_root().join(class).join(rel), &bytes);
+        }
         for rel in SHARED {
             let bytes =
                 fs::read(dir.join(rel)).unwrap_or_else(|err| panic!("read {class} {rel}: {err}"));

@@ -181,7 +181,16 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
         .unwrap_or_else(|| "unnamed".to_string());
 
     let yaml = profiles::profile_yaml(class.as_str(), &crate_name);
+    let msrv = facts::parse_yaml(&yaml)
+        .ok()
+        .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
+        .ok_or_else(|| anyhow!("the {} profile has no crate.msrv", class.as_str()))?;
     write_file(dir.join("rust-tops.yaml"), &yaml, force)?;
+    write_file(
+        dir.join("rust-toolchain.toml"),
+        &profiles::rust_toolchain_toml(&msrv),
+        force,
+    )?;
     write_file(dir.join("AGENTS.md"), profiles::AGENTS_MD, force)?;
     write_file(dir.join("clippy.toml"), profiles::CLIPPY_TOML, force)?;
     write_file(
@@ -202,7 +211,7 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
     write_file(dir.join("deny.toml"), profiles::DENY_TOML, force)?;
     write_file(
         dir.join(".github/workflows/rust-tops.yml"),
-        profiles::WORKFLOW_YML,
+        &profiles::workflow_yml(class.as_str()),
         force,
     )?;
     write_file(dir.join(laws::PACK), profiles::LAWS_BEND, force)?;

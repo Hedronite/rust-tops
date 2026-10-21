@@ -1,0 +1,6 @@
+# Written by `cargo tops init` from rust-tops.yaml crate.msrv. Local builds
+# and every CI job that is not nightly-only use this channel
+# (law clippy_toolchain_pinned).
+[toolchain]
+channel = "1.88"
+components = ["clippy", "rustfmt"]

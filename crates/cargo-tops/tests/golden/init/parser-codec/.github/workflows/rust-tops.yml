@@ -1,0 +1,177 @@
+# rust-tops reference workflow (v0.1.0 harvest) — FLOOR, not ceiling.
+# Copy to .github/workflows/rust-tops.yml; edit {TOKENS}; add instance
+# sysdeps / feature-matrix cells. Never remove a job your class requires
+# to look greener on a headerless runner. `cargo tops init` appends the
+# class jobs §4 requires (fuzz-smoke, miri, kani, callgrind-hot).
+#
+# Toolchain: rust-toolchain.toml (written by init from crate.msrv) is the
+# pin. Each job reads its channel and hands it to dtolnay/rust-toolchain,
+# which is pinned by commit and has no default toolchain. No job installs
+# `stable` (law.clippy_toolchain_pinned).
+#
+# Harvested applying this protocol to a parser-codec + binary-cli workspace
+# with optional FFI:
+#   1. A feature that links FFI is a *build* requirement. --all-features
+#      counts. ubuntu-latest ships no C-ABI headers. Install sysdeps in
+#      every job that enables the feature (law.sysdeps_before_all_features).
+#   2. Declared MSRV must equal the locked graph's max rustc, including
+#      target-gated deps (Darwin 1.88 != Linux 1.89 is not a vote).
+#   3. -D warnings belongs on the clippy command, not job-level RUSTFLAGS.
+#   4. Record-only still fails when the artifact is empty. test -s is its
+#      own shell block, never an indented orphan.
+#   5. Job ids are load-bearing if branch protection pins them. Rename is
+#      a product change. Extra matrix keys rename GitHub checks.
+#   6. Drop-in is a floor. Instance matrices may add Darwin / mutants /
+#      fuzz / composite sysdeps actions; they may not drop sysdeps or MSRV.
+#   7. Do not put --fail-under-lines in this floor. Coverage floors live
+#      in rust-tops.yaml by class. Record the LCOV; assert it is nonempty.
+name: rust-tops
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Do NOT set RUSTFLAGS=-D warnings here.
+
+jobs:
+  fmt-clippy-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - uses: taiki-e/install-action@cargo-deny
+      - run: cargo deny check
+
+  nextest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS}
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace --all-features --profile ci
+      - run: cargo test --doc --workspace --all-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml is crate.msrv, so this checks the declared MSRV.
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS}
+      - run: cargo check --workspace --all-features --locked
+
+  feature-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: "{PRIMARY_PKG}"
+            features: --no-default-features
+          # {FEATURE_CELLS: every shipped feature on its real OS.
+          #  Gate sysdeps with contains(matrix.features, 'name') so extra
+          #  matrix keys do not rename required checks.}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
+      - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
+
+  coverage-crap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      # {SYSDEPS}
+      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@cargo-crap
+      - run: |
+          mkdir -p target/coverage
+          cargo llvm-cov nextest --workspace --all-features \
+            --lcov --output-path target/coverage/lcov.info
+          test -s target/coverage/lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: target/coverage/lcov.info
+          if-no-files-found: error
+      - run: |
+          cargo crap --lcov target/coverage/lcov.info --format json --output target/crap.json
+          test -s target/crap.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crap
+          path: target/crap.json
+          if-no-files-found: error
+
+  # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
+  # features usually need no FFI sysdeps. Do not mark required until one
+  # GHA run has a measured wall time.
+  #
+  # darwin-check: every cfg(target_os) needs a lane. brew/cask the headers
+  # the non-Linux build.rs probes. Cadence if the cask is unstable; file
+  # the gap, do not drop the cfg.
+
+  # parser-codec: §4 fuzz is required, §17 fuzz-smoke blocks merge. Crash =
+  # fail; timeout = infra. No fuzz target is a fail, not a skip. cargo-fuzz
+  # needs nightly; nothing else in this workflow does.
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-fuzz@0.13.2
+      - run: |
+          targets=$(cargo +nightly fuzz list)
+          test -n "$targets"
+          for target in $targets; do
+            cargo +nightly fuzz run "$target" -- -max_total_time=30
+          done
