@@ -96,8 +96,7 @@ rust-tops PROTOCOL ──encode──► LAWS.bend ──steer──► agent ed
         └────────────── apply (gates) ◄────────────────┘
 ```
 
-A `LAWS.bend` pack has shipped as a **kit overlay** since v0.1.2, outside protocol 1.0. Since v0.1.4 it is a hard, required gate on this repository. It is not yet evaluated against an adopting crate.
-Schema stays Bend-free. Hard rows encode as `Refuse`; soft rows as `Ack`.
+A `LAWS.bend` pack has shipped as a **kit overlay** since v0.1.2. Since v0.1.4 it is a hard, required gate on this repository. Since protocol 1.1.0 (package 0.2.0) the `laws` layer of `cargo tops gate` checks an adopting crate's own files against it ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). The schema names the layer, and the laws stay in this file and `LAWS.bend`. Hard rows encode as `Refuse`; soft rows as `Ack`.
 
 | Path | What |
 | --- | --- |

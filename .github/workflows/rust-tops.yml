@@ -231,6 +231,10 @@ jobs:
       - uses: ./.github/actions/setup-lean
       - name: Mutation matrix
         run: scripts/test-bend-gate.sh
+      # The pinned Bend (setup-bend) judges cargo-tops' case file for a
+      # refusing repo and for a fresh `init` of every class, which must pass.
+      - name: Laws layer on an adopter
+        run: cargo test -p cargo-tops --locked --test laws_gate -- --ignored
 
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
   # features usually need no FFI sysdeps. Do not mark required until one

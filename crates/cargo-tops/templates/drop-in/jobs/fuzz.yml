@@ -1,0 +1,21 @@
+
+  # parser-codec: §4 fuzz is required, §17 fuzz-smoke blocks merge. Crash =
+  # fail; timeout = infra. No fuzz target is a fail, not a skip. cargo-fuzz
+  # needs nightly; nothing else in this workflow does.
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-fuzz@0.13.2
+      - run: |
+          targets=$(cargo +nightly fuzz list)
+          test -n "$targets"
+          for target in $targets; do
+            cargo +nightly fuzz run "$target" -- -max_total_time=30
+          done

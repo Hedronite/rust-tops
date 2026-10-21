@@ -1,0 +1,16 @@
+
+  # unsafe-kernel: §4 Kani is required (§11). kani-verifier is pinned as in
+  # rust-tops.lock; `cargo kani setup` fetches Kani's own toolchain.
+  kani:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked kani-verifier --version 0.68.0
+      - run: cargo kani setup
+      - run: cargo kani --workspace

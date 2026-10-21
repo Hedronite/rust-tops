@@ -5,7 +5,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "rust-tops-laws";
-  version = "0.1.4";
+  version = "0.2.0";
 
   src = ../laws;
 
@@ -20,7 +20,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Provisional rust-tops Bend2 laws pack (H-01..H-53). Not protocol 1.0.";
+    description = "rust-tops Bend2 laws pack (H-01..H-53), judged by the laws layer of protocol 1.1.0";
     homepage = "https://github.com/Hedronite/rust-tops";
     license = with lib.licenses; [
       mit

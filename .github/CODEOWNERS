@@ -6,6 +6,10 @@
 /rust-tops.lock                            @VirtualMachinist @NebuHedron
 /crates/cargo-tops/templates/LAWS.bend     @VirtualMachinist @NebuHedron
 /crates/cargo-tops/src/profiles.rs         @VirtualMachinist @NebuHedron
+/crates/cargo-tops/templates/bend.lock     @VirtualMachinist @NebuHedron
+/crates/cargo-tops/templates/fetch-bend.sh @VirtualMachinist @NebuHedron
+/crates/cargo-tops/src/laws.rs             @VirtualMachinist @NebuHedron
+/crates/cargo-tops/src/facts.rs            @VirtualMachinist @NebuHedron
 /scripts/                                  @VirtualMachinist @NebuHedron
 /.github/workflows/                        @VirtualMachinist @NebuHedron
 /.github/actions/                          @VirtualMachinist @NebuHedron

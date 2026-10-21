@@ -1,4 +1,5 @@
 wrote {path}/rust-tops.yaml
+wrote {path}/rust-toolchain.toml
 wrote {path}/AGENTS.md
 wrote {path}/clippy.toml
 wrote {path}/.config/nextest.toml
@@ -7,5 +8,7 @@ wrote {path}/.cargo-crap.toml
 wrote {path}/deny.toml
 wrote {path}/.github/workflows/rust-tops.yml
 wrote {path}/LAWS.bend
+wrote {path}/laws/bend.lock
+wrote {path}/scripts/fetch-bend.sh
 initialized rust-tops for golden-crate (unsafe-kernel) in {path}
 next: cargo tops check && cargo tops gate

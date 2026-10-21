@@ -1,5 +1,5 @@
 {
-  description = "Rust-TOPS kit overlay: cargo-tops plus a provisional Bend2 laws pack. Protocol 1.0.0 is unchanged.";
+  description = "Rust-TOPS kit overlay: cargo-tops, the Bend2 laws pack, and (Linux) the pinned Bend that judges the protocol 1.1.0 laws layer.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -46,6 +46,9 @@
           inherit (pkgs) cargo-tops rust-tops-laws;
           default = pkgs.cargo-tops;
         }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          inherit (pkgs) rust-tops-bend;
+        }
       );
 
       apps = forAllSystems (system: {
@@ -68,7 +71,8 @@
               pkgs.cargo
               pkgs.clippy
               pkgs.rustfmt
-            ];
+            ]
+            ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.rust-tops-bend;
           };
         }
       );
@@ -91,47 +95,24 @@
             echo ok >"$out"
           '';
         }
-        // lib.optionalAttrs (system == "x86_64-linux" || system == "aarch64-linux") (
-          let
-            bendPin = {
-              "x86_64-linux" = {
-                plat = "linux-x64";
-                hash = "sha256-AgidwO7Q/V/W1zx0zJz/yyxmON07Aq6D97jMV/vjgbo=";
-              };
-              "aarch64-linux" = {
-                plat = "linux-arm64";
-                hash = "sha256-oUoxHjm61F+WadTqs50Va1eMlF8Tore64g2cI1Z6RmQ=";
-              };
-            };
-            pin = bendPin.${system};
-            bendSrc = pkgs.fetchurl {
-              url = "https://github.com/bendlang/bend/releases/download/v2.0.36/bend-2.0.36-${pin.plat}.tar.gz";
-              hash = pin.hash;
-            };
-          in
-          {
-            # Real proof. Darwin has no bend-proof attr: the Bun binary was not
-            # verified inside the Nix darwin sandbox, and a names-only pass must
-            # not wear this name. No GitHub job runs `nix flake check`.
-            bend-proof = pkgs.runCommand "rust-tops-bend-proof" { nativeBuildInputs = [ pkgs.patchelf ]; } ''
-              set -eu
-              tar -xzf ${bendSrc}
-              export HOME=$TMPDIR
-              mkdir -p "$HOME/.bend"
-              cp -a bend/bin bend/bend2 bend/guide "$HOME/.bend/"
-              chmod +x "$HOME/.bend/bin/bend"
-              patchelf \
-                --set-interpreter ${pkgs.stdenv.cc.bintools.dynamicLinker} \
-                --set-rpath ${pkgs.glibc}/lib \
-                "$HOME/.bend/bin/bend"
-              export PATH="$HOME/.bend/bin:$PATH"
-              export BEND_NO_TELEMETRY=1
-              export RUST_TOPS_ROOT=${./.}
-              bash ${./scripts/bend-gate.sh}
-              echo ok >"$out"
-            '';
-          }
-        )
+        // lib.optionalAttrs (system == "x86_64-linux" || system == "aarch64-linux") {
+          # Real proof. Darwin has no bend-proof attr: the Bun binary was not
+          # verified inside the Nix darwin sandbox, and a names-only pass must
+          # not wear this name. No GitHub job runs `nix flake check`.
+          # nix/bend.nix holds the pin (laws/bend.lock sha256, patchelf).
+          bend-proof = pkgs.runCommand "rust-tops-bend-proof" { } ''
+            set -eu
+            export HOME=$TMPDIR
+            mkdir -p "$HOME/.bend"
+            cp -a ${pkgs.rust-tops-bend}/bin ${pkgs.rust-tops-bend}/bend2 ${pkgs.rust-tops-bend}/guide "$HOME/.bend/"
+            chmod -R u+w "$HOME/.bend"
+            export PATH="$HOME/.bend/bin:$PATH"
+            export BEND_NO_TELEMETRY=1
+            export RUST_TOPS_ROOT=${./.}
+            bash ${./scripts/bend-gate.sh}
+            echo ok >"$out"
+          '';
+        }
       );
     };
 }
