@@ -42,7 +42,7 @@ Rust-TOPS (Rust Testing and Optimization Protocol Suite) is a protocol: a writte
 
 It is for Rust library and binary authors, and for the people who own their CI, who want one gate order: lint, tests, coverage, CRAP, mutation on the diff, then the extra layers the crate class names.
 
-The Bend2 laws pack under [`laws/`](laws/) is provisional and non-normative. Protocol and its schema stay Bend-free. Package 0.1.4 ships the pack as an overlay, with a TOFU-pinned Bend proof on this repository.
+The Bend2 laws pack under [`laws/`](laws/) sits outside protocol 1.0.0. Protocol and its schema stay Bend-free. On this repository the pack is a hard gate: required CI checks prove all 53 laws with Bend 2.0.36 (TOFU-pinned) and recheck them with Lean 4.34.0. The proofs cover the encoding of the policies. They do not yet analyze an adopting crate: `cargo tops init` copies `LAWS.bend` into the crate, and no command evaluates it there.
 
 ## Pins
 
@@ -130,7 +130,7 @@ nix flake check
 | Orchestrator | You sequence the commands | `cargo tops init`, `check`, and `gate` |
 | CI on this repo | — | `fmt-clippy-deny`, `nextest`, `msrv`, `feature-matrix`, `coverage-crap`, `bend-proof`, `bend-verdict`, `bend-gate-matrix`, plus `law-diff`. `bend-proof-macos` is informational |
 | CRAP config | — | [`.cargo-crap.toml`](.cargo-crap.toml): threshold `6.0`; excludes `src/generated/**`, `tests/**`, `benches/**`, `examples/**` |
-| Bend2 | — | Provisional pack, laws H-01 through H-53 |
+| Bend2 | — | 53 laws, H-01 through H-53, proven by required CI on this repo. `init` copies the pack; nothing runs it against your crate yet |
 | Nix | — | Overlay and packages `cargo-tops`, `rust-tops-laws` |
 
 ### What you do not get
