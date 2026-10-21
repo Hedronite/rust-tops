@@ -1,10 +1,10 @@
-# Example instance of Rust-TOPS 1.0.0
+# Example instance of Rust-TOPS 1.1.0
 # Copy to the crate root as rust-tops.yaml and edit class / hot_paths / exemptions.
 # Validate against ../schema/rust-tops.schema.json
 
 protocol:
   id: rust-tops
-  version: "1.0.0"
+  version: "1.1.0"
   spec_uri: "./RUST_TOPS.md"
   adopted: "2026-09-24"
 
@@ -47,6 +47,7 @@ layers:
   - { id: bench-callgrind,   enabled: true,  tier: 4, runner: gungraun,                scope: hot-paths }
   - { id: security-advisory, enabled: true,  tier: 0, runner: cargo-deny,              scope: workspace }
   - { id: density-audit,     enabled: true,  tier: 5, runner: review+clippy,           scope: workspace }
+  - { id: laws,              enabled: true,  tier: 0, runner: bend,                    scope: workspace }
 
 gates:
   lint:

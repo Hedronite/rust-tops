@@ -3,14 +3,18 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::time::SystemTime;
 
 mod config;
+mod facts;
+mod laws;
 mod profiles;
 
 #[cfg(test)]
 mod parse_oracle;
 
 use config::TopsConfig;
+use facts::{Outcome, Run};
 
 #[derive(Parser)]
 #[command(
@@ -25,7 +29,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Write rust-tops.yaml, AGENTS.md, and drop-in tool configs
+    /// Write rust-tops.yaml, AGENTS.md, drop-in tool configs, and the Bend laws kit
     Init {
         #[arg(long, value_enum, default_value_t = CrateClass::LibraryCore)]
         class: CrateClass,
@@ -44,7 +48,7 @@ enum Commands {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
-    /// Run enabled Tier 0–1 tools in protocol order
+    /// Run enabled Tier 0–1 tools in protocol order, then the Bend laws layer
     Gate {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -201,7 +205,11 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
         profiles::WORKFLOW_YML,
         force,
     )?;
-    write_file(dir.join("LAWS.bend"), profiles::LAWS_BEND, force)?;
+    write_file(dir.join(laws::PACK), profiles::LAWS_BEND, force)?;
+    write_file(dir.join(laws::LOCK), profiles::BEND_LOCK, force)?;
+    if write_file(dir.join(laws::FETCH), profiles::FETCH_BEND_SH, force)? {
+        make_executable(&dir.join(laws::FETCH))?;
+    }
 
     println!(
         "initialized rust-tops for {crate_name} ({}) in {}",
@@ -212,23 +220,33 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
     Ok(())
 }
 
-fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<()> {
+/// Returns whether the file was written (false when it existed and `force` was off).
+fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<bool> {
     if path.exists() && !force {
         println!("skip existing {}", path.display());
-        return Ok(());
+        return Ok(false);
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&path, contents).with_context(|| format!("write {}", path.display()))?;
     println!("wrote {}", path.display());
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("chmod {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
 fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<ExitCode> {
-    let mut failed = Vec::new();
-    let mut ran = 0u32;
-
     let enabled: Vec<&config::Layer> = cfg
         .layers
         .iter()
@@ -244,47 +262,102 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         cfg.crate_.name, cfg.crate_.class
     );
 
-    for layer in enabled {
+    // The laws layer reads the reports the other layers write, so it runs
+    // last. Its judge is fetched first: a missing Bend fails before work.
+    let laws_on = enabled.iter().any(|l| l.id == "laws");
+    let judge = if laws_on && !dry_run {
+        match laws::ensure_bend(dir) {
+            Ok(judge) => Some(judge),
+            Err(msg) => {
+                println!("\nfail: {msg}");
+                return Ok(ExitCode::from(1));
+            }
+        }
+    } else {
+        None
+    };
+
+    let started = SystemTime::now();
+    let mut runs: Vec<Run> = Vec::new();
+    for layer in enabled.iter().filter(|l| l.id != "laws") {
         let cmds = commands_for(layer, cfg);
         if cmds.is_empty() {
             println!("skip {}: no local command mapped", layer.id);
             continue;
         }
         for cmd in cmds {
-            ran += 1;
             println!("\n==> [{}] {cmd}", layer.id);
-            if dry_run {
-                continue;
-            }
-            if !tool_available(&cmd) {
-                let tool = first_word(&cmd);
-                failed.push(format!(
-                    "{}: `{tool}` not on PATH (install it; cargo-tops does not vendor engines)",
-                    layer.id
-                ));
-                continue;
-            }
-            let status = run_shell(dir, &cmd)?;
-            if !status {
-                failed.push(format!("{}: `{cmd}` failed", layer.id));
-            }
+            let outcome = if dry_run {
+                Outcome::Passed
+            } else if !tool_available(&cmd) {
+                Outcome::ToolMissing
+            } else if run_shell(dir, &cmd)? {
+                Outcome::Passed
+            } else {
+                Outcome::Failed
+            };
+            runs.push(Run {
+                layer: layer.id.clone(),
+                cmd,
+                outcome,
+            });
         }
     }
+    let ran = runs.len();
 
-    println!();
     if dry_run {
+        if laws_on {
+            println!(
+                "\n==> [laws] sh {} (only if Bend from {} is not installed)",
+                laws::FETCH,
+                laws::LOCK
+            );
+            println!("\n==> [laws] bend {}/cases.bend", laws::OUT_DIR);
+        }
+        println!();
         println!("dry-run: {ran} command(s) listed");
         return Ok(ExitCode::SUCCESS);
     }
+
+    let mut failed: Vec<String> = runs.iter().filter_map(run_failure).collect();
+    if let Some(judge) = judge {
+        let ctx = facts::Ctx {
+            dir,
+            cfg,
+            yaml: fs::read_to_string(config_path(dir))
+                .ok()
+                .and_then(|raw| facts::parse_yaml(&raw).ok())
+                .unwrap_or_default(),
+            max_tier,
+            runs: &runs,
+            started,
+            workflows: facts::load_workflows(dir),
+        };
+        failed.extend(laws::run(&judge, &ctx)?);
+    }
+
+    println!();
     if failed.is_empty() {
         println!("ok: {ran} command(s) passed");
         Ok(ExitCode::SUCCESS)
     } else {
-        println!("fail: {} of {ran} command(s)", failed.len());
+        println!("fail: {} problem(s), {ran} command(s) run", failed.len());
         for f in &failed {
             println!("  - {f}");
         }
         Ok(ExitCode::from(1))
+    }
+}
+
+fn run_failure(run: &Run) -> Option<String> {
+    match run.outcome {
+        Outcome::Passed => None,
+        Outcome::Failed => Some(format!("{}: `{}` failed", run.layer, run.cmd)),
+        Outcome::ToolMissing => Some(format!(
+            "{}: `{}` not on PATH (install it; cargo-tops does not vendor engines)",
+            run.layer,
+            first_word(&run.cmd)
+        )),
     }
 }
 

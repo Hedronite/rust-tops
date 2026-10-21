@@ -7,5 +7,7 @@ wrote {path}/.cargo-crap.toml
 wrote {path}/deny.toml
 wrote {path}/.github/workflows/rust-tops.yml
 wrote {path}/LAWS.bend
+wrote {path}/laws/bend.lock
+wrote {path}/scripts/fetch-bend.sh
 initialized rust-tops for golden-crate (no-std-embedded) in {path}
 next: cargo tops check && cargo tops gate

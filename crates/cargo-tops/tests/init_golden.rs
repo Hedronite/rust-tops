@@ -1,4 +1,7 @@
 //! `cargo tops init` file bytes and stdout, recorded from main `968c390`.
+//! Re-recorded for protocol 1.1.0 / package 0.2.0: the `laws` layer and
+//! version in `rust-tops.yaml`, and the Bend kit (`laws/bend.lock`,
+//! `scripts/fetch-bend.sh`).
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
@@ -23,6 +26,8 @@ const SHARED: &[&str] = &[
     "deny.toml",
     ".github/workflows/rust-tops.yml",
     "LAWS.bend",
+    "laws/bend.lock",
+    "scripts/fetch-bend.sh",
 ];
 
 fn golden_root() -> PathBuf {

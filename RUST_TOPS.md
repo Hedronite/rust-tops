@@ -1,7 +1,7 @@
 # Rust Testing and Optimization Protocol Suite (Rust-TOPS)
 
 **Protocol ID:** `rust-tops`  
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Status:** Adopted specification  
 **Machine schema:** [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json)  
 **Example instance:** [`config/rust-tops.example.yaml`](config/rust-tops.example.yaml)  
@@ -11,7 +11,7 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 
 ---
 
-> **Bend2 encode track — v0 sketch, non-normative:** see [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md). Does not amend this 1.0 body or schema.
+> **Bend laws:** 1.1.0 adds the `laws` layer (§3.1). It checks the crate's own files and gate reports against the Bend law pack `LAWS.bend`. [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) lists the candidate laws and their sources.
 
 ## 0. Purpose
 
@@ -113,6 +113,7 @@ Every behavior that ships must be justified by the **lowest layer that can actua
 | 0 | `doc` | Do public examples compile and hold? | every PR |
 | 0 | `coverage` | Did tests reach the production regions we claim? | every PR |
 | 0 | `crap` | Is untested complexity leaking in? | every PR |
+| 0 | `laws` | Do the facts in this crate's files and gate reports clear the Bend law pack? | every PR |
 | 1 | `integration` | Do crate-public seams work together? | every PR |
 | 1 | `acceptance` | Does the named user/oracle behavior hold? | every PR for changed journeys |
 | 1 | `mutation` | Would a small bug in this diff survive the suite? | every PR on the diff |
@@ -128,6 +129,16 @@ Every behavior that ships must be justified by the **lowest layer that can actua
 | 5 | `bench-criterion` | What is the wall-clock distribution on this machine? | local / dedicated runner |
 | 5 | `security-advisory` | Did we pick up a known-bad crate? | every PR |
 | 5 | `density-audit` | Did production SLOC grow without capability? | advisory on PR, blocking on release |
+
+### 3.1 The `laws` layer (since 1.1.0)
+
+`LAWS.bend` states each law as a verdict function over a small case type. The layer has three parts:
+
+1. **Case.** For each law, the runner reads one fact from the crate's files (for example `rust-tops.yaml`, `Cargo.toml`, `rust-toolchain.toml`, `.github/workflows/`, `Cargo.lock`) or from the reports this gate run wrote. From that fact it picks one constructor of the law's case type. A law with no readable fact is reported `not-evaluated`. It is never encoded as `Allow`, and a report may not call it a pass.
+2. **Judge.** The runner writes the chosen cases as one Bend program that imports `LAWS.bend`. Its obligation is that each verdict is not `Refuse`. `bend` checks that program. The runner keeps no verdict table of its own.
+3. **Outcome.** A `Refuse` fails the run. An `Ack` is recorded and does not fail. A missing `bend`, or one that does not report the locked version, fails the run (H-37 `missing_tool_not_green`).
+
+The judge is the Bend release pinned in `laws/bend.lock`, fetched by `scripts/fetch-bend.sh` with a sha256 check. The fetch runs only when that release is absent. No law may claim to see author intent. `evidence_not_self_served` stays `not-evaluated` until a written pattern exists for it.
 
 ---
 
@@ -780,6 +791,9 @@ Forbidden:
 .
 ├── rust-tops.yaml                 # instance of the schema
 ├── rust-tops.lock                 # pinned CLI versions
+├── LAWS.bend                      # Bend law pack (laws layer, §3.1)
+├── laws/bend.lock                 # pinned Bend release and sha256
+├── scripts/fetch-bend.sh          # fetches that release
 ├── AGENTS.md
 ├── clippy.toml
 ├── deny.toml
@@ -802,7 +816,7 @@ Forbidden:
 └── .github/workflows/rust-tops.yml
 ```
 
-Generated reports (`target/coverage`, mutants scratch, iai output) are artifacts, not source.
+Generated reports (`target/coverage`, mutants scratch, iai output, `target/rust-tops/cases.bend`) are artifacts, not source.
 
 ---
 
@@ -961,7 +975,7 @@ cargo bench --bench hot          # local criterion
 
 ## 22. Normative vs advisory
 
-**Normative (non-compliance is a failed protocol run):** §§1 A1–A8, 2 (formula + scar-guard + thresholds for new code), 4 class minima, 5.4 density rules, 6.5 acceptance-oracle rule, 7 coverage floors, 8.3 zero unexplained survivors on the diff, 9.2 required properties, 11.2 Miri on unsafe, 12.1 order of attack, 12.4 Callgrind on listed hot paths, 14.2 agent orders, 19 exemption shape.
+**Normative (non-compliance is a failed protocol run):** §§1 A1–A8, 2 (formula + scar-guard + thresholds for new code), 4 class minima, 5.4 density rules, 6.5 acceptance-oracle rule, 7 coverage floors, 8.3 zero unexplained survivors on the diff, 9.2 required properties, 11.2 Miri on unsafe, 12.1 order of attack, 12.4 Callgrind on listed hot paths, 14.2 agent orders, 19 exemption shape, 3.1 a `Refuse` from an enabled `laws` layer.
 
 **Advisory:** clippy pedantic cherry-picks, dashboard score, Criterion numbers on laptops, `cargo-crappy` idiom penalty, branch coverage until LLVM is stable on the crate.
 
@@ -969,7 +983,9 @@ cargo bench --bench hot          # local criterion
 
 ## 23. Versioning
 
-This spec is `1.0.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
+This spec is `1.1.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
+
+1.1.0 added the `laws` layer (§3.1). A 1.0.0 instance that does not list `laws` still validates.
 
 ---
 

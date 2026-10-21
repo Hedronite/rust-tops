@@ -6,6 +6,8 @@ pub const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.
 pub const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
 pub const WORKFLOW_YML: &str = include_str!("../templates/drop-in/rust-tops.yml");
 pub const LAWS_BEND: &str = include_str!("../templates/LAWS.bend");
+pub const BEND_LOCK: &str = include_str!("../templates/bend.lock");
+pub const FETCH_BEND_SH: &str = include_str!("../templates/fetch-bend.sh");
 
 const PROFILE_LIBRARY_CORE: &str = include_str!("../templates/rust-tops.example.yaml");
 
@@ -47,29 +49,42 @@ pub fn profile_yaml(class: &str, crate_name: &str) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::LAWS_BEND;
+    use super::{BEND_LOCK, FETCH_BEND_SH, LAWS_BEND};
 
-    #[test]
-    fn laws_bend_matches_pack() {
-        // `cargo package` does not ship the workspace laws tree. Skip there;
-        // the workspace checkout still compares the template to the pack.
-        let pack_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../laws/LAWS.bend");
-        if !pack_path.is_file() {
+    /// The template must be a byte copy of the workspace file it vendors.
+    fn expect_vendored(template: &str, workspace_rel: &str, template_name: &str) {
+        // `cargo package` does not ship the workspace tree. Skip there; the
+        // workspace checkout still compares the template to its source.
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(workspace_rel);
+        if !source.is_file() {
             eprintln!(
-                "laws_bend_matches_pack: skipped, laws/LAWS.bend is outside the packaged crate ({})",
-                pack_path.display()
+                "template drift check: skipped, {workspace_rel} is outside the packaged crate ({})",
+                source.display()
             );
             return;
         }
-        let pack = std::fs::read_to_string(&pack_path).unwrap_or_else(|err| {
-            panic!(
-                "laws_bend_matches_pack: cannot read {}: {err}",
-                pack_path.display()
-            )
-        });
+        let body = std::fs::read_to_string(&source)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", source.display()));
         assert_eq!(
-            LAWS_BEND, pack,
-            "bend-gate: template drift (laws/LAWS.bend != crates/cargo-tops/templates/LAWS.bend)"
+            template, body,
+            "bend-gate: template drift ({workspace_rel} != crates/cargo-tops/templates/{template_name})"
         );
+    }
+
+    #[test]
+    fn laws_bend_matches_pack() {
+        expect_vendored(LAWS_BEND, "laws/LAWS.bend", "LAWS.bend");
+    }
+
+    #[test]
+    fn bend_lock_matches_pack() {
+        expect_vendored(BEND_LOCK, "laws/bend.lock", "bend.lock");
+    }
+
+    #[test]
+    fn fetch_bend_matches_script() {
+        expect_vendored(FETCH_BEND_SH, "scripts/fetch-bend.sh", "fetch-bend.sh");
     }
 }

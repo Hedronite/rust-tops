@@ -60,8 +60,32 @@ fn load_yaml(label: &str, yaml: &str) -> TopsConfig {
     cfg
 }
 
+/// Protocol 1.1.0 changed the bundled template in two places: it moved
+/// `protocol.version` and added an enabled `laws` layer. Check both, then undo
+/// them so the rest still compares to the `968c390` serde_yaml oracle.
+fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
+    assert_eq!(value["protocol"]["version"], "1.1.0");
+    value["protocol"]["version"] = serde_json::Value::from("1.0.0");
+    let layers = value["layers"].as_array_mut().expect("layers array");
+    let laws: Vec<serde_json::Value> = layers
+        .iter()
+        .filter(|layer| layer["id"] == "laws")
+        .cloned()
+        .collect();
+    assert_eq!(
+        laws,
+        [serde_json::json!({"enabled": true, "id": "laws", "runner": "bend", "tier": 0})],
+        "template must carry one enabled tier-0 laws layer"
+    );
+    layers.retain(|layer| layer["id"] != "laws");
+    value
+}
+
 fn expect_config(name: &str, cfg: &TopsConfig) {
-    let value = config_json(cfg);
+    expect_value(name, config_json(cfg));
+}
+
+fn expect_value(name: &str, value: serde_json::Value) {
     let path = golden_dir().join(format!("{name}.json"));
     if std::env::var_os("RUST_TOPS_RECORD_GOLDEN").is_some() {
         fs::create_dir_all(golden_dir()).unwrap_or_else(|err| panic!("mkdir golden: {err}"));
@@ -87,7 +111,7 @@ fn bundled_profile_templates_parse_to_pre_migration_config() {
         assert_eq!(cfg.crate_.name, "golden-crate");
         assert_eq!(cfg.crate_.class, *class);
         assert_eq!(cfg.protocol.id, "rust-tops");
-        expect_config(class, &cfg);
+        expect_value(class, without_protocol_1_1(config_json(&cfg)));
     }
 }
 

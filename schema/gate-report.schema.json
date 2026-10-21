@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://specs.local/rust-tops/v1.0.0/gate-report.schema.json",
+  "$id": "https://specs.local/rust-tops/v1.1.0/gate-report.schema.json",
   "title": "Rust-TOPS gate report",
   "description": "Optional unified report object that CI or an agent may emit after a protocol run.",
   "type": "object",
