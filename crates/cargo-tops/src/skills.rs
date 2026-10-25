@@ -1,7 +1,8 @@
 //! Portable agent skills written by `cargo tops init --skills`.
 //!
-//! `.agents/skills/<name>/` is the canonical tree. `.claude/skills/<name>/`
-//! and `.grok/skills/<name>/` are the same bytes, written as ordinary files.
+//! `.agents/skills/<name>/` is the canonical tree. `.claude/skills/<name>/`,
+//! `.cursor/skills/<name>/`, and `.grok/skills/<name>/` are the same bytes,
+//! written as ordinary files.
 //! A symlink is not enough: Windows and some packaging drop it. The drift
 //! test compares every copy. `CLAUDE.md` is one line that imports `AGENTS.md`.
 
@@ -12,7 +13,12 @@ use anyhow::Result;
 use crate::write_file;
 
 /// Skill roots `init --skills` fills with the same files.
-const SKILL_ROOTS: &[&str] = &[".agents/skills", ".claude/skills", ".grok/skills"];
+const SKILL_ROOTS: &[&str] = &[
+    ".agents/skills",
+    ".claude/skills",
+    ".cursor/skills",
+    ".grok/skills",
+];
 
 pub const CLAUDE_MD: &str = include_str!("../templates/CLAUDE.md");
 pub const REVIEW_MD: &str = include_str!("../templates/docs/REVIEW.md");

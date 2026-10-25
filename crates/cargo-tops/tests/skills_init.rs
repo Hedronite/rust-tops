@@ -8,7 +8,12 @@ use std::process::Command;
 const NAMES: &[&str] = &["rust-tops-adopt", "rust-tops-gate", "rust-tops-review"];
 
 /// Every harness tree `init --skills` writes. Each file is a regular file.
-const COPIES: &[&str] = &[".agents/skills", ".claude/skills", ".grok/skills"];
+const COPIES: &[&str] = &[
+    ".agents/skills",
+    ".claude/skills",
+    ".cursor/skills",
+    ".grok/skills",
+];
 
 const PHRASES: &[&str] = &[
     "add a test for the specified missing branch",
@@ -62,6 +67,7 @@ fn default_init_does_not_write_skills() {
     assert!(!stdout.contains(".agents/skills"));
     assert!(!dir.join(".agents").exists());
     assert!(!dir.join(".claude").exists());
+    assert!(!dir.join(".cursor").exists());
     assert!(!dir.join(".grok").exists());
     assert!(!dir.join("CLAUDE.md").exists());
     assert!(!dir.join("docs/REVIEW.md").exists());
@@ -159,6 +165,13 @@ fn skill_text_is_portable_and_the_gate_remedies_match_agents_md() {
     assert!(gate.contains("Allow"));
     assert!(gate.contains("Ack"));
     assert!(gate.contains("not-evaluated"));
+    assert!(gate.contains("gate_green"));
+    assert!(gate.contains("no_fact_reader"));
+    let review =
+        fs::read_to_string(templates.join("rust-tops-review/rust-tops-review.nu")).unwrap();
+    assert!(review.contains("committed-only"));
+    assert!(review.contains("includes_worktree"));
+    assert!(review.contains("\"HEAD\""));
     for name in NAMES {
         let skill = fs::read_to_string(templates.join(name).join("SKILL.md")).unwrap();
         let script = fs::read_to_string(templates.join(name).join(format!("{name}.nu"))).unwrap();
@@ -251,6 +264,9 @@ fn parse_json(stdout: &[u8]) -> serde_json::Value {
 #[test]
 fn nu_scripts_honor_the_envelope_when_nu_is_installed() {
     let Some(nu) = nu_bin() else {
+        if std::env::var_os("RUST_TOPS_REQUIRE_NU").is_some() {
+            panic!("nu is not installed; RUST_TOPS_REQUIRE_NU is set");
+        }
         eprintln!("nu is not installed; skill smoke skipped");
         return;
     };
@@ -311,6 +327,7 @@ fn smoke_gate(nu: &Path) {
 
     let pass = run("pass");
     assert_eq!(pass["ok"], true, "{pass}");
+    assert_eq!(pass["data"]["gate_green"], true, "{pass}");
     assert!(pass["command"]
         .as_str()
         .unwrap()
@@ -319,9 +336,20 @@ fn smoke_gate(nu: &Path) {
 
     let missed = run("not-evaluated");
     assert_eq!(missed["ok"], false, "{missed}");
-    let fixes = missed["data"]["fixes"].as_array().unwrap();
-    assert_eq!(fixes[0]["law"], "evidence_not_self_served");
-    assert!(fixes[0]["remedy"].as_str().unwrap().contains("not a pass"));
+    assert_eq!(missed["data"]["gate_green"], true, "{missed}");
+    assert!(missed["data"]["fixes"].as_array().unwrap().is_empty());
+    let gaps = missed["data"]["gaps"].as_array().unwrap();
+    assert_eq!(gaps[0]["law"], "evidence_not_self_served");
+    assert_eq!(gaps[0]["reason_code"], "no_fact_reader");
+
+    let dependent = run("run-dependent");
+    assert_eq!(dependent["ok"], false, "{dependent}");
+    assert_eq!(dependent["data"]["gate_green"], true, "{dependent}");
+    assert!(dependent["data"]["gaps"].as_array().unwrap().is_empty());
+    assert_eq!(
+        dependent["data"]["fixes"][0]["reason_code"],
+        "run_dependent"
+    );
 
     let refused = run("refuse");
     assert_eq!(refused["ok"], false, "{refused}");
@@ -338,10 +366,23 @@ fn smoke_gate(nu: &Path) {
     .unwrap();
     let stale = run("missing");
     assert_eq!(stale["ok"], false, "{stale}");
-    assert!(stale["error"]
-        .as_str()
-        .unwrap()
-        .contains("missing or not JSON"));
+    assert_eq!(stale["exit"], 1, "{stale}");
+    let stale_error = stale["error"].as_str().unwrap();
+    assert!(stale_error.contains("exited"), "{stale}");
+    assert!(
+        !stale_error.contains("cases.json is missing"),
+        "a failed command was reported as a missing report: {stale}"
+    );
+
+    let no_tops = run("no-tops");
+    assert_eq!(no_tops["ok"], false, "{no_tops}");
+    assert_eq!(no_tops["exit"], 1, "{no_tops}");
+    let no_tops_error = no_tops["error"].as_str().unwrap();
+    assert!(no_tops_error.contains("no such command"), "{no_tops}");
+    assert!(
+        !no_tops_error.contains("cases.json is missing"),
+        "{no_tops}"
+    );
 
     let bad = run("bad-json");
     assert_eq!(bad["ok"], false, "{bad}");
@@ -365,11 +406,16 @@ fn smoke_gate(nu: &Path) {
         .unwrap()
         .contains("specified missing branch"));
 
+    let empty = root.join("no-bins");
+    fs::create_dir_all(&empty).unwrap();
+    let mut bare_path = std::ffi::OsString::from(&empty);
+    bare_path.push(":");
+    bare_path.push(nu.parent().expect("nu lives in a directory"));
     let bare = Command::new(nu)
         .arg(&script)
         .args(["--path", "."])
         .current_dir(&root)
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", bare_path)
         .env_remove("CARGO_TARGET_DIR")
         .output()
         .expect("nu gate without cargo");
@@ -380,14 +426,16 @@ fn smoke_gate(nu: &Path) {
     );
     let missing_cargo = parse_json(&bare.stdout);
     assert_eq!(missing_cargo["ok"], false, "{missing_cargo}");
-    assert!(missing_cargo["error"]
-        .as_str()
-        .unwrap()
-        .contains("command not found"));
-    assert!(missing_cargo["command"]
-        .as_str()
-        .unwrap()
-        .contains("cargo metadata"));
+    assert_ne!(
+        missing_cargo["exit"].as_i64().unwrap_or(0),
+        0,
+        "{missing_cargo}"
+    );
+    let missing_error = missing_cargo["error"].as_str().unwrap_or("");
+    assert!(
+        missing_error.contains("command not found"),
+        "expected the missing-command kind, got {missing_cargo}"
+    );
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -493,5 +541,64 @@ fn smoke_review(nu: &Path) {
         .as_str()
         .unwrap()
         .contains("hello from the diff"));
+    assert_eq!(diff_json["data"]["includes_worktree"], true);
+    fs::write(
+        root.join("note.txt"),
+        "hello from the diff\nuncommitted line\n",
+    )
+    .unwrap();
+    fs::write(root.join("brand-new.txt"), "untracked body\n").unwrap();
+    let dirty = Command::new(nu)
+        .arg(&script)
+        .args(["files", "--base", "HEAD~1", "--path", "."])
+        .current_dir(&root)
+        .output()
+        .expect("nu files with worktree");
+    let dirty_json = parse_json(&dirty.stdout);
+    assert_eq!(dirty_json["ok"], true, "{dirty_json}");
+    let names: Vec<&str> = dirty_json["data"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(names.contains(&"note.txt"), "{dirty_json}");
+    assert!(names.contains(&"brand-new.txt"), "{dirty_json}");
+    let dirty_diff = Command::new(nu)
+        .arg(&script)
+        .args(["diff", "--base", "HEAD~1", "--path", "."])
+        .current_dir(&root)
+        .output()
+        .expect("nu diff with worktree");
+    let dirty_diff_json = parse_json(&dirty_diff.stdout);
+    let patch = dirty_diff_json["data"]["diff"].as_str().unwrap();
+    assert!(patch.contains("uncommitted line"), "{dirty_diff_json}");
+    assert!(!patch.contains("untracked body"), "{dirty_diff_json}");
+    let committed = Command::new(nu)
+        .arg(&script)
+        .args([
+            "files",
+            "--base",
+            "HEAD~1",
+            "--path",
+            ".",
+            "--committed-only",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("nu files committed only");
+    let committed_json = parse_json(&committed.stdout);
+    assert_eq!(committed_json["data"]["includes_worktree"], false);
+    let committed_names: Vec<&str> = committed_json["data"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(committed_names.contains(&"note.txt"), "{committed_json}");
+    assert!(
+        !committed_names.contains(&"brand-new.txt"),
+        "{committed_json}"
+    );
     let _ = fs::remove_dir_all(&root);
 }

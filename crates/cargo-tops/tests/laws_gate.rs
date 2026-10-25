@@ -365,6 +365,15 @@ fn a_non_refusing_case_passes_and_lists_not_evaluated_laws() {
     let evidence = law(&cases, "evidence_not_self_served");
     assert_eq!(evidence["status"], "not-evaluated");
     assert_eq!(evidence["verdict"], serde_json::Value::Null);
+    assert_eq!(evidence["reason_code"], "no_fact_reader");
+    assert_eq!(
+        law(&cases, "perf_without_runner_is_not_gate")["reason_code"],
+        "run_dependent"
+    );
+    assert_eq!(
+        law(&cases, "clippy_toolchain_pinned")["reason_code"],
+        serde_json::Value::Null
+    );
     let program =
         fs::read_to_string(fixture.repo.join("target/rust-tops/cases.bend")).expect("cases.bend");
     assert!(

@@ -14,7 +14,7 @@ case "$mode" in
     exit 0
     ;;
   not-evaluated)
-    write_cases '{"passed":true,"laws":[{"law":"evidence_not_self_served","status":"not-evaluated","verdict":null,"reason":"no fact"}]}'
+    write_cases '{"passed":true,"laws":[{"law":"evidence_not_self_served","status":"not-evaluated","verdict":null,"reason":"no fact","reason_code":"no_fact_reader"}]}'
     printf 'ok: 1 command(s) passed\n'
     exit 0
     ;;
@@ -26,6 +26,15 @@ case "$mode" in
   missing)
     printf 'fail: 1 problem(s), 0 command(s) run\n'
     exit 1
+    ;;
+  no-tops)
+    printf '%s\n' "error: no such command: \`tops\`" >&2
+    exit 1
+    ;;
+  run-dependent)
+    write_cases '{"passed":true,"laws":[{"law":"perf_without_runner_is_not_gate","status":"not-evaluated","verdict":null,"reason":"no performance layer is enabled at or below this tier","reason_code":"run_dependent"}]}'
+    printf 'ok: 1 command(s) passed\n'
+    exit 0
     ;;
   bad-json)
     write_cases 'not-json'

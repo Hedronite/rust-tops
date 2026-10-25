@@ -55,9 +55,16 @@ pub struct Ctx<'a> {
     pub workflows: Workflows,
 }
 
+/// `cases.json` `reason_code` for a law this release cannot read.
+pub const NO_FACT_READER: &str = "no_fact_reader";
+
+/// `cases.json` `reason_code` for a law whose reader had nothing to read
+/// on this run (a layer did not run, a file was absent, a tier had no match).
+pub const RUN_DEPENDENT: &str = "run_dependent";
+
 pub enum Choice {
     Fact { met: bool, read: Vec<String> },
-    NotEvaluated(String),
+    NotEvaluated { reason: String, code: &'static str },
 }
 
 pub struct LawFact {
@@ -233,15 +240,22 @@ fn fact(met: bool, read: Vec<String>) -> Choice {
     Choice::Fact { met, read }
 }
 
+fn not_evaluated_owned(reason: String) -> Choice {
+    Choice::NotEvaluated {
+        reason,
+        code: RUN_DEPENDENT,
+    }
+}
+
 fn not_evaluated_because(reason: &str) -> Choice {
-    Choice::NotEvaluated(reason.to_string())
+    not_evaluated_owned(reason.to_string())
 }
 
 /// Run `body` on the parsed workflows, or say why there are none.
 fn with_workflows(ctx: &Ctx, body: impl FnOnce(&[Workflow], Vec<String>) -> Choice) -> Choice {
     match &ctx.workflows {
         Workflows::Absent => not_evaluated_because("no workflow under .github/workflows"),
-        Workflows::Broken(err) => Choice::NotEvaluated(format!("workflow did not parse: {err}")),
+        Workflows::Broken(err) => not_evaluated_owned(format!("workflow did not parse: {err}")),
         Workflows::Parsed(wfs) => body(wfs, wfs.iter().map(|wf| wf.rel.clone()).collect()),
     }
 }
@@ -508,7 +522,7 @@ pub fn class_keywords(class: &str) -> Option<&'static [&'static str]> {
 
 fn class_jobs(ctx: &Ctx) -> Choice {
     let Some(keywords) = class_keywords(&ctx.cfg.crate_.class) else {
-        return Choice::NotEvaluated(format!("class {} has no row in §4", ctx.cfg.crate_.class));
+        return not_evaluated_owned(format!("class {} has no row in §4", ctx.cfg.crate_.class));
     };
     with_workflows(ctx, |wfs, mut read| {
         let labels = job_labels(wfs);
@@ -533,7 +547,7 @@ fn fmt_is_tier0(ctx: &Ctx) -> Choice {
     let in_ci = match &ctx.workflows {
         Workflows::Absent => true,
         Workflows::Broken(err) => {
-            return Choice::NotEvaluated(format!("workflow did not parse: {err}"))
+            return not_evaluated_owned(format!("workflow did not parse: {err}"))
         }
         Workflows::Parsed(wfs) => {
             read.extend(wfs.iter().map(|wf| wf.rel.clone()));
@@ -664,7 +678,7 @@ fn clippy_toolchain_pinned(ctx: &Ctx) -> Choice {
     let absent = "rust-toolchain.toml (absent)".to_string();
     match &ctx.workflows {
         Workflows::Absent => fact(false, vec![absent, ".github/workflows (absent)".into()]),
-        Workflows::Broken(err) => Choice::NotEvaluated(format!("workflow did not parse: {err}")),
+        Workflows::Broken(err) => not_evaluated_owned(format!("workflow did not parse: {err}")),
         Workflows::Parsed(wfs) => {
             let clippy_jobs: Vec<&Value> = wfs
                 .iter()
@@ -712,7 +726,7 @@ fn no_pedantic_group(ctx: &Ctx) -> Choice {
     match &ctx.workflows {
         Workflows::Absent => {}
         Workflows::Broken(err) => {
-            return Choice::NotEvaluated(format!("workflow did not parse: {err}"))
+            return not_evaluated_owned(format!("workflow did not parse: {err}"))
         }
         Workflows::Parsed(wfs) => {
             read.extend(wfs.iter().map(|wf| wf.rel.clone()));
@@ -747,7 +761,7 @@ fn baseline_green(ctx: &Ctx) -> Choice {
     match &ctx.workflows {
         Workflows::Absent => {}
         Workflows::Broken(err) => {
-            return Choice::NotEvaluated(format!("workflow did not parse: {err}"))
+            return not_evaluated_owned(format!("workflow did not parse: {err}"))
         }
         Workflows::Parsed(wfs) => {
             let found: Vec<Vec<String>> = wf_segments(wfs)
@@ -943,7 +957,7 @@ fn single_deny_site(ctx: &Ctx) -> Choice {
     match &ctx.workflows {
         Workflows::Absent => {}
         Workflows::Broken(err) => {
-            return Choice::NotEvaluated(format!("workflow did not parse: {err}"))
+            return not_evaluated_owned(format!("workflow did not parse: {err}"))
         }
         Workflows::Parsed(wfs) => {
             read.extend(wfs.iter().map(|wf| wf.rel.clone()));

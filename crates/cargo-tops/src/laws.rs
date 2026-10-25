@@ -191,6 +191,7 @@ struct Row {
     case: Option<(&'static str, &'static str)>,
     read: Vec<String>,
     reason: Option<String>,
+    reason_code: Option<&'static str>,
 }
 
 fn pack_laws(pack: &str) -> Vec<String> {
@@ -208,12 +209,13 @@ fn choose_rows(pack: &str, ctx: &Ctx) -> Vec<Row> {
         .into_iter()
         .map(|law| {
             let Some(fact) = facts::find(&law) else {
-                let reason = Some(facts::not_evaluated(&law).to_string());
+                let reason = facts::not_evaluated(&law).to_string();
                 return Row {
                     law,
                     case: None,
                     read: Vec::new(),
-                    reason,
+                    reason: Some(reason),
+                    reason_code: Some(facts::NO_FACT_READER),
                 };
             };
             match (fact.choose)(ctx) {
@@ -222,12 +224,14 @@ fn choose_rows(pack: &str, ctx: &Ctx) -> Vec<Row> {
                     case: Some((fact.fun, fact.ctor(met))),
                     read,
                     reason: None,
+                    reason_code: None,
                 },
-                Choice::NotEvaluated(reason) => Row {
+                Choice::NotEvaluated { reason, code } => Row {
                     law,
                     case: None,
                     read: Vec::new(),
                     reason: Some(reason),
+                    reason_code: Some(code),
                 },
             }
         })
@@ -367,11 +371,12 @@ impl Judged<'_> {
                 let entry = match row.case {
                     Some((fun, ctor)) => json!({
                         "law": row.law, "status": "checked", "verdict_fn": fun, "case": ctor,
-                        "read": row.read, "verdict": status,
+                        "read": row.read, "verdict": status, "reason_code": null,
                     }),
                     None => json!({
                         "law": row.law, "status": "not-evaluated", "case": null,
                         "read": [], "verdict": null, "reason": row.reason,
+                        "reason_code": row.reason_code,
                     }),
                 };
                 checked += usize::from(row.case.is_some());
@@ -478,6 +483,7 @@ mod tests {
             case,
             read: vec!["rust-tops.yaml".into()],
             reason: None,
+            reason_code: None,
         }
     }
 

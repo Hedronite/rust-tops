@@ -40,16 +40,40 @@ def git-run [args: list<string>] {
   }
 }
 
-def "main files" [--base: string = "origin/main", --path: string = "."] {
-  let ran = (git-run ["-C" $path "diff" "--name-only" $"($base)...HEAD"])
-  if not $ran.ok { return ($ran | to json) }
-  let files = ($ran.stdout | lines | each {|row| $row | str trim } | where {|row| not ($row | is-empty)})
+def names [text: string] {
+  $text | lines | each {|row| $row | str trim } | where {|row| not ($row | is-empty)}
+}
+
+# Default range is commits on `base...HEAD` plus the working tree:
+# `git diff HEAD` (staged and unstaged tracked files) and untracked names.
+# `--committed-only` drops the working tree.
+def "main files" [--base: string = "origin/main", --path: string = ".", --committed-only] {
+  let committed = (git-run ["-C" $path "diff" "--name-only" $"($base)...HEAD"])
+  if not $committed.ok { return ($committed | to json) }
+  let committed_names = (names $committed.stdout)
+  mut work_names = []
+  mut untracked = []
+  mut command = $committed.command
+  if not $committed_only {
+    let work = (git-run ["-C" $path "diff" "--name-only" "HEAD"])
+    if not $work.ok { return ($work | to json) }
+    $work_names = (names $work.stdout)
+    let extra = (git-run ["-C" $path "ls-files" "--others" "--exclude-standard"])
+    if not $extra.ok { return ($extra | to json) }
+    $untracked = (names $extra.stdout)
+    $command = $"($committed.command) && ($work.command) && ($extra.command)"
+  }
+  let files = ($committed_names ++ $work_names ++ $untracked | sort | uniq)
   {
     ok: true
-    command: $ran.command
+    command: $command
     data: {
       base: $base
+      includes_worktree: (not $committed_only)
       files: $files
+      committed: $committed_names
+      uncommitted: ($work_names ++ $untracked | sort | uniq)
+      untracked: $untracked
       read_diff: false
       doc: "docs/REVIEW.md"
       next: "Write the inputs you will run. Then run: nu rust-tops-review.nu diff"
@@ -58,16 +82,27 @@ def "main files" [--base: string = "origin/main", --path: string = "."] {
   } | to json
 }
 
-def "main diff" [--base: string = "origin/main", --path: string = "."] {
-  let ran = (git-run ["-C" $path "diff" $"($base)...HEAD"])
-  if not $ran.ok { return ($ran | to json) }
+def "main diff" [--base: string = "origin/main", --path: string = ".", --committed-only] {
+  let committed = (git-run ["-C" $path "diff" $"($base)...HEAD"])
+  if not $committed.ok { return ($committed | to json) }
+  mut patch = $committed.stdout
+  mut command = $committed.command
+  if not $committed_only {
+    let work = (git-run ["-C" $path "diff" "HEAD"])
+    if not $work.ok { return ($work | to json) }
+    if not ($work.stdout | str trim | is-empty) {
+      $patch = $"($patch)($work.stdout)"
+    }
+    $command = $"($committed.command) && ($work.command)"
+  }
   {
     ok: true
-    command: $ran.command
+    command: $command
     data: {
       base: $base
+      includes_worktree: (not $committed_only)
       read_diff: true
-      diff: $ran.stdout
+      diff: $patch
       doc: "docs/REVIEW.md"
       rules: $RULES
     }

@@ -40,8 +40,10 @@ def remedy-problem [text: string] {
   }
 }
 
-def remedy-law [status: string, verdict: string] {
-  if $status == "not-evaluated" {
+def remedy-law [status: string, verdict: string, code: string] {
+  if $code == "no_fact_reader" {
+    "this release has no fact reader for this law. It is not a pass. Leave it. Do not edit the pinned kit files and do not encode it as Allow."
+  } else if $status == "not-evaluated" {
     "the law was not checked. It is not a pass. Read reason in cases.json. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as Allow."
   } else if $verdict == "Refuse" {
     "read that law in rust-tops/cases.json and fix the fact it read. Do not edit the pinned kit files."
@@ -52,55 +54,73 @@ def remedy-law [status: string, verdict: string] {
   }
 }
 
-export def gate-verdict [exit_code: int, cases: any] {
+def law-row [row: record, bucket: string] {
+  let status = ($row.status? | default "")
+  let verdict = ($row.verdict? | default "")
+  let code = ($row.reason_code? | default "")
+  {
+    law: ($row.law? | default "")
+    status: $status
+    verdict: $verdict
+    reason: ($row.reason? | default "")
+    reason_code: $code
+    remedy: (remedy-law $status $verdict $code)
+    bucket: $bucket
+  }
+}
+
+# `laws_clear` is every law checked Allow or Ack.
+# `checked_green` is every checked law Allow or Ack. Gaps do not count.
+export def gate-verdict [cases: any] {
   if $cases == null {
-    let why = if $exit_code == 0 {
-      "cases.json is missing or not JSON"
-    } else {
-      $"cargo tops gate exited ($exit_code) and cases.json is missing or not JSON"
+    return {
+      laws_clear: false
+      checked_green: false
+      error: "cases.json is missing or not JSON"
+      fixes: []
+      gaps: []
     }
-    return {ok: false, error: $why, fixes: []}
   }
   let laws = ($cases.laws? | default null)
   if $laws == null {
-    return {ok: false, error: "cases.json has no laws array", fixes: []}
+    return {laws_clear: false, checked_green: false, error: "cases.json has no laws array", fixes: [], gaps: []}
   }
   let laws_kind = ($laws | describe)
   let laws_ok = ($laws_kind | str starts-with "list") or ($laws_kind | str starts-with "table")
   if not $laws_ok {
-    return {ok: false, error: "cases.json laws is not a list", fixes: []}
+    return {laws_clear: false, checked_green: false, error: "cases.json laws is not a list", fixes: [], gaps: []}
   }
   if ($laws | is-empty) {
-    return {ok: false, error: "cases.json listed no laws", fixes: []}
+    return {laws_clear: false, checked_green: false, error: "cases.json listed no laws", fixes: [], gaps: []}
   }
-  let fixes = (
+  let rows = (
     $laws | each {|row|
       let status = ($row.status? | default "")
       let verdict = ($row.verdict? | default "")
+      let code = ($row.reason_code? | default "")
       if $status == "checked" and $verdict in ["Allow" "Ack"] {
         null
+      } else if $status == "not-evaluated" and $code == "no_fact_reader" {
+        law-row $row "gap"
       } else {
-        {
-          law: ($row.law? | default "")
-          status: $status
-          verdict: $verdict
-          reason: ($row.reason? | default "")
-          remedy: (remedy-law $status $verdict)
-        }
+        law-row $row "fix"
       }
     } | where {|row| $row != null}
   )
-  let n_fix = ($fixes | length)
+  let gaps = ($rows | where {|row| $row.bucket == "gap"} | reject bucket)
+  let fixes = ($rows | where {|row| $row.bucket == "fix"} | reject bucket)
+  let bad_checked = ($fixes | where {|row| $row.status == "checked"} | length)
+  let laws_clear = ($fixes | is-empty) and ($gaps | is-empty)
+  let checked_green = ($bad_checked == 0)
   let unevaluated = ($fixes | where {|row| $row.status == "not-evaluated"} | length)
-  let all_clear = ($exit_code == 0) and ($fixes | is-empty)
-  let error = if $all_clear {
+  let error = if $laws_clear {
     ""
-  } else if $exit_code != 0 and ($fixes | is-empty) {
-    $"cargo tops gate exited ($exit_code)"
+  } else if not ($fixes | is-empty) {
+    $"failing laws: ($fixes | length), not-evaluated: ($unevaluated)"
   } else {
-    $"failing laws: ($n_fix), not-evaluated: ($unevaluated)"
+    $"not-evaluated laws with no fact reader: ($gaps | length)"
   }
-  {ok: $all_clear, error: $error, fixes: $fixes}
+  {laws_clear: $laws_clear, checked_green: $checked_green, error: $error, fixes: $fixes, gaps: $gaps}
 }
 
 def cargo-target [path: string] {
@@ -210,25 +230,33 @@ def main [
   let layers = (layer-rows $text ($problems | get text))
   let loaded = (read-cases $cases $started)
   let cases_value = if $loaded.state == "ok" { $loaded.cases } else { null }
-  let verdict = (gate-verdict $r.exit_code $cases_value)
-  mut error = $verdict.error
-  if $loaded.state == "stale" {
+  let verdict = (gate-verdict $cases_value)
+  let stderr_tail = ($r.stderr | str trim)
+  let stdout_tail = ($r.stdout | str trim)
+  let command_tail = if not ($stderr_tail | is-empty) { $stderr_tail } else { $stdout_tail }
+  mut error = ""
+  if $r.exit_code != 0 {
+    $error = $"cargo tops gate exited ($r.exit_code): (clip $command_tail)"
+  } else if $loaded.state == "stale" {
     $error = "cases.json is older than this run"
-  } else if $loaded.state == "bad" or $loaded.state == "missing" {
+  } else if $loaded.state != "ok" {
     $error = "cases.json is missing or not JSON"
-  } else if $r.exit_code != 0 and not ($summary | is-empty) {
-    $error = (if ($verdict.fixes | is-empty) { $summary } else { $"($summary); ($verdict.error)" })
+  } else {
+    $error = $verdict.error
   }
+  let report_ok = ($r.exit_code == 0) and ($loaded.state == "ok")
   {
-    ok: ($verdict.ok and $loaded.state == "ok")
+    ok: ($report_ok and $verdict.laws_clear)
     command: $command
     exit: $r.exit_code
-    error: (if ($verdict.ok and $loaded.state == "ok") { "" } else { clip $error })
+    error: (if ($report_ok and $verdict.laws_clear) { "" } else { clip $error })
     data: {
+      gate_green: ($report_ok and $verdict.checked_green)
       summary: $summary
       problems: $problems
       layers: $layers
       fixes: $verdict.fixes
+      gaps: $verdict.gaps
       laws: (if $loaded.state == "ok" { $loaded.cases.laws? | default [] } else { [] })
     }
   } | to json

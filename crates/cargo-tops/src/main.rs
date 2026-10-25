@@ -97,7 +97,13 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
+    // `cargo tops …` execs this binary with argv[1] == "tops".
+    // `cargo-tops …` does not. Drop that one word so both forms parse.
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.get(1).and_then(|arg| arg.to_str()) == Some("tops") {
+        args.remove(1);
+    }
+    let cli = Cli::parse_from(args);
     match cli.command {
         Commands::Init {
             class,
