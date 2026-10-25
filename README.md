@@ -167,6 +167,7 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 | [`RUST_TOPS.md`](RUST_TOPS.md) | Normative protocol 1.1.0 |
 | [`schema/`](schema/) | Draft 2020-12 schema for an instance, and a separate optional gate-report schema |
 | [`POLICIES.md`](POLICIES.md) | CI floor and the checks harvested from applying the protocol |
+| [`docs/ADOPT-gates.md`](docs/ADOPT-gates.md) | Floor for a multi-crate workspace: five mandatory jobs, advisory layers, per-crate class |
 | [`config/rust-tops.example.yaml`](config/rust-tops.example.yaml) | Example `parser-codec` instance |
 | [`config/drop-in/`](config/drop-in/) | Files to copy into an adopting crate |
 | [`profiles/`](profiles/) | `library-core`, `parser-codec`, `binary-cli`, `no-std-embedded`, `unsafe-kernel` |
