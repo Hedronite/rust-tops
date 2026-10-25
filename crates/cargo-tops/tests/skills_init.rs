@@ -167,6 +167,11 @@ fn skill_text_is_portable_and_the_gate_remedies_match_agents_md() {
     assert!(gate.contains("not-evaluated"));
     assert!(gate.contains("gate_green"));
     assert!(gate.contains("no_fact_reader"));
+    assert!(
+        !gate.contains("^rm"),
+        "gate.nu must use Nushell's rm, not coreutils"
+    );
+    assert!(gate.contains("rm -f "));
     let review =
         fs::read_to_string(templates.join("rust-tops-review/rust-tops-review.nu")).unwrap();
     assert!(review.contains("committed-only"));
@@ -436,6 +441,40 @@ fn smoke_gate(nu: &Path) {
         missing_error.contains("command not found"),
         "expected the missing-command kind, got {missing_cargo}"
     );
+
+    // PATH has the stub cargo and nu, and no coreutils. Built-in `rm`
+    // must still delete the previous report and print JSON.
+    fs::create_dir_all(target.join("rust-tops")).unwrap();
+    fs::write(
+        target.join("rust-tops/cases.json"),
+        r#"{"laws":[{"law":"stale-sentinel"}]}"#,
+    )
+    .unwrap();
+    let mut narrow = std::ffi::OsString::from(&bin);
+    narrow.push(":");
+    narrow.push(nu.parent().expect("nu lives in a directory"));
+    let no_rm = Command::new(nu)
+        .arg(&script)
+        .args(["--path", "."])
+        .current_dir(&root)
+        .env("PATH", &narrow)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("CARGO_STUB_MODE", "pass")
+        .output()
+        .expect("nu gate without coreutils");
+    assert!(
+        no_rm.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&no_rm.stderr),
+        String::from_utf8_lossy(&no_rm.stdout)
+    );
+    let no_rm_json = parse_json(&no_rm.stdout);
+    assert_eq!(no_rm_json["ok"], true, "{no_rm_json}");
+    let leftover = fs::read_to_string(target.join("rust-tops/cases.json")).unwrap_or_default();
+    assert!(
+        !leftover.contains("stale-sentinel"),
+        "previous cases.json survived: {leftover}"
+    );
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -574,6 +613,16 @@ fn smoke_review(nu: &Path) {
     let patch = dirty_diff_json["data"]["diff"].as_str().unwrap();
     assert!(patch.contains("uncommitted line"), "{dirty_diff_json}");
     assert!(!patch.contains("untracked body"), "{dirty_diff_json}");
+    let diff_untracked: Vec<&str> = dirty_diff_json["data"]["untracked"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        diff_untracked.contains(&"brand-new.txt"),
+        "{dirty_diff_json}"
+    );
     let committed = Command::new(nu)
         .arg(&script)
         .args([
@@ -600,5 +649,24 @@ fn smoke_review(nu: &Path) {
         !committed_names.contains(&"brand-new.txt"),
         "{committed_json}"
     );
+    let committed_diff = Command::new(nu)
+        .arg(&script)
+        .args([
+            "diff",
+            "--base",
+            "HEAD~1",
+            "--path",
+            ".",
+            "--committed-only",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("nu diff committed only");
+    let committed_diff_json = parse_json(&committed_diff.stdout);
+    assert_eq!(committed_diff_json["data"]["includes_worktree"], false);
+    assert!(committed_diff_json["data"]["untracked"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     let _ = fs::remove_dir_all(&root);
 }

@@ -87,13 +87,17 @@ def "main diff" [--base: string = "origin/main", --path: string = ".", --committ
   if not $committed.ok { return ($committed | to json) }
   mut patch = $committed.stdout
   mut command = $committed.command
+  mut untracked = []
   if not $committed_only {
     let work = (git-run ["-C" $path "diff" "HEAD"])
     if not $work.ok { return ($work | to json) }
     if not ($work.stdout | str trim | is-empty) {
       $patch = $"($patch)($work.stdout)"
     }
-    $command = $"($committed.command) && ($work.command)"
+    let extra = (git-run ["-C" $path "ls-files" "--others" "--exclude-standard"])
+    if not $extra.ok { return ($extra | to json) }
+    $untracked = (names $extra.stdout)
+    $command = $"($committed.command) && ($work.command) && ($extra.command)"
   }
   {
     ok: true
@@ -102,6 +106,7 @@ def "main diff" [--base: string = "origin/main", --path: string = ".", --committ
       base: $base
       includes_worktree: (not $committed_only)
       read_diff: true
+      untracked: $untracked
       diff: $patch
       doc: "docs/REVIEW.md"
       rules: $RULES

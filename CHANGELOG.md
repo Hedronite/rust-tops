@@ -23,6 +23,7 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 ### Changed
 
 - `cargo tops` and `cargo-tops` are the same binary. Cargo passes `tops` as the first argument; the binary drops that word before clap parses. `cargo tops check` and `cargo-tops check` both run.
+- `rust-tops-gate` deletes the previous `cases.json` with Nushell's `rm`, so a PATH without coreutils still prints JSON. `rust-tops-review` `diff` includes `data.untracked`, the same name list as `files`. Untracked bodies stay out of the patch.
 - A `not-evaluated` row in `cases.json` includes `reason_code`. `no_fact_reader` means this release has no reader for that law. `run_dependent` means the reader exists and this run did not give it a fact.
 - `AGENTS.md` (repo root, the init template, and the init golden) is the protocol 1.1.0 harness: `cargo tops check` then `cargo tops gate`, the optional `laws` layer, Refuse / not-evaluated / unreported, and the pinned kit files. It adds the module-structure rules and a short review section.
 - `cargo tops gate` writes `cases.bend` and `cases.json` under `$CARGO_TARGET_DIR/rust-tops` when that variable is set, otherwise under `cargo metadata`'s `target_directory`, otherwise under `<project>/target/rust-tops`.

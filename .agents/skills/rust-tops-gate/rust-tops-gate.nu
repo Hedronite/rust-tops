@@ -217,7 +217,7 @@ def main [
   }
   let cases = ($located.dir | path join "rust-tops" "cases.json")
   let started = (date now)
-  ^rm -f $cases
+  rm -f $cases
   let args = ["tops" "gate" "--path" $path "--max-tier" ($max_tier | into string)]
   let command = (argv-line (["cargo"] ++ $args))
   if not (have cargo) {
