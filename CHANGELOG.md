@@ -13,6 +13,22 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 
 ## [Unreleased]
 
+### Added
+
+- Three agent skills, `rust-tops-adopt`, `rust-tops-gate`, and `rust-tops-review`. Each is a `SKILL.md` plus a Nushell script that prints `{ok, command, data}`. The script wraps `cargo tops`; it does not re-implement it. `rust-tops-gate` returns `ok: true` only when `cargo tops gate` exits 0 and every law row is `checked` with verdict `Allow` or `Ack`. `data.gate_green` is true when that command exits 0 and every checked law passed. A `not-evaluated` law with `reason_code` `no_fact_reader` is a `data.gaps` item. One with `reason_code` `run_dependent` stays in `data.fixes`. Either list keeps `ok` false. The script does not read the report's top-level pass bit. A non-zero exit reports that code and the stderr tail before the report is read.
+- `cargo tops init --skills` writes that layout as ordinary files: `.agents/skills/<name>/`, `.claude/skills/<name>/`, `.cursor/skills/<name>/`, and `.grok/skills/<name>/` hold the same bytes. It does not create symlinks. A drift test in `cargo test --workspace` fails when any copy differs or is a symlink. It also writes a one-line `CLAUDE.md` (`@AGENTS.md`) and `docs/REVIEW.md`. Default `cargo tops init` does not write those files.
+- The repository `nextest` job installs Nushell 0.108.0 from the official GitHub release tarball `nu-0.108.0-x86_64-unknown-linux-gnu.tar.gz` (sha256 `f0daaa0256b0f7dd5f4d9925b4d5522d8de5e947ed9ad64a43526e5cffeb05df`) and sets `RUST_TOPS_REQUIRE_NU` so the skill envelope tests fail when `nu` is missing. No other job changes. The drop-in workflow is unchanged.
+- [`docs/REVIEW.md`](docs/REVIEW.md), the review gate. It does not change CRAP, coverage, or mutation.
+
+### Changed
+
+- `cargo tops` and `cargo-tops` are the same binary. Cargo passes `tops` as the first argument; the binary drops that word before clap parses. `cargo tops check` and `cargo-tops check` both run.
+- `rust-tops-gate` deletes the previous `cases.json` with Nushell's `rm`, so a PATH without coreutils still prints JSON. `rust-tops-review` `diff` includes `data.untracked`, the same name list as `files`. Untracked bodies stay out of the patch.
+- A `not-evaluated` row in `cases.json` includes `reason_code`. `no_fact_reader` means this release has no reader for that law. `run_dependent` means the reader exists and this run did not give it a fact.
+- `AGENTS.md` (repo root, the init template, and the init golden) is the protocol 1.1.0 harness: `cargo tops check` then `cargo tops gate`, the optional `laws` layer, Refuse / not-evaluated / unreported, and the pinned kit files. It adds the module-structure rules and a short review section.
+- `cargo tops gate` writes `cases.bend` and `cases.json` under `$CARGO_TARGET_DIR/rust-tops` when that variable is set, otherwise under `cargo metadata`'s `target_directory`, otherwise under `<project>/target/rust-tops`.
+- [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) states that the laws layer is normative in protocol 1.1.0. [`RUST_TOPS.md`](RUST_TOPS.md) §14.3 points at the harness `init` writes.
+
 ## [0.2.0] - 2026-10-21
 
 **Breaking 0.x minor.** Protocol plane moves to **1.1.0** (additive `laws` layer). Package plane moves to **0.2.0**.

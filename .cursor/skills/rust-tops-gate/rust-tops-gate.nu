@@ -1,0 +1,263 @@
+#!/usr/bin/env nu
+# Wraps `cargo tops gate`. Does not re-implement the gate.
+# The report's top-level pass bit only means bend exited and its verdicts parsed.
+# This script never reads that field. `ok` is true only when the command exits 0
+# and every law row is checked with verdict Allow or Ack.
+
+def have [bin: string] {
+  not ((which $bin | where type == external) | is-empty)
+}
+
+def quote-arg [a: string] {
+  if ($a | str contains " ") { $"\"($a)\"" } else { $a }
+}
+
+def argv-line [args: list<string>] {
+  $args | each {|a| quote-arg $a } | str join " "
+}
+
+def clip [text: string] {
+  $text | str trim | str substring 0..<400
+}
+
+def remedy-problem [text: string] {
+  if ($text | str contains "not on PATH") or ($text | str contains "command not found") {
+    "install it. cargo-tops does not vendor engines. A missing tool is a fail, not a skip."
+  } else if ($text | str starts-with "coverage:") {
+    "add a test for the specified missing branch, not a tautology. Empty LCOV: the recorder never ran; fix the kit, do not skip."
+  } else if ($text | str starts-with "crap:") {
+    "reduce real branching or cover the risky arm. Do not extract foo_part_2. Empty CRAP JSON: the recorder never ran; fix the kit, do not skip."
+  } else if ($text | str starts-with "mutation:") {
+    "assert the behavior the mutant broke. Never --baseline skip."
+  } else if ($text | str starts-with "laws:") {
+    "read that law in rust-tops/cases.json and fix the fact it read. Do not edit the pinned kit files."
+  } else if ($text | str contains "ENOENT") {
+    "honor CARGO_BIN_EXE_* / $CARGO_TARGET_DIR / one-level target/ scan."
+  } else if ($text | str contains "callgrind") or ($text | str contains "perf") {
+    "profile, then algorithm / alloc / layout. unsafe is last and Miri-clean."
+  } else {
+    "Fix the failing command against the contract. Do not generate a test from the implementation."
+  }
+}
+
+def remedy-law [status: string, verdict: string, code: string] {
+  if $code == "no_fact_reader" {
+    "this release has no fact reader for this law. It is not a pass. Leave it. Do not edit the pinned kit files and do not encode it as Allow."
+  } else if $status == "not-evaluated" {
+    "the law was not checked. It is not a pass. Read reason in cases.json. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as Allow."
+  } else if $verdict == "Refuse" {
+    "read that law in rust-tops/cases.json and fix the fact it read. Do not edit the pinned kit files."
+  } else if $verdict == "unreported" {
+    "unreported is not a pass. bend stops at the first refusal. Read rust-tops/cases.json."
+  } else {
+    "the law is not a passing checked verdict. Read rust-tops/cases.json. Do not count it as a pass."
+  }
+}
+
+def law-row [row: record, bucket: string] {
+  let status = ($row.status? | default "")
+  let verdict = ($row.verdict? | default "")
+  let code = ($row.reason_code? | default "")
+  {
+    law: ($row.law? | default "")
+    status: $status
+    verdict: $verdict
+    reason: ($row.reason? | default "")
+    reason_code: $code
+    remedy: (remedy-law $status $verdict $code)
+    bucket: $bucket
+  }
+}
+
+# `laws_clear` is every law checked Allow or Ack.
+# `checked_green` is every checked law Allow or Ack. Gaps do not count.
+export def gate-verdict [cases: any] {
+  if $cases == null {
+    return {
+      laws_clear: false
+      checked_green: false
+      error: "cases.json is missing or not JSON"
+      fixes: []
+      gaps: []
+    }
+  }
+  let laws = ($cases.laws? | default null)
+  if $laws == null {
+    return {laws_clear: false, checked_green: false, error: "cases.json has no laws array", fixes: [], gaps: []}
+  }
+  let laws_kind = ($laws | describe)
+  let laws_ok = ($laws_kind | str starts-with "list") or ($laws_kind | str starts-with "table")
+  if not $laws_ok {
+    return {laws_clear: false, checked_green: false, error: "cases.json laws is not a list", fixes: [], gaps: []}
+  }
+  if ($laws | is-empty) {
+    return {laws_clear: false, checked_green: false, error: "cases.json listed no laws", fixes: [], gaps: []}
+  }
+  let rows = (
+    $laws | each {|row|
+      let status = ($row.status? | default "")
+      let verdict = ($row.verdict? | default "")
+      let code = ($row.reason_code? | default "")
+      if $status == "checked" and $verdict in ["Allow" "Ack"] {
+        null
+      } else if $status == "not-evaluated" and $code == "no_fact_reader" {
+        law-row $row "gap"
+      } else {
+        law-row $row "fix"
+      }
+    } | where {|row| $row != null}
+  )
+  let gaps = ($rows | where {|row| $row.bucket == "gap"} | reject bucket)
+  let fixes = ($rows | where {|row| $row.bucket == "fix"} | reject bucket)
+  let bad_checked = ($fixes | where {|row| $row.status == "checked"} | length)
+  let laws_clear = ($fixes | is-empty) and ($gaps | is-empty)
+  let checked_green = ($bad_checked == 0)
+  let unevaluated = ($fixes | where {|row| $row.status == "not-evaluated"} | length)
+  let error = if $laws_clear {
+    ""
+  } else if not ($fixes | is-empty) {
+    $"failing laws: ($fixes | length), not-evaluated: ($unevaluated)"
+  } else {
+    $"not-evaluated laws with no fact reader: ($gaps | length)"
+  }
+  {laws_clear: $laws_clear, checked_green: $checked_green, error: $error, fixes: $fixes, gaps: $gaps}
+}
+
+def cargo-target [path: string] {
+  let from_env = ($env.CARGO_TARGET_DIR? | default "" | str trim)
+  if not ($from_env | is-empty) {
+    return $from_env
+  }
+  if not (have cargo) {
+    error make {msg: "cargo: command not found"}
+  }
+  let manifest = ($path | path join "Cargo.toml")
+  let r = (^cargo metadata --format-version 1 --no-deps --manifest-path $manifest | complete)
+  if $r.exit_code != 0 {
+    error make {msg: (clip $"cargo metadata failed, exit ($r.exit_code): ($r.stderr)")}
+  }
+  let parsed = (try { $r.stdout | from json } catch {|err| error make {msg: $"cargo metadata did not return JSON: ($err.msg)"}})
+  let kind = ($parsed | describe)
+  if not ($kind | str starts-with "record") {
+    error make {msg: "cargo metadata did not return JSON"}
+  }
+  let dir = ($parsed.target_directory? | default "" | str trim)
+  if ($dir | is-empty) {
+    error make {msg: "cargo metadata JSON has no target_directory"}
+  }
+  $dir
+}
+
+def read-cases [cases: string, started: datetime] {
+  if not ($cases | path exists) {
+    return {state: "missing", cases: null}
+  }
+  let modified = (ls -f $cases | get modified | first)
+  if $modified < ($started - 2sec) {
+    return {state: "stale", cases: null}
+  }
+  let parsed = (try { open $cases } catch { null })
+  if $parsed == null {
+    return {state: "bad", cases: null}
+  }
+  let kind = ($parsed | describe)
+  if not ($kind | str starts-with "record") {
+    return {state: "bad", cases: null}
+  }
+  {state: "ok", cases: $parsed}
+}
+
+def summary-line [text: string] {
+  let rows = ($text | lines | where {|row|
+    ($row | str starts-with "ok: ") or ($row | str starts-with "fail: ") or ($row | str starts-with "dry-run: ")
+  })
+  if ($rows | is-empty) { "" } else { $rows | last }
+}
+
+def problem-lines [text: string] {
+  $text | lines | each {|row| $row | str trim } | where {|row| $row | str starts-with "- " } | each {|row| $row | str substring 2.. }
+}
+
+def layer-rows [text: string, problems: list] {
+  $text | lines | each {|row|
+    let trimmed = ($row | str trim)
+    if not ($trimmed | str starts-with "==> [") {
+      null
+    } else {
+      let rest = ($trimmed | str substring 5..)
+      let parts = ($rest | split row "] ")
+      if ($parts | length) < 2 {
+        null
+      } else {
+        let id = ($parts | first)
+        let command = ($parts | skip 1 | str join "] ")
+        let mine = ($problems | where {|p| $p | str starts-with $"($id):" })
+        let named = ($mine | any {|p| $p | str contains $command })
+        let unnamed = (not ($mine | is-empty)) and ($mine | all {|p| not ($p | str contains "`") })
+        let failed = $named or $unnamed
+        {
+          id: $id
+          command: $command
+          ok: (not $failed)
+          remedy: (if $failed { remedy-problem ($mine | first) } else { "" })
+        }
+      }
+    }
+  } | where {|row| $row != null }
+}
+
+def main [
+  --path: string = "."
+  --max-tier: int = 1
+] {
+  let meta_cmd = (argv-line ["cargo" "metadata" "--format-version" "1" "--no-deps" "--manifest-path" ($path | path join "Cargo.toml")])
+  let located = (try { {ok: true, dir: (cargo-target $path)} } catch {|err| {ok: false, error: $err.msg}})
+  if not $located.ok {
+    return ({ok: false, command: $meta_cmd, error: (clip $located.error), exit: 2} | to json)
+  }
+  let cases = ($located.dir | path join "rust-tops" "cases.json")
+  let started = (date now)
+  rm -f $cases
+  let args = ["tops" "gate" "--path" $path "--max-tier" ($max_tier | into string)]
+  let command = (argv-line (["cargo"] ++ $args))
+  if not (have cargo) {
+    return ({ok: false, command: $command, error: "cargo: command not found", exit: 127} | to json)
+  }
+  let r = (^cargo ...$args | complete)
+  let text = ([$r.stdout $r.stderr] | str join "\n")
+  let summary = (summary-line $text)
+  let problems = (problem-lines $text | each {|p| {text: $p, remedy: (remedy-problem $p)}})
+  let layers = (layer-rows $text ($problems | get text))
+  let loaded = (read-cases $cases $started)
+  let cases_value = if $loaded.state == "ok" { $loaded.cases } else { null }
+  let verdict = (gate-verdict $cases_value)
+  let stderr_tail = ($r.stderr | str trim)
+  let stdout_tail = ($r.stdout | str trim)
+  let command_tail = if not ($stderr_tail | is-empty) { $stderr_tail } else { $stdout_tail }
+  mut error = ""
+  if $r.exit_code != 0 {
+    $error = $"cargo tops gate exited ($r.exit_code): (clip $command_tail)"
+  } else if $loaded.state == "stale" {
+    $error = "cases.json is older than this run"
+  } else if $loaded.state != "ok" {
+    $error = "cases.json is missing or not JSON"
+  } else {
+    $error = $verdict.error
+  }
+  let report_ok = ($r.exit_code == 0) and ($loaded.state == "ok")
+  {
+    ok: ($report_ok and $verdict.laws_clear)
+    command: $command
+    exit: $r.exit_code
+    error: (if ($report_ok and $verdict.laws_clear) { "" } else { clip $error })
+    data: {
+      gate_green: ($report_ok and $verdict.checked_green)
+      summary: $summary
+      problems: $problems
+      layers: $layers
+      fixes: $verdict.fixes
+      gaps: $verdict.gaps
+      laws: (if $loaded.state == "ok" { $loaded.cases.laws? | default [] } else { [] })
+    }
+  } | to json
+}

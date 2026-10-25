@@ -9,6 +9,7 @@ mod config;
 mod facts;
 mod laws;
 mod profiles;
+mod skills;
 
 #[cfg(test)]
 mod parse_oracle;
@@ -42,6 +43,9 @@ enum Commands {
         /// Overwrite existing protocol files
         #[arg(long)]
         force: bool,
+        /// Also write portable agent skills, CLAUDE.md, and docs/REVIEW.md
+        #[arg(long)]
+        skills: bool,
     },
     /// Validate rust-tops.yaml against the protocol schema (typed check)
     Check {
@@ -93,15 +97,22 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
+    // `cargo tops …` execs this binary with argv[1] == "tops".
+    // `cargo-tops …` does not. Drop that one word so both forms parse.
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.get(1).and_then(|arg| arg.to_str()) == Some("tops") {
+        args.remove(1);
+    }
+    let cli = Cli::parse_from(args);
     match cli.command {
         Commands::Init {
             class,
             path,
             name,
             force,
+            skills,
         } => {
-            init(&path, class, name.as_deref(), force)?;
+            init(&path, class, name.as_deref(), force, skills)?;
             Ok(ExitCode::SUCCESS)
         }
         Commands::Check { path } => {
@@ -165,7 +176,13 @@ fn check(cfg: &TopsConfig) -> Result<()> {
     Ok(())
 }
 
-fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Result<()> {
+fn init(
+    dir: &Path,
+    class: CrateClass,
+    name: Option<&str>,
+    force: bool,
+    skills: bool,
+) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     fs::create_dir_all(dir.join(".config"))?;
     fs::create_dir_all(dir.join(".cargo"))?;
@@ -219,6 +236,9 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
     if write_file(dir.join(laws::FETCH), profiles::FETCH_BEND_SH, force)? {
         make_executable(&dir.join(laws::FETCH))?;
     }
+    if skills {
+        skills::emit(dir, force)?;
+    }
 
     println!(
         "initialized rust-tops for {crate_name} ({}) in {}",
@@ -230,7 +250,7 @@ fn init(dir: &Path, class: CrateClass, name: Option<&str>, force: bool) -> Resul
 }
 
 /// Returns whether the file was written (false when it existed and `force` was off).
-fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<bool> {
+pub(crate) fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<bool> {
     if path.exists() && !force {
         println!("skip existing {}", path.display());
         return Ok(false);
@@ -321,7 +341,7 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
                 laws::FETCH,
                 laws::LOCK
             );
-            println!("\n==> [laws] bend {}/cases.bend", laws::OUT_DIR);
+            println!("\n==> [laws] bend {}/cases.bend", laws::report_display(dir));
         }
         println!();
         println!("dry-run: {ran} command(s) listed");

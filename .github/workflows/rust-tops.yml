@@ -74,7 +74,23 @@ jobs:
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: nextest@0.9.145
+      # Instance-only. The drop-in floor does not install Nushell.
+      # Official release tarball, version and sha256 pinned. No floating tag.
+      - name: Install Nushell 0.108.0
+        run: |
+          set -euo pipefail
+          version=0.108.0
+          archive="nu-${version}-x86_64-unknown-linux-gnu.tar.gz"
+          url="https://github.com/nushell/nushell/releases/download/${version}/${archive}"
+          curl --fail --silent --show-error --location --output "${archive}" "${url}"
+          echo "f0daaa0256b0f7dd5f4d9925b4d5522d8de5e947ed9ad64a43526e5cffeb05df  ${archive}" | sha256sum --check
+          tar --extract --gzip --file "${archive}"
+          mkdir -p "${HOME}/.local/bin"
+          install -m 0755 "nu-${version}-x86_64-unknown-linux-gnu/nu" "${HOME}/.local/bin/nu"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
       - run: cargo nextest run --workspace --all-features --profile ci
+        env:
+          RUST_TOPS_REQUIRE_NU: "1"
       - run: cargo test --doc --workspace --all-features
 
   msrv:

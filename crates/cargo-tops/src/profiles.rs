@@ -182,6 +182,15 @@ mod tests {
     }
 
     #[test]
+    fn agents_md_matches_the_workspace_and_the_golden() {
+        expect_vendored(super::AGENTS_MD, "AGENTS.md", "AGENTS.md");
+        let golden =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/init/shared/AGENTS.md");
+        let body = std::fs::read_to_string(&golden).expect("golden AGENTS.md");
+        assert_eq!(super::AGENTS_MD, body);
+    }
+
+    #[test]
     fn laws_bend_matches_pack() {
         expect_vendored(LAWS_BEND, "laws/LAWS.bend", "LAWS.bend");
     }
