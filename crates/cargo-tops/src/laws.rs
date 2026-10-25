@@ -22,6 +22,77 @@ pub const LOCK: &str = "laws/bend.lock";
 pub const FETCH: &str = "scripts/fetch-bend.sh";
 pub const OUT_DIR: &str = "target/rust-tops";
 
+/// Directory that receives `cases.bend` and `cases.json`.
+///
+/// A nonempty `CARGO_TARGET_DIR` wins. Otherwise, when `Cargo.toml` exists
+/// and `cargo metadata` returns JSON, that `target_directory` wins. Otherwise
+/// the report is `<project>/target/rust-tops`.
+pub fn report_dir(project: &Path) -> PathBuf {
+    let from_env = std::env::var("CARGO_TARGET_DIR").ok();
+    resolve_report_dir(
+        project,
+        from_env.as_deref(),
+        metadata_target(project).as_deref(),
+    )
+}
+
+/// Same rule as [`report_dir`], with the two lookups passed in.
+pub fn resolve_report_dir(
+    project: &Path,
+    cargo_target_dir: Option<&str>,
+    metadata_target: Option<&str>,
+) -> PathBuf {
+    if let Some(dir) = nonempty(cargo_target_dir) {
+        return PathBuf::from(dir).join("rust-tops");
+    }
+    if let Some(dir) = nonempty(metadata_target) {
+        return PathBuf::from(dir).join("rust-tops");
+    }
+    project.join(OUT_DIR)
+}
+
+/// Path printed in gate output. Stays `target/rust-tops` when the report
+/// sits under the project.
+pub fn report_display(project: &Path) -> String {
+    display_under(project, &report_dir(project))
+}
+
+fn nonempty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|text| !text.is_empty())
+}
+
+fn display_under(project: &Path, out: &Path) -> String {
+    out.strip_prefix(project)
+        .ok()
+        .map(|rel| rel.display().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| out.display().to_string())
+}
+
+fn metadata_target(project: &Path) -> Option<String> {
+    let manifest = project.join("Cargo.toml");
+    if !manifest.is_file() {
+        return None;
+    }
+    let output = Command::new("cargo")
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value.get("target_directory")?.as_str().map(str::to_string)
+}
+
 /// The `bend` binary that reports the pinned version.
 pub struct Judge {
     bend: PathBuf,
@@ -286,7 +357,7 @@ impl Judged<'_> {
         }
     }
 
-    fn json(&self, judge: &Judge, exit: Option<i32>) -> serde_json::Value {
+    fn json(&self, judge: &Judge, exit: Option<i32>, program: &str) -> serde_json::Value {
         let mut checked = 0;
         let laws: Vec<serde_json::Value> = self
             .rows
@@ -310,7 +381,7 @@ impl Judged<'_> {
         json!({
             "protocol_layer": "laws",
             "bend": judge.version,
-            "program": format!("{OUT_DIR}/cases.bend"),
+            "program": program,
             "bend_exit": exit,
             "passed": self.passed,
             "laws": laws,
@@ -327,14 +398,15 @@ pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
         )]);
     };
     let rows = choose_rows(&pack, ctx);
-    let out = ctx.dir.join(OUT_DIR);
+    let out = report_dir(ctx.dir);
+    let shown = display_under(ctx.dir, &out);
     fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
-    fs::write(out.join(PACK), &pack).with_context(|| format!("write {OUT_DIR}/{PACK}"))?;
+    fs::write(out.join(PACK), &pack).with_context(|| format!("write {shown}/{PACK}"))?;
     fs::write(out.join("cases.bend"), program(&rows))
-        .with_context(|| format!("write {OUT_DIR}/cases.bend"))?;
+        .with_context(|| format!("write {shown}/cases.bend"))?;
 
     println!(
-        "\n==> [laws] bend {OUT_DIR}/cases.bend (Bend {})",
+        "\n==> [laws] bend {shown}/cases.bend (Bend {})",
         judge.version
     );
     if pack != profiles::LAWS_BEND {
@@ -375,11 +447,8 @@ pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
             println!("    | {line}");
         }
         failures.push(match &judged.failed_law {
-            Some(law) => format!("laws: bend refused {law} ({OUT_DIR}/cases.bend)"),
-            None => format!(
-                "laws: bend exited {} on {OUT_DIR}/cases.bend",
-                output.status
-            ),
+            Some(law) => format!("laws: bend refused {law} ({shown}/cases.bend)"),
+            None => format!("laws: bend exited {} on {shown}/cases.bend", output.status),
         });
     } else if !readable {
         failures.push(format!(
@@ -387,14 +456,20 @@ pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
             judged.verdicts.len()
         ));
     }
-    let report = serde_json::to_string_pretty(&judged.json(judge, output.status.code()))? + "\n";
+    let report = serde_json::to_string_pretty(&judged.json(
+        judge,
+        output.status.code(),
+        &format!("{shown}/cases.bend"),
+    ))? + "\n";
     fs::write(out.join("cases.json"), report)
-        .with_context(|| format!("write {OUT_DIR}/cases.json"))?;
+        .with_context(|| format!("write {shown}/cases.json"))?;
     Ok(failures)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::*;
 
     fn row(law: &str, case: Option<(&'static str, &'static str)>) -> Row {
@@ -460,6 +535,58 @@ mod tests {
     fn lock_version_reads_the_bend_section() {
         assert_eq!(lock_version(profiles::BEND_LOCK).as_deref(), Some("2.0.36"));
         assert_eq!(lock_version("[bend]\nnote = \"x\"\n"), None);
+    }
+
+    #[test]
+    fn report_dir_prefers_a_nonempty_cargo_target_dir() {
+        let project = Path::new("/proj");
+        let got = resolve_report_dir(project, Some("/env-target"), Some("/meta-target"));
+        assert_eq!(got, PathBuf::from("/env-target/rust-tops"));
+    }
+
+    #[test]
+    fn report_dir_uses_metadata_when_the_env_is_empty() {
+        let project = Path::new("/proj");
+        assert_eq!(
+            resolve_report_dir(project, Some("  "), Some("/meta-target")),
+            PathBuf::from("/meta-target/rust-tops")
+        );
+        assert_eq!(
+            resolve_report_dir(project, None, Some("/meta-target")),
+            PathBuf::from("/meta-target/rust-tops")
+        );
+    }
+
+    #[test]
+    fn metadata_target_reads_target_directory() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-meta-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"meta-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
+        let got = metadata_target(&dir).expect("cargo metadata");
+        assert!(Path::new(&got).is_absolute(), "{got}");
+        assert!(got.contains("target"), "{got}");
+        let report = resolve_report_dir(&dir, None, Some(&got));
+        assert_eq!(report, PathBuf::from(got).join("rust-tops"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn report_dir_falls_back_to_the_project_target() {
+        let project = Path::new("/proj");
+        assert_eq!(
+            resolve_report_dir(project, None, None),
+            PathBuf::from("/proj/target/rust-tops")
+        );
+        assert_eq!(
+            resolve_report_dir(project, Some(""), Some("")),
+            PathBuf::from("/proj/target/rust-tops")
+        );
     }
 
     #[test]

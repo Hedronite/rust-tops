@@ -212,15 +212,26 @@ fn path_with_bend(bin: &Path) -> OsString {
 }
 
 fn gate(fixture: &Fixture, path: OsString) -> (Output, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
-        .args(["gate", "--path"])
+    gate_at(fixture, path, None)
+}
+
+fn gate_at(fixture: &Fixture, path: OsString, cargo_target: Option<&Path>) -> (Output, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-tops"));
+    cmd.args(["gate", "--path"])
         .arg(&fixture.repo)
         .env("PATH", path)
         .env("HOME", &fixture.home)
         .env("BEND_STUB_LOG", fixture.root.join("bend.log"))
-        .env_remove("RUST_TOPS_ROOT")
-        .output()
-        .expect("spawn cargo-tops gate");
+        .env_remove("RUST_TOPS_ROOT");
+    match cargo_target {
+        Some(dir) => {
+            cmd.env("CARGO_TARGET_DIR", dir);
+        }
+        None => {
+            cmd.env_remove("CARGO_TARGET_DIR");
+        }
+    }
+    let out = cmd.output().expect("spawn cargo-tops gate");
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -417,6 +428,24 @@ fn a_disabled_laws_layer_never_calls_bend() {
         "bend was called with laws off"
     );
     assert!(!fixture.repo.join("target/rust-tops").exists());
+}
+
+#[test]
+fn laws_report_follows_cargo_target_dir() {
+    let fixture = fixture("target-dir");
+    stub_bend(&fixture);
+    let custom = fixture.root.join("custom-target");
+    let (out, text) = gate_at(&fixture, path_without_bend(&fixture.bin), Some(&custom));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let cases = custom.join("rust-tops/cases.json");
+    assert!(
+        cases.is_file(),
+        "cases.json was not written under CARGO_TARGET_DIR: {text}"
+    );
+    assert!(!fixture.repo.join("target/rust-tops").exists());
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(cases).expect("read")).expect("json");
+    assert_eq!(parsed["passed"], true);
 }
 
 /// Real Bend 2.0.36 on `PATH`: a refusing repo fails, and a fresh init of

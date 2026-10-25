@@ -1,8 +1,9 @@
 # Rust-TOPS policies (gates / checks)
 
-This is the **practice layer** harvested from applying protocol 1.0.0.
-It does not amend [`RUST_TOPS.md`](RUST_TOPS.md). Instance tightness lives in
-`rust-tops.yaml`. CI floor lives in [`config/drop-in/rust-tops.yml`](config/drop-in/rust-tops.yml).
+This is the **practice layer**. It does not amend [`RUST_TOPS.md`](RUST_TOPS.md).
+Protocol 1.1.0 adds the `laws` layer; the floors in this file are unchanged.
+Instance tightness lives in `rust-tops.yaml`. CI floor lives in
+[`config/drop-in/rust-tops.yml`](config/drop-in/rust-tops.yml).
 
 ## Floor, not ceiling
 
@@ -74,9 +75,9 @@ A density extract must have a **domain name**.
 | Darwin / other `cfg(target_os)` | every cfg needs a lane; file the gap, do not drop the cfg |
 | fuzz-smoke | parser-codec; scheduled/manual until a known crash is closed. Crash = fail; timeout = infra |
 | Callgrind / Criterion | no runner → not a gate |
-| Bend2 pack (`LAWS.bend`) | instance gate on this repo (`bend-proof`, `law-diff`, `bend-verdict`); not in the drop-in floor; not protocol 1.0 |
+| Bend2 pack (`LAWS.bend`) | the `laws` layer is protocol 1.1.0. `bend-proof`, `law-diff`, and `bend-verdict` are instance gates on this repo; they are not in the drop-in floor |
 
 ## Agent standing orders
 
 See [`AGENTS.md`](AGENTS.md). Coding agents fail closed on the gates above.
-Bend2 encode of these policies: [`laws/LAWS.bend`](laws/LAWS.bend) (provisional pack, not protocol 1.0). Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md).
+The `laws` layer is protocol 1.1.0 ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md). Pack: [`laws/LAWS.bend`](laws/LAWS.bend).

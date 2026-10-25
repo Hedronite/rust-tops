@@ -1,9 +1,10 @@
 # Bend2 × rust-tops — candidate laws
 
-**Status: candidates — not protocol 1.0.** This file does not amend
-[`RUST_TOPS.md`](RUST_TOPS.md) or the schema. Hard/soft is a steering hint
-for agents encoding these as Bend laws. Promote a row into protocol 1.0 only
-with an explicit spec bump.
+**Status: the laws layer is normative in protocol 1.1.0**
+([`RUST_TOPS.md`](RUST_TOPS.md) §3.1, §15, §22). A Bend `Refuse` fails the
+run. `not-evaluated` is never a pass. This file is the catalog. Promoting a
+row's text into `RUST_TOPS.md` still takes an explicit spec bump. Hard/soft
+is the `Refuse` / `Ack` encoding.
 
 Sketch mapping: protocol intents → fail-closed agent laws → Halo / agent
 editing Rust. Humans read this as advisory. Agents under an AI-ops seat
@@ -20,7 +21,7 @@ treat `hard` rows as fail-closed once encoded.
 
 | Artifact | Role |
 | --- | --- |
-| `RUST_TOPS.md` + schema | Global PROTOCOL (normative 1.0) |
+| `RUST_TOPS.md` + schema | Global PROTOCOL (normative 1.1.0) |
 | `POLICIES.md` | Harvested gates / checks (practice) |
 | `rust-tops.yaml` | Per-crate instance (tightness, floors) |
 | `LAWS.bend` | Fail-closed agent laws derived from PROTOCOL + instance |
@@ -30,7 +31,7 @@ Laws may not invent Kani on a binary that classified as skipping proofs.
 
 ## Candidate laws
 
-Harvested applying rust-tops 1.0. Generic: no product crate names as law.
+Harvested applying rust-tops 1.0. Protocol 1.1.0 judges a row when a fact reader exists. Generic: no product crate names as law.
 
 | id | rust-tops source | candidate law | hard/soft | notes |
 | --- | --- | --- | --- | --- |

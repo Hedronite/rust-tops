@@ -758,30 +758,9 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 6. Do not enable extra clippy groups. Do not add dependencies for a one-liner.
 7. Prefer standard library. A new crate must pull its weight in *deleted production lines* or *measured* perf/safety.
 
-### 14.3 Suggested `AGENTS.md` stub
+### 14.3 `AGENTS.md`
 
-```markdown
-# Agent standing orders (Rust-TOPS 1.0)
-
-Goal: correct, dense, fast Rust. Production: fewest necessary lines.
-Tests: as many as the contract needs. Do not write tests by reading the impl.
-
-Gates before you stop:
-- cargo fmt --all
-- cargo clippy --all-targets --all-features -- -D warnings
-- cargo nextest run --profile ci
-- cargo llvm-cov nextest --fail-under-lines <class>
-- cargo crap          # new fns ≤ 6
-- cargo mutants --in-diff
-- property tests for every claimed invariant
-- no new clone/alloc on paths listed in rust-tops.yaml hot_paths
-
-Forbidden:
-- #[mutants::skip] without an equivalent-mutant reason
-- splitting a function only to lower CRAP
-- new traits/builders with a single impl
-- unwrap on library success paths
-```
+`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.1.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
 
 ---
 
