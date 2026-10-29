@@ -1,0 +1,17 @@
+# First-class profile: ffi-bridge
+class: ffi-bridge
+coverage:
+  line_min_pct: 90
+  region_min_pct: 85
+crap:
+  threshold_human: 6
+  threshold_agent: 8
+mutation:
+  scope: diff
+  kill_rate_min_pct: 90
+  unexplained_survivors_max: 0
+property: optional
+fuzz: required-on-inbound-bytes
+miri: required
+kani: optional
+callgrind: optional

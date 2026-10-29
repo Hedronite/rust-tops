@@ -1,0 +1,5 @@
+# First-class profile: workspace-root
+# A workspace root sets no floors of its own. Each member package keeps
+# the coverage, CRAP, and mutation floors of its own class (RUST_TOPS.md §4).
+class: workspace-root
+inherits: per-package

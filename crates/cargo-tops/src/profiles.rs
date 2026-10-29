@@ -13,7 +13,9 @@ pub const LAWS_BEND: &str = include_str!("../templates/LAWS.bend");
 pub const BEND_LOCK: &str = include_str!("../templates/bend.lock");
 pub const FETCH_BEND_SH: &str = include_str!("../templates/fetch-bend.sh");
 
-const PROFILE_LIBRARY_CORE: &str = include_str!("../templates/rust-tops.example.yaml");
+/// Byte copy of `schema/rust-tops.schema.json`; `cargo tops check` validates
+/// against it (`cargo package` ships `templates/`, not the workspace `schema/`).
+pub const SCHEMA_JSON: &str = include_str!("../templates/rust-tops.schema.json");
 
 /// Class jobs `init` appends to the drop-in floor, keyed by the job keyword
 /// `facts::class_keywords` asks the workflow to show.
@@ -48,45 +50,20 @@ pub fn rust_toolchain_toml(msrv: &str) -> String {
     )
 }
 
-pub fn profile_yaml(class: &str, crate_name: &str) -> String {
-    let mut yaml = PROFILE_LIBRARY_CORE.to_string();
-    yaml = yaml.replace("example-codec", crate_name);
-    yaml = yaml.replace("class: parser-codec", &format!("class: {class}"));
-    match class {
-        "library-core" => {}
-        "no-std-embedded" => {
-            yaml = yaml.replace("line_min_pct: 95", "line_min_pct: 90");
-            yaml = yaml.replace("region_min_pct: 90", "region_min_pct: 85");
-            yaml = yaml.replace(
-                "unsafe_policy: allow-documented",
-                "unsafe_policy: required-kernel",
-            );
-        }
-        "unsafe-kernel" => {
-            yaml = yaml.replace(
-                "unsafe_policy: allow-documented",
-                "unsafe_policy: required-kernel",
-            );
-        }
-        "binary-cli" => {
-            yaml = yaml.replace("line_min_pct: 95", "line_min_pct: 80");
-            yaml = yaml.replace("region_min_pct: 90", "region_min_pct: 75");
-            yaml = yaml.replace("kill_rate_min_pct: 95", "kill_rate_min_pct: 85");
-        }
-        "library-util" => {
-            yaml = yaml.replace("line_min_pct: 95", "line_min_pct: 90");
-            yaml = yaml.replace("region_min_pct: 90", "region_min_pct: 85");
-        }
-        _ => {}
-    }
-    yaml
+/// `rust-tops.yaml` for `class`: the class profile merged onto the template
+/// as data. A class with no profile is an error, never library-core.
+pub fn profile_yaml(
+    class: &str,
+    crate_name: &str,
+) -> Result<String, crate::profile_data::ProfileError> {
+    crate::profile_data::merge_profile(class, crate_name)
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{BEND_LOCK, FETCH_BEND_SH, LAWS_BEND};
+    use super::{BEND_LOCK, FETCH_BEND_SH, LAWS_BEND, SCHEMA_JSON};
 
     /// The template must be a byte copy of the workspace file it vendors.
     fn expect_vendored(template: &str, workspace_rel: &str, template_name: &str) {
@@ -110,12 +87,15 @@ mod tests {
         );
     }
 
-    const INIT_CLASSES: [&str; 5] = [
+    const INIT_CLASSES: [&str; 8] = [
         "library-core",
         "parser-codec",
         "no-std-embedded",
         "unsafe-kernel",
         "binary-cli",
+        "library-util",
+        "ffi-bridge",
+        "workspace-root",
     ];
 
     #[test]
@@ -198,6 +178,15 @@ mod tests {
     #[test]
     fn bend_lock_matches_pack() {
         expect_vendored(BEND_LOCK, "laws/bend.lock", "bend.lock");
+    }
+
+    #[test]
+    fn schema_matches_the_workspace_schema() {
+        expect_vendored(
+            SCHEMA_JSON,
+            "schema/rust-tops.schema.json",
+            "rust-tops.schema.json",
+        );
     }
 
     #[test]

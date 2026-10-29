@@ -16,6 +16,9 @@ const CLASSES: &[&str] = &[
     "no-std-embedded",
     "unsafe-kernel",
     "binary-cli",
+    "library-util",
+    "ffi-bridge",
+    "workspace-root",
 ];
 
 /// Files whose bytes depend on the class.

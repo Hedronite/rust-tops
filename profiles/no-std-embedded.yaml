@@ -17,3 +17,4 @@ kani: kernels
 callgrind: size-and-cycle
 panic: abort
 alloc: opt-in
+unsafe_policy: required-kernel
