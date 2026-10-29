@@ -56,7 +56,8 @@ pub struct CoverageGate {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct CrapGate {
-    pub threshold_agent: f64,
+    /// Absent on a `workspace-root`, whose packages keep their own floors.
+    pub threshold_agent: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]

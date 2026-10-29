@@ -98,6 +98,18 @@ fn with_acceptance_restored(mut value: serde_json::Value) -> serde_json::Value {
     value
 }
 
+/// The profiles pack writes each class's CRAP numbers from `profiles/`. Of
+/// the oracle classes only binary-cli moved: agent 6 to 8 (RUST_TOPS.md §4).
+/// Check that, then undo it so the rest still compares to the `968c390` oracle.
+fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::Value {
+    if class == "binary-cli" {
+        let agent = &mut value["gates"]["crap"]["threshold_agent"];
+        assert_eq!(*agent, serde_json::json!(8.0), "binary-cli agent CRAP");
+        *agent = serde_json::json!(6.0);
+    }
+    value
+}
+
 fn expect_config(name: &str, cfg: &TopsConfig) {
     expect_value(name, config_json(cfg));
 }
@@ -123,14 +135,17 @@ fn expect_value(name: &str, value: serde_json::Value) {
 #[test]
 fn bundled_profile_templates_parse_to_pre_migration_config() {
     for class in CLASSES {
-        let yaml = super::profiles::profile_yaml(class, "golden-crate");
+        let yaml = super::profiles::profile_yaml(class, "golden-crate").expect("profile merges");
         let cfg = load_yaml(class, &yaml);
         assert_eq!(cfg.crate_.name, "golden-crate");
         assert_eq!(cfg.crate_.class, *class);
         assert_eq!(cfg.protocol.id, "rust-tops");
         expect_value(
             class,
-            with_acceptance_restored(without_protocol_1_1(config_json(&cfg))),
+            with_template_crap(
+                class,
+                with_acceptance_restored(without_protocol_1_1(config_json(&cfg))),
+            ),
         );
     }
 }
@@ -161,7 +176,9 @@ fn strict_bool_yaml() -> String {
 /// `968c390` serde_yaml oracle above.
 #[test]
 fn strict_booleans_keep_yaml11_words_as_strings() {
-    let cfg = load_yaml("strict-bool", &strict_bool_yaml());
+    let path = PathBuf::from("strict-bool/rust-tops.yaml");
+    let cfg = super::parse_config(&path, &strict_bool_yaml())
+        .unwrap_or_else(|err| panic!("parse strict-bool: {err:#}"));
     let goals = config_json(&cfg)
         .get("goals")
         .cloned()

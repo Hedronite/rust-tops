@@ -14,13 +14,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// Every class `cargo tops init --class` offers.
-const INIT_CLASSES: [&str; 5] = [
+/// Every class `cargo tops init --class` offers: one per file in `profiles/`.
+const INIT_CLASSES: [&str; 8] = [
     "library-core",
     "parser-codec",
     "no-std-embedded",
     "unsafe-kernel",
     "binary-cli",
+    "library-util",
+    "ffi-bridge",
+    "workspace-root",
 ];
 
 /// Passes, and writes the file after `--output-path` / `--output` the way
@@ -185,23 +188,36 @@ fn fixture(name: &str) -> Fixture {
 /// wrote for them.
 fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
     let fixture = init_fixture(name, "library-core");
-    let yaml_path = fixture.repo.join("rust-tops.yaml");
-    let yaml = fs::read_to_string(&yaml_path).expect("read rust-tops.yaml");
-    let only: Vec<String> = yaml
-        .lines()
-        .map(|line| {
-            let kept = keep.iter().any(|id| line.contains(&format!("id: {id},")));
-            if !line.contains("- { id:") {
-                line.to_string()
-            } else if kept {
-                line.replace("enabled: false,", "enabled: true, ")
-            } else {
-                line.replace("enabled: true", "enabled: false")
-            }
-        })
-        .collect();
-    fs::write(&yaml_path, only.join("\n") + "\n").expect("write rust-tops.yaml");
+    edit_yaml(&fixture, |doc| {
+        for layer in doc["layers"].as_array_mut().expect("layers") {
+            let id = layer["id"].as_str().expect("layer id").to_string();
+            layer["enabled"] = serde_json::Value::Bool(keep.contains(&id.as_str()));
+        }
+    });
     fixture
+}
+
+/// Rewrites the fixture's `rust-tops.yaml` through `edit`, as data. It is
+/// written back as JSON, which is YAML.
+fn edit_yaml(fixture: &Fixture, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = fixture.repo.join("rust-tops.yaml");
+    let raw = fs::read_to_string(&path).expect("read rust-tops.yaml");
+    let mut doc: serde_json::Value = serde_saphyr::from_str(&raw).expect("rust-tops.yaml parses");
+    edit(&mut doc);
+    let json = serde_json::to_string_pretty(&doc).expect("json");
+    fs::write(&path, json + "\n").expect("write rust-tops.yaml");
+}
+
+fn yaml_doc(fixture: &Fixture) -> serde_json::Value {
+    let raw = fs::read_to_string(fixture.repo.join("rust-tops.yaml")).expect("yaml");
+    serde_saphyr::from_str(&raw).expect("yaml parses")
+}
+
+fn layer<'a>(doc: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    doc["layers"]
+        .as_array()
+        .and_then(|layers| layers.iter().find(|layer| layer["id"] == id))
+        .unwrap_or_else(|| panic!("no {id} layer"))
 }
 
 fn git(fixture: &Fixture, dir: &Path, args: &[&str]) {
@@ -511,19 +527,31 @@ fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubb
 #[test]
 fn init_writes_the_laws_layer_the_bend_kit_and_the_toolchain_pin() {
     let fixture = fixture("init");
-    let yaml = fs::read_to_string(fixture.repo.join("rust-tops.yaml")).expect("yaml");
-    assert!(yaml.contains("version: \"1.1.0\""));
-    assert!(yaml.contains("msrv: \"1.88\""));
-    assert!(yaml.contains("{ id: laws,              enabled: true,  tier: 0, runner: bend,"));
-    assert!(yaml.contains(
-        "{ id: acceptance,        enabled: false, tier: 1, runner: \"assert_cmd journeys\","
-    ));
-    assert!(
-        yaml.lines().any(|line| line.contains("{ id: formal-kani,")
-            && line.contains("tier: 4, runner: cargo-kani,")),
+    let fresh = init_fixture("init-fresh", "library-core");
+    let doc = yaml_doc(&fresh);
+    let _ = fs::remove_dir_all(&fresh.root);
+    assert_eq!(doc["protocol"]["version"], "1.1.0");
+    assert_eq!(doc["crate"]["msrv"], "1.88");
+    let laws = layer(&doc, "laws");
+    assert_eq!(
+        (&laws["enabled"], &laws["tier"], &laws["runner"]),
+        (
+            &serde_json::json!(true),
+            &serde_json::json!(0),
+            &serde_json::json!("bend")
+        )
+    );
+    let acceptance = layer(&doc, "acceptance");
+    assert_eq!(
+        (&acceptance["enabled"], &acceptance["tier"]),
+        (&serde_json::json!(false), &serde_json::json!(1))
+    );
+    let kani = layer(&doc, "formal-kani");
+    assert_eq!(
+        (&kani["tier"], &kani["runner"]),
+        (&serde_json::json!(4), &serde_json::json!("cargo-kani")),
         "formal-kani left tier 4"
     );
-    let doc: serde_json::Value = serde_saphyr::from_str(&yaml).expect("yaml parses");
     assert_eq!(
         doc["exemptions"],
         serde_json::json!([]),
@@ -658,14 +686,14 @@ fn a_failed_fetch_fails_the_gate() {
 #[test]
 fn a_disabled_laws_layer_never_calls_bend() {
     let fixture = fixture("off");
-    let yaml_path = fixture.repo.join("rust-tops.yaml");
-    let yaml = fs::read_to_string(&yaml_path).expect("yaml");
-    let off = yaml.replace(
-        "{ id: laws,              enabled: true,",
-        "{ id: laws,              enabled: false,",
-    );
-    assert_ne!(off, yaml);
-    fs::write(&yaml_path, off).expect("write yaml");
+    assert_eq!(layer(&yaml_doc(&fixture), "laws")["enabled"], true);
+    edit_yaml(&fixture, |doc| {
+        for layer in doc["layers"].as_array_mut().expect("layers") {
+            if layer["id"] == "laws" {
+                layer["enabled"] = serde_json::Value::Bool(false);
+            }
+        }
+    });
     stub_bend(&fixture);
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");

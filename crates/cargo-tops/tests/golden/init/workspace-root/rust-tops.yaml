@@ -1,0 +1,238 @@
+agent:
+  guidelines_file: "AGENTS.md"
+  may_run_tools: true
+  must_not_split_for_crap_alone: true
+  must_not_write_tests_from_impl: true
+  required_before_pr:
+    - "fmt"
+    - "clippy"
+    - "nextest"
+    - "llvm-cov"
+    - "crap"
+    - "mutants-diff"
+crate:
+  class: "workspace-root"
+  edition: "2024"
+  hot_paths:
+    - "src/varint.rs::encode"
+    - "src/varint.rs::decode"
+    - "src/frame.rs::parse_frame"
+  msrv: "1.88"
+  name: "golden-crate"
+  unsafe_policy: "allow-documented"
+density:
+  allow_long_table_functions: true
+  max_fn_cc: 8
+  max_fn_sloc: 40
+  production_sloc_policy: "minimum necessary lines that preserve named invariants, performance, and reviewability"
+  rules:
+    - "one function, one named job"
+    - "enum+match over boolean modes"
+    - "no clone on hot_paths without a why-comment"
+    - "no trait or builder with a single impl"
+    - "unwrap only for programmer-invariant bugs"
+    - "tests may be table-driven; production may not be copy-pasted"
+exemptions: []
+gates:
+  coverage:
+    exclude_globs:
+      - "tests/**"
+      - "benches/**"
+      - "examples/**"
+      - "src/generated/**"
+    tool: "cargo-llvm-cov"
+  crap:
+    classic_crappy: 30
+    fail_on: "any-over-threshold"
+    formula: "CC^2 * (1 - cov)^3 + CC"
+    scar_guard: true
+    tool: "cargo-crap"
+  formal:
+    kani_required_on_unsafe_kernels: true
+    unwind_bound_default: 8
+  fuzz:
+    engine: "libfuzzer"
+    nightly_seconds: 7200
+    pr_smoke_seconds: 30
+  lint:
+    clippy_deny:
+      - "warnings"
+      - "clippy::correctness"
+      - "clippy::suspicious"
+      - "clippy::perf"
+      - "clippy::complexity"
+      - "clippy::dbg_macro"
+    cognitive_complexity_max: 12
+    fmt_check: true
+    too_many_arguments_max: 6
+    too_many_lines_max: 40
+  mutation:
+    scope: "diff"
+    timeout_multiplier: 2
+    tool: "cargo-mutants"
+    unexplained_survivors_max: 0
+  performance:
+    ci_tool: "gungraun"
+    estimated_cycles_regression_max_pct: 5
+    instruction_regression_max_pct: 2
+    local_tool: "criterion"
+  property:
+    cases_ci: 256
+    cases_nightly: 2048
+    framework: "proptest"
+    required_on_classes:
+      - "parser-codec"
+      - "library-core"
+      - "unsafe-kernel"
+  unit:
+    allow_ignored: false
+    must_pass: true
+    nextest_profile: "ci"
+goals:
+  correctness: "behavior matches specified invariants under all applicable layers"
+  density: "fewest necessary production lines that preserve clarity and performance"
+  notes: "Public API is decode/encode plus Error. No builders. No trait for a single impl.\n"
+  performance: "no unexplained regression on gated hot paths; prefer algorithmic then codegen then micro"
+layers:
+  -
+    enabled: true
+    id: "static-lint"
+    runner: "cargo clippy/fmt/deny"
+    scope: "workspace"
+    tier: 0
+  -
+    enabled: true
+    id: "unit"
+    runner: "cargo nextest"
+    scope: "lib"
+    tier: 0
+  -
+    enabled: true
+    id: "doc"
+    runner: "cargo test --doc"
+    scope: "lib"
+    tier: 0
+  -
+    enabled: true
+    id: "integration"
+    runner: "cargo nextest"
+    scope: "tests"
+    tier: 1
+  -
+    enabled: false
+    id: "acceptance"
+    runner: "assert_cmd journeys"
+    scope: "tests"
+    tier: 1
+  -
+    enabled: false
+    id: "snapshot"
+    runner: "insta"
+    scope: "tests"
+    tier: 2
+  -
+    enabled: false
+    id: "compile-fail"
+    runner: "trybuild"
+    scope: "tests"
+    tier: 2
+  -
+    enabled: true
+    id: "coverage"
+    runner: "cargo-llvm-cov"
+    scope: "lib"
+    tier: 0
+  -
+    enabled: true
+    id: "crap"
+    runner: "cargo-crap"
+    scope: "lib"
+    tier: 0
+  -
+    enabled: true
+    id: "mutation"
+    runner: "cargo-mutants"
+    scope: "diff"
+    tier: 1
+  -
+    enabled: true
+    id: "property"
+    runner: "proptest"
+    scope: "lib"
+    tier: 1
+  -
+    enabled: true
+    id: "fuzz"
+    runner: "cargo-fuzz"
+    scope: "lib"
+    tier: 3
+  -
+    enabled: false
+    id: "concurrency"
+    runner: "loom"
+    scope: "lib"
+    tier: 3
+  -
+    enabled: true
+    id: "miri"
+    runner: "cargo +nightly miri"
+    scope: "unsafe"
+    tier: 3
+  -
+    enabled: true
+    id: "sanitizer"
+    runner: "asan/tsan nightly"
+    scope: "unsafe"
+    tier: 3
+  -
+    enabled: true
+    id: "formal-kani"
+    runner: "cargo-kani"
+    scope: "hot-paths"
+    tier: 4
+  -
+    enabled: true
+    id: "bench-criterion"
+    runner: "criterion"
+    scope: "hot-paths"
+    tier: 5
+  -
+    enabled: true
+    id: "bench-callgrind"
+    runner: "gungraun"
+    scope: "hot-paths"
+    tier: 4
+  -
+    enabled: true
+    id: "security-advisory"
+    runner: "cargo-deny"
+    scope: "workspace"
+    tier: 0
+  -
+    enabled: true
+    id: "density-audit"
+    runner: "review+clippy"
+    scope: "workspace"
+    tier: 5
+  -
+    enabled: true
+    id: "laws"
+    runner: "bend"
+    scope: "workspace"
+    tier: 0
+performance:
+  hot_path_requirements:
+    - "decode allocates nothing on the success path"
+    - "encode writes into impl Write; callers supply the buffer"
+    - "Callgrind Ir regression on listed symbols ≤ 2%"
+  release_profile:
+    codegen-units: 1
+    debug: 0
+    lto: "thin"
+    opt-level: 3
+    panic: "abort"
+protocol:
+  adopted: "2026-09-24"
+  id: "rust-tops"
+  spec_uri: "./RUST_TOPS.md"
+  version: "1.1.0"

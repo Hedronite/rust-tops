@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,9 @@ use std::time::SystemTime;
 mod config;
 mod facts;
 mod laws;
+mod profile_data;
 mod profiles;
+mod schema;
 mod skills;
 mod steps;
 
@@ -35,8 +37,9 @@ struct Cli {
 enum Commands {
     /// Write rust-tops.yaml, AGENTS.md, drop-in tool configs, and the Bend laws kit
     Init {
-        #[arg(long, value_enum, default_value_t = CrateClass::LibraryCore)]
-        class: CrateClass,
+        /// Crate class: one of the profiles in `profiles/` (default: library-core)
+        #[arg(long, default_value = "library-core")]
+        class: String,
         /// Directory to initialize (default: cwd)
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -68,27 +71,6 @@ enum Commands {
     },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum CrateClass {
-    LibraryCore,
-    ParserCodec,
-    NoStdEmbedded,
-    UnsafeKernel,
-    BinaryCli,
-}
-
-impl CrateClass {
-    fn as_str(self) -> &'static str {
-        match self {
-            CrateClass::LibraryCore => "library-core",
-            CrateClass::ParserCodec => "parser-codec",
-            CrateClass::NoStdEmbedded => "no-std-embedded",
-            CrateClass::UnsafeKernel => "unsafe-kernel",
-            CrateClass::BinaryCli => "binary-cli",
-        }
-    }
-}
-
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -115,7 +97,7 @@ fn run() -> Result<ExitCode> {
             force,
             skills,
         } => {
-            init(&path, class, name.as_deref(), force, skills)?;
+            init(&path, &class, name.as_deref(), force, skills)?;
             Ok(ExitCode::SUCCESS)
         }
         Commands::Check { path } => {
@@ -139,19 +121,41 @@ fn run() -> Result<ExitCode> {
     }
 }
 
+/// `rust-tops.yaml` under `path`, typed, with a class profile, and valid
+/// against `schema/rust-tops.schema.json`. Any of the three failing is a
+/// `check` failure.
 fn load_config(path: &Path) -> Result<TopsConfig> {
     let file = config_path(path);
     let raw = fs::read_to_string(&file)
         .with_context(|| format!("missing {}; run `cargo tops init`", file.display()))?;
+    let cfg = parse_config(&file, &raw)?;
+    profiles::profile_yaml(&cfg.crate_.class, &cfg.crate_.name)
+        .with_context(|| format!("{}: crate.class", file.display()))?;
+    let doc = facts::parse_yaml(&raw)
+        .map_err(|err| anyhow!("invalid YAML: {}: {err}", file.display()))?;
+    let schema: serde_json::Value =
+        serde_json::from_str(profiles::SCHEMA_JSON).context("bundled rust-tops.schema.json")?;
+    let errors = schema::validate(&schema, &doc);
+    if !errors.is_empty() {
+        return Err(anyhow!(
+            "{} does not match schema/rust-tops.schema.json:\n  {}",
+            file.display(),
+            errors.join("\n  ")
+        ));
+    }
+    Ok(cfg)
+}
+
+/// The typed decode alone, with YAML 1.2 booleans.
+fn parse_config(file: &Path, raw: &str) -> Result<TopsConfig> {
     // YAML 1.2 booleans: only true/false. Unquoted yes/no/on/off/y/n stay strings.
-    let cfg: TopsConfig = serde_saphyr::from_str_with_options(
-        &raw,
+    serde_saphyr::from_str_with_options(
+        raw,
         serde_saphyr::options! {
             strict_booleans: true,
         },
     )
-    .with_context(|| format!("invalid YAML: {}", file.display()))?;
-    Ok(cfg)
+    .with_context(|| format!("invalid YAML: {}", file.display()))
 }
 
 fn config_path(dir: &Path) -> PathBuf {
@@ -168,7 +172,12 @@ fn check(cfg: &TopsConfig) -> Result<()> {
     if cfg.crate_.name.is_empty() {
         return Err(anyhow!("crate.name is required"));
     }
-    if cfg.gates.crap.threshold_agent < 1.0 {
+    if cfg
+        .gates
+        .crap
+        .threshold_agent
+        .is_some_and(|agent| agent < 1.0)
+    {
         return Err(anyhow!("gates.crap.threshold_agent must be >= 1"));
     }
     if cfg.gates.mutation.unexplained_survivors_max != 0 && cfg.crate_.class == "library-core" {
@@ -179,32 +188,22 @@ fn check(cfg: &TopsConfig) -> Result<()> {
     Ok(())
 }
 
-fn init(
-    dir: &Path,
-    class: CrateClass,
-    name: Option<&str>,
-    force: bool,
-    skills: bool,
-) -> Result<()> {
+fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) -> Result<()> {
+    let crate_name = name
+        .map(str::to_string)
+        .or_else(|| dir_name(dir))
+        .unwrap_or_else(|| "unnamed".to_string());
+    // An unknown class fails here, before any directory or file is written.
+    let yaml = with_init_exemptions(&profiles::profile_yaml(class, &crate_name)?);
+    let msrv = facts::parse_yaml(&yaml)
+        .ok()
+        .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
+        .ok_or_else(|| anyhow!("the {class} profile has no crate.msrv"))?;
+
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     fs::create_dir_all(dir.join(".config"))?;
     fs::create_dir_all(dir.join(".cargo"))?;
     fs::create_dir_all(dir.join(".github/workflows"))?;
-
-    let crate_name = name
-        .map(str::to_string)
-        .or_else(|| {
-            dir.canonicalize()
-                .ok()
-                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
-        })
-        .unwrap_or_else(|| "unnamed".to_string());
-
-    let yaml = with_init_exemptions(&profiles::profile_yaml(class.as_str(), &crate_name));
-    let msrv = facts::parse_yaml(&yaml)
-        .ok()
-        .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
-        .ok_or_else(|| anyhow!("the {} profile has no crate.msrv", class.as_str()))?;
     write_file(dir.join("rust-tops.yaml"), &yaml, force)?;
     write_file(
         dir.join("rust-toolchain.toml"),
@@ -231,7 +230,7 @@ fn init(
     write_file(dir.join("deny.toml"), profiles::DENY_TOML, force)?;
     write_file(
         dir.join(".github/workflows/rust-tops.yml"),
-        &profiles::workflow_yml(class.as_str()),
+        &profiles::workflow_yml(class),
         force,
     )?;
     write_file(dir.join(laws::PACK), profiles::LAWS_BEND, force)?;
@@ -244,8 +243,7 @@ fn init(
     }
 
     println!(
-        "initialized rust-tops for {crate_name} ({}) in {}",
-        class.as_str(),
+        "initialized rust-tops for {crate_name} ({class}) in {}",
         dir.display()
     );
     println!("next: cargo tops check && cargo tops gate");
@@ -253,6 +251,15 @@ fn init(
 }
 
 /// Returns whether the file was written (false when it existed and `force` was off).
+/// The last path component of `dir`, which need not exist yet.
+fn dir_name(dir: &Path) -> Option<String> {
+    let full = dir
+        .canonicalize()
+        .or_else(|_| std::path::absolute(dir))
+        .ok()?;
+    full.file_name().map(|s| s.to_string_lossy().into_owned())
+}
+
 pub(crate) fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<bool> {
     if path.exists() && !force {
         println!("skip existing {}", path.display());
@@ -715,6 +722,22 @@ fn with_init_exemptions(yaml: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Every file in `profiles/`.
+    const PROFILE_CLASSES: [&str; 8] = [
+        "library-core",
+        "parser-codec",
+        "no-std-embedded",
+        "unsafe-kernel",
+        "binary-cli",
+        "library-util",
+        "ffi-bridge",
+        "workspace-root",
+    ];
+
+    fn init_yaml(class: &str) -> String {
+        with_init_exemptions(&profiles::profile_yaml(class, "x").expect("profile merges"))
+    }
+
     fn layer(id: &str) -> config::Layer {
         serde_saphyr::from_str(&format!(
             "{{ id: {id}, enabled: true, tier: 0, runner: x }}"
@@ -849,8 +872,8 @@ mod tests {
 
     #[test]
     fn init_turns_acceptance_off_and_keeps_kani_at_tier_4() {
-        for class in ["library-core", "binary-cli"] {
-            let yaml = with_init_exemptions(&profiles::profile_yaml(class, "x"));
+        for class in PROFILE_CLASSES {
+            let yaml = init_yaml(class);
             let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
             let layer = |id: &str| {
                 doc["layers"]
@@ -888,22 +911,11 @@ mod tests {
 
     #[test]
     fn init_yaml_has_no_exemption_for_every_class() {
-        for class in [
-            CrateClass::LibraryCore,
-            CrateClass::ParserCodec,
-            CrateClass::NoStdEmbedded,
-            CrateClass::UnsafeKernel,
-            CrateClass::BinaryCli,
-        ] {
-            let yaml = with_init_exemptions(&profiles::profile_yaml(class.as_str(), "x"));
+        for class in PROFILE_CLASSES {
+            let yaml = init_yaml(class);
             let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
-            assert_eq!(
-                doc["exemptions"],
-                serde_json::json!([]),
-                "{}",
-                class.as_str()
-            );
-            assert!(!yaml.contains("generated protobuf"), "{}", class.as_str());
+            assert_eq!(doc["exemptions"], serde_json::json!([]), "{class}");
+            assert!(!yaml.contains("generated protobuf"), "{class}");
             assert!(doc["layers"].as_array().is_some_and(|l| !l.is_empty()));
         }
     }
