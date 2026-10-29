@@ -16,20 +16,23 @@ use serde_json::Value;
 
 use crate::config::TopsConfig;
 use crate::profiles;
+pub use crate::steps::Outcome;
 
-/// What happened to one command `gate` mapped for a layer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    Passed,
-    Failed,
-    ToolMissing,
-}
-
-/// One command `gate` ran, or could not run, for a layer.
+/// One chain of steps `gate` ran, or could not run, for a layer.
 pub struct Run {
     pub layer: String,
+    /// The steps that ran, joined with `&&`. A step the chain never reached
+    /// is not here.
     pub cmd: String,
+    /// The last step that ran: the one that decided `outcome`.
+    pub step: String,
     pub outcome: Outcome,
+}
+
+/// A run some law may count: `Passed`, `Failed` or `ToolMissing`, never
+/// `Vacuous`.
+fn counted(run: &Run) -> bool {
+    run.outcome.counts_for_a_law()
 }
 
 pub struct Workflow {
@@ -196,6 +199,18 @@ pub const FACTS: &[LawFact] = &[
 
 pub fn find(law: &str) -> Option<&'static LawFact> {
     FACTS.iter().find(|fact| fact.law == law)
+}
+
+/// Laws a pack declares: its `law <name>:` lines, read the way the `laws`
+/// layer reads them. The denominator of `laws evaluated: N/<count>`.
+pub fn pack_law_count(pack: &str) -> usize {
+    pack.lines()
+        .filter(|line| {
+            line.strip_prefix("law ")
+                .and_then(|rest| rest.strip_suffix(':'))
+                .is_some()
+        })
+        .count()
 }
 
 /// Why a law with no [`LawFact`] is `not-evaluated`.
@@ -501,7 +516,7 @@ fn cargo_config_tokens(dir: &Path, read: &mut Vec<String>) -> Vec<String> {
 fn layer_ran(ctx: &Ctx, layer: &str) -> bool {
     ctx.runs
         .iter()
-        .any(|run| run.layer == layer && run.outcome != Outcome::ToolMissing)
+        .any(|run| run.layer == layer && matches!(run.outcome, Outcome::Passed | Outcome::Failed))
 }
 
 /// H-06. Jobs a class must show, from §4 ("required" in the fuzz, Miri,
@@ -746,13 +761,15 @@ fn skips_baseline(tokens: &[String]) -> bool {
 }
 
 /// H-30. No `cargo mutants` argv this gate ran or a workflow runs skips the
-/// baseline.
+/// baseline. A vacuous mutation run never reached `cargo mutants`.
 fn baseline_green(ctx: &Ctx) -> Choice {
     let mut argvs: Vec<Vec<String>> = ctx
         .runs
         .iter()
-        .filter(|run| run.layer == "mutation" && run.outcome != Outcome::ToolMissing)
-        .map(|run| flag_tokens(&run.cmd))
+        .filter(|run| run.layer == "mutation" && counted(run))
+        .flat_map(|run| segments(&run.cmd))
+        .filter(|seg| cargo_sub(seg) == Some("mutants"))
+        .map(|seg| flag_tokens(&seg.join(" ")))
         .collect();
     let mut read = Vec::new();
     if !argvs.is_empty() {
@@ -802,15 +819,14 @@ fn record_nonempty(ctx: &Ctx) -> Choice {
     fact(met, read)
 }
 
-/// H-37. Every tool a command in this gate needed was on `PATH`.
+/// H-37. Every tool a command in this gate needed was on `PATH`. Vacuous
+/// runs count for no law, so they are not read.
 fn tool_present(ctx: &Ctx) -> Choice {
-    if ctx.runs.is_empty() {
+    let runs: Vec<&Run> = ctx.runs.iter().filter(|run| counted(run)).collect();
+    if runs.is_empty() {
         return not_evaluated_because("no command ran in this gate");
     }
-    let met = ctx
-        .runs
-        .iter()
-        .all(|run| run.outcome != Outcome::ToolMissing);
+    let met = runs.iter().all(|run| run.outcome != Outcome::ToolMissing);
     fact(met, vec!["gate: tool lookup".into()])
 }
 
@@ -979,6 +995,94 @@ mod tests {
 
     fn seg(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_string).collect()
+    }
+
+    fn run(layer: &str, cmd: &str, outcome: Outcome) -> Run {
+        Run {
+            layer: layer.into(),
+            cmd: cmd.into(),
+            step: cmd.into(),
+            outcome,
+        }
+    }
+
+    fn ctx_with<'a>(cfg: &'a TopsConfig, runs: &'a [Run]) -> Ctx<'a> {
+        Ctx {
+            dir: Path::new("."),
+            cfg,
+            yaml: Value::Null,
+            max_tier: 1,
+            runs,
+            started: SystemTime::now(),
+            workflows: Workflows::Absent,
+        }
+    }
+
+    fn cfg() -> TopsConfig {
+        serde_saphyr::from_str(include_str!("../templates/rust-tops.example.yaml"))
+            .expect("template parses")
+    }
+
+    #[test]
+    fn the_shipped_pack_declares_53_laws() {
+        assert_eq!(pack_law_count(profiles::LAWS_BEND), 53);
+    }
+
+    #[test]
+    fn a_vacuous_run_counts_for_no_law() {
+        let cfg = cfg();
+        let runs = [run(
+            "mutation",
+            "sh -c git diff && cargo mutants --in-diff d -j 2",
+            Outcome::Vacuous,
+        )];
+        let ctx = ctx_with(&cfg, &runs);
+        assert!(matches!(tool_present(&ctx), Choice::NotEvaluated { .. }));
+        assert!(matches!(baseline_green(&ctx), Choice::NotEvaluated { .. }));
+        assert!(!layer_ran(&ctx, "mutation"));
+    }
+
+    #[test]
+    fn a_missing_tool_beside_a_vacuous_run_is_still_read() {
+        let cfg = cfg();
+        let runs = [
+            run("mutation", "sh -c git diff", Outcome::Vacuous),
+            run("coverage", "cargo llvm-cov nextest", Outcome::ToolMissing),
+        ];
+        let ctx = ctx_with(&cfg, &runs);
+        assert!(matches!(
+            tool_present(&ctx),
+            Choice::Fact { met: false, .. }
+        ));
+        assert!(!layer_ran(&ctx, "coverage"));
+    }
+
+    #[test]
+    fn baseline_green_reads_only_the_cargo_mutants_segment_that_ran() {
+        let cfg = cfg();
+        let diff_only = [run("mutation", "sh -c git merge-base", Outcome::Failed)];
+        assert!(matches!(
+            baseline_green(&ctx_with(&cfg, &diff_only)),
+            Choice::NotEvaluated { .. }
+        ));
+        let skip = [run(
+            "mutation",
+            "sh -c git diff && cargo mutants --baseline skip --in-diff d",
+            Outcome::Passed,
+        )];
+        assert!(matches!(
+            baseline_green(&ctx_with(&cfg, &skip)),
+            Choice::Fact { met: false, .. }
+        ));
+        let green = [run(
+            "mutation",
+            "sh -c git diff && cargo mutants --in-diff d -j 2",
+            Outcome::Passed,
+        )];
+        assert!(matches!(
+            baseline_green(&ctx_with(&cfg, &green)),
+            Choice::Fact { met: true, .. }
+        ));
     }
 
     #[test]

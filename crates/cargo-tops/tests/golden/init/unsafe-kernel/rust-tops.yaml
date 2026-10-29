@@ -151,9 +151,4 @@ agent:
     - crap
     - mutants-diff
 
-exemptions:
-  - path: src/generated/**
-    layer: crap
-    reason: generated protobuf; public decode roundtrip is the oracle
-    owner: platform
-    expires: "2027-09-24"
+exemptions: []

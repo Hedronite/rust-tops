@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -10,12 +11,14 @@ mod facts;
 mod laws;
 mod profiles;
 mod skills;
+mod steps;
 
 #[cfg(test)]
 mod parse_oracle;
 
 use config::TopsConfig;
 use facts::{Outcome, Run};
+use steps::{Kind, MutationPlan, Step};
 
 #[derive(Parser)]
 #[command(
@@ -197,7 +200,7 @@ fn init(
         })
         .unwrap_or_else(|| "unnamed".to_string());
 
-    let yaml = profiles::profile_yaml(class.as_str(), &crate_name);
+    let yaml = with_init_exemptions(&profiles::profile_yaml(class.as_str(), &crate_name));
     let msrv = facts::parse_yaml(&yaml)
         .ok()
         .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
@@ -275,6 +278,14 @@ fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What a layer runs.
+enum Plan {
+    /// Each chain runs on its own. Inside a chain only a pass continues.
+    Chains(Vec<Vec<Step>>),
+    /// The diff, judged, then `cargo mutants` on a non-empty diff.
+    Mutation(MutationPlan),
+}
+
 fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<ExitCode> {
     let enabled: Vec<&config::Layer> = cfg
         .layers
@@ -306,33 +317,47 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         None
     };
 
+    // Steps run with `dir` as the working directory, so the diff path must
+    // not be relative to the caller's.
+    let report = std::path::absolute(laws::report_dir(dir))
+        .with_context(|| format!("resolve the report dir of {}", dir.display()))?;
     let started = SystemTime::now();
     let mut runs: Vec<Run> = Vec::new();
+    let mut listed = 0;
     for layer in enabled.iter().filter(|l| l.id != "laws") {
-        let cmds = commands_for(layer, cfg);
-        if cmds.is_empty() {
+        let Some(plan) = plan_for(layer, &report) else {
             println!("skip {}: no local command mapped", layer.id);
             continue;
-        }
-        for cmd in cmds {
-            println!("\n==> [{}] {cmd}", layer.id);
-            let outcome = if dry_run {
-                Outcome::Passed
-            } else if !tool_available(&cmd) {
-                Outcome::ToolMissing
-            } else if run_shell(dir, &cmd)? {
-                Outcome::Passed
-            } else {
-                Outcome::Failed
-            };
-            runs.push(Run {
-                layer: layer.id.clone(),
-                cmd,
-                outcome,
-            });
+        };
+        let chains = match plan {
+            Plan::Chains(chains) => chains,
+            Plan::Mutation(plan) => {
+                println!(
+                    "\n==> [{}] {} && {}",
+                    layer.id,
+                    plan.diff.display(),
+                    plan.mutants.display()
+                );
+                listed += 1;
+                if !dry_run {
+                    runs.push(run_mutation(dir, &layer.id, &plan)?);
+                }
+                continue;
+            }
+        };
+        for chain in chains {
+            let shown: Vec<String> = chain.iter().map(Step::display).collect();
+            println!("\n==> [{}] {}", layer.id, shown.join(" && "));
+            listed += 1;
+            if !dry_run {
+                runs.push(run_chain(dir, &layer.id, &chain)?);
+            }
         }
     }
-    let ran = runs.len();
+
+    let total = fs::read_to_string(dir.join(laws::PACK))
+        .map(|pack| facts::pack_law_count(&pack))
+        .unwrap_or_else(|_| facts::pack_law_count(profiles::LAWS_BEND));
 
     if dry_run {
         if laws_on {
@@ -344,30 +369,57 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
             println!("\n==> [laws] bend {}/cases.bend", laws::report_display(dir));
         }
         println!();
-        println!("dry-run: {ran} command(s) listed");
+        println!("laws evaluated: 0/{total} (dry run: bend did not run)");
+        println!("dry-run: {listed} command(s) listed");
         return Ok(ExitCode::SUCCESS);
     }
 
     let mut failed: Vec<String> = runs.iter().filter_map(run_failure).collect();
-    if let Some(judge) = judge {
-        let ctx = facts::Ctx {
-            dir,
-            cfg,
-            yaml: fs::read_to_string(config_path(dir))
-                .ok()
-                .and_then(|raw| facts::parse_yaml(&raw).ok())
-                .unwrap_or_default(),
-            max_tier,
-            runs: &runs,
-            started,
-            workflows: facts::load_workflows(dir),
-        };
-        failed.extend(laws::run(&judge, &ctx)?);
-    }
+    let evaluated = match judge {
+        Some(judge) => {
+            // A report from an earlier gate must not be counted for this one.
+            let cases = report.join("cases.json");
+            match fs::remove_file(&cases) {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(err).with_context(|| format!("remove {}", cases.display()));
+                }
+                _ => {}
+            }
+            let ctx = facts::Ctx {
+                dir,
+                cfg,
+                yaml: fs::read_to_string(config_path(dir))
+                    .ok()
+                    .and_then(|raw| facts::parse_yaml(&raw).ok())
+                    .unwrap_or_default(),
+                max_tier,
+                runs: &runs,
+                started,
+                workflows: facts::load_workflows(dir),
+            };
+            failed.extend(laws::run(&judge, &ctx)?);
+            let (checked, of) = laws_evaluated(&cases).unwrap_or((0, total));
+            format!("laws evaluated: {checked}/{of}")
+        }
+        None => format!("laws evaluated: 0/{total} (laws layer off)"),
+    };
 
+    let ran = runs.len();
+    let vacuous = runs
+        .iter()
+        .filter(|run| run.outcome == Outcome::Vacuous)
+        .count();
     println!();
+    println!("{evaluated}");
     if failed.is_empty() {
-        println!("ok: {ran} command(s) passed");
+        if vacuous == 0 {
+            println!("ok: {ran} command(s) passed");
+        } else {
+            println!(
+                "ok: {} command(s) passed, {vacuous} vacuous (counted for no law)",
+                ran - vacuous
+            );
+        }
         Ok(ExitCode::SUCCESS)
     } else {
         println!("fail: {} problem(s), {ran} command(s) run", failed.len());
@@ -378,100 +430,390 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
     }
 }
 
+/// `(checked, total)` from the `cases.json` the laws layer just wrote. A law
+/// is evaluated when `bend` got a case for it.
+fn laws_evaluated(cases: &Path) -> Option<(usize, usize)> {
+    let raw = fs::read_to_string(cases).ok()?;
+    let report: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let laws = report["laws"].as_array()?;
+    let checked = laws.iter().filter(|law| law["status"] == "checked").count();
+    Some((checked, laws.len()))
+}
+
 fn run_failure(run: &Run) -> Option<String> {
     match run.outcome {
-        Outcome::Passed => None,
-        Outcome::Failed => Some(format!("{}: `{}` failed", run.layer, run.cmd)),
-        Outcome::ToolMissing => Some(format!(
-            "{}: `{}` not on PATH (install it; cargo-tops does not vendor engines)",
-            run.layer,
-            first_word(&run.cmd)
-        )),
+        Outcome::Passed | Outcome::Vacuous => None,
+        Outcome::Failed => Some(format!("{}: `{}` failed", run.layer, run.step)),
+        Outcome::ToolMissing => {
+            let missing = steps::MissingTool {
+                binary: steps::tool_binary(std::slice::from_ref(&run.step))
+                    .unwrap_or_else(|| run.step.clone()),
+            };
+            Some(format!("{}: {missing}", run.layer))
+        }
     }
 }
 
-fn commands_for(layer: &config::Layer, _cfg: &TopsConfig) -> Vec<String> {
-    match layer.id.as_str() {
-        "static-lint" => vec![
-            "cargo fmt --all -- --check".into(),
-            "cargo clippy --workspace --all-targets --all-features -- -D warnings".into(),
-            "cargo deny check".into(),
-        ],
-        "unit" | "integration" => vec!["cargo nextest run --workspace --all-features --profile ci".into()],
-        "doc" => vec!["cargo test --doc --workspace --all-features".into()],
-        "coverage" => vec![
-            "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info".into(),
-        ],
-        "crap" => vec![
-            "cargo crap --lcov target/coverage/lcov.info --format json --output target/crap.json && test -s target/crap.json".into(),
-        ],
-        "mutation" => vec![
-            "sh -c 'git diff origin/main...HEAD --unified=0 > /tmp/rust-tops.diff; cargo mutants --in-diff /tmp/rust-tops.diff -j 2'".into(),
-        ],
-        "property" => vec!["cargo nextest run --workspace --all-features --profile ci property".into()],
-        "security-advisory" => vec!["cargo deny check advisories".into()],
-        _ => Vec::new(),
+/// The steps that ran, joined, and the outcome of the last one.
+fn finish(layer: &str, ran: &[String], outcome: Outcome) -> Run {
+    Run {
+        layer: layer.to_string(),
+        cmd: ran.join(" && "),
+        step: ran.last().cloned().unwrap_or_default(),
+        outcome,
     }
 }
 
-fn first_word(cmd: &str) -> String {
-    if cmd.starts_with("sh -c") {
-        return "sh".into();
+fn run_chain(dir: &Path, layer: &str, chain: &[Step]) -> Result<Run> {
+    let mut ran = Vec::new();
+    let mut outcome = Outcome::Passed;
+    for step in chain {
+        ran.push(step.display());
+        outcome = run_step(dir, step)?;
+        if !steps::chain_continues(outcome) {
+            break;
+        }
     }
-    cmd.split_whitespace()
-        .find(|w| *w != "cargo" && !w.starts_with('+'))
-        .unwrap_or("cargo")
-        .to_string()
+    Ok(finish(layer, &ran, outcome))
 }
 
-fn tool_available(cmd: &str) -> bool {
-    // cargo subcommands: cargo-foo must exist unless it is a built-in.
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    if parts.is_empty() {
-        return false;
+/// `cargo-mutants` is looked up before the diff, so an empty diff cannot
+/// hide a missing tool. A failed diff is `Failed`; nothing waives it. An
+/// empty one is `Vacuous` and `cargo mutants` does not run.
+fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
+    if let Err(missing) = steps::check_tool(&plan.mutants.argv) {
+        println!("{missing}");
+        return Ok(finish(
+            layer,
+            &[plan.mutants.display()],
+            Outcome::ToolMissing,
+        ));
     }
-    if parts[0] == "sh" {
-        return which("sh");
-    }
-    if parts[0] != "cargo" {
-        return which(parts[0]);
-    }
-    if parts.len() < 2 {
-        return which("cargo");
-    }
-    let sub = parts[1].trim_start_matches('+'); // cargo +nightly ...
-    let sub = if sub.starts_with('+') || parts[1].starts_with('+') {
-        parts.get(2).copied().unwrap_or("")
-    } else {
-        parts[1]
+    let mut ran = vec![plan.diff.display()];
+    let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
+    let diff = steps::judge_diff(diff_ok, &plan.diff_path);
+    let Some(mutants) = plan.after_diff(diff) else {
+        if diff == Outcome::Vacuous {
+            println!(
+                "Vacuous: the diff from `git merge-base origin/main HEAD` is empty; \
+                 cargo mutants did not run and no law counts this layer"
+            );
+        } else {
+            println!("Failed: the mutation diff did not succeed; a failed diff is never waived");
+        }
+        return Ok(finish(layer, &ran, diff));
     };
-    match sub {
-        "fmt" | "clippy" | "test" | "build" | "check" | "bench" => which("cargo"),
-        "nextest" => which("cargo-nextest"),
-        "llvm-cov" => which("cargo-llvm-cov"),
-        "crap" => which("cargo-crap") || which("cargo-crappy"),
-        "mutants" => which("cargo-mutants"),
-        "deny" => which("cargo-deny"),
-        "fuzz" => which("cargo-fuzz"),
-        "kani" => which("cargo-kani") || which("kani"),
-        _ => which("cargo"),
+    ran.push(mutants.display());
+    let outcome = run_step(dir, mutants)?;
+    Ok(finish(layer, &ran, outcome))
+}
+
+fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
+    match step.kind {
+        Kind::Artifact => {
+            return Ok(step.artifact_path().map_or(Outcome::Failed, |path| {
+                steps::artifact_outcome(&dir.join(path))
+            }));
+        }
+        Kind::Tool => {
+            if let Err(missing) = steps::check_tool(&step.argv) {
+                println!("{missing}");
+                return Ok(Outcome::ToolMissing);
+            }
+        }
+        Kind::Command => {}
+    }
+    let Some((program, args)) = step.program() else {
+        return Ok(Outcome::Failed);
+    };
+    match Command::new(program).args(args).current_dir(dir).status() {
+        Ok(status) if status.success() => Ok(Outcome::Passed),
+        Ok(_) => Ok(Outcome::Failed),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "{}",
+                steps::MissingTool {
+                    binary: program.to_string()
+                }
+            );
+            Ok(Outcome::ToolMissing)
+        }
+        Err(err) => Err(err).with_context(|| format!("spawn: {}", step.display())),
     }
 }
 
-fn which(bin: &str) -> bool {
-    Command::new("sh")
-        .args(["-c", &format!("command -v {bin} >/dev/null 2>&1")])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+fn tool(argv: &[&str]) -> Vec<Step> {
+    vec![Step::tool(argv.iter().copied())]
 }
 
-fn run_shell(dir: &Path, cmd: &str) -> Result<bool> {
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .with_context(|| format!("spawn: {cmd}"))?;
-    Ok(status.success())
+fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
+    let chains = match layer.id.as_str() {
+        "static-lint" => vec![
+            tool(&["cargo", "fmt", "--all", "--", "--check"]),
+            tool(&[
+                "cargo",
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--all-features",
+                "--",
+                "-D",
+                "warnings",
+            ]),
+            tool(&["cargo", "deny", "check"]),
+        ],
+        "unit" | "integration" => vec![tool(&[
+            "cargo",
+            "nextest",
+            "run",
+            "--workspace",
+            "--all-features",
+            "--profile",
+            "ci",
+        ])],
+        "doc" => vec![tool(&[
+            "cargo",
+            "test",
+            "--doc",
+            "--workspace",
+            "--all-features",
+        ])],
+        "coverage" => vec![steps::coverage_steps()],
+        "crap" => vec![vec![
+            Step::tool([
+                "cargo",
+                "crap",
+                "--lcov",
+                "target/coverage/lcov.info",
+                "--format",
+                "json",
+                "--output",
+                "target/crap.json",
+            ]),
+            Step::artifact("target/crap.json"),
+        ]],
+        "mutation" => return Some(Plan::Mutation(MutationPlan::new(report))),
+        "property" => vec![tool(&[
+            "cargo",
+            "nextest",
+            "run",
+            "--workspace",
+            "--all-features",
+            "--profile",
+            "ci",
+            "property",
+        ])],
+        "security-advisory" => vec![tool(&["cargo", "deny", "check", "advisories"])],
+        _ => return None,
+    };
+    Some(Plan::Chains(chains))
+}
+
+/// The profile YAML with its `exemptions:` block replaced by
+/// [`steps::init_exemptions`], which is empty. An exemption is a dated choice
+/// the adopter makes, never one `init` makes for them.
+fn with_init_exemptions(yaml: &str) -> String {
+    let mut block = String::new();
+    match steps::init_exemptions() {
+        [] => block.push_str("exemptions: []\n"),
+        entries => {
+            block.push_str("exemptions:\n");
+            for entry in entries {
+                let _ = writeln!(
+                    block,
+                    "  - {{ layer: {}, expires: \"{}\" }}",
+                    entry.layer, entry.expires
+                );
+            }
+        }
+    }
+    let mut out = String::new();
+    let mut placed = false;
+    let mut skipping = false;
+    for line in yaml.lines() {
+        if skipping {
+            let inside = line.trim().is_empty() || line.starts_with([' ', '\t', '-']);
+            if inside {
+                continue;
+            }
+            skipping = false;
+        }
+        if line.split('#').next().map(str::trim_end) == Some("exemptions:") {
+            out.push_str(&block);
+            placed = true;
+            skipping = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !placed {
+        out.push_str(&block);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layer(id: &str) -> config::Layer {
+        serde_saphyr::from_str(&format!(
+            "{{ id: {id}, enabled: true, tier: 0, runner: x }}"
+        ))
+        .expect("layer")
+    }
+
+    fn chains(id: &str) -> Vec<Vec<Step>> {
+        match plan_for(&layer(id), Path::new("/r")) {
+            Some(Plan::Chains(chains)) => chains,
+            _ => panic!("{id} has no chains"),
+        }
+    }
+
+    fn tool_step(chain: &[Step]) -> &Step {
+        chain
+            .iter()
+            .find(|step| step.kind == Kind::Tool)
+            .expect("a tool step")
+    }
+
+    #[test]
+    fn the_g0_strings_name_the_tool_they_run() {
+        let coverage = "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info";
+        let mutation = "sh -c 'git diff origin/main...HEAD --unified=0 > /tmp/rust-tops.diff; cargo mutants --in-diff /tmp/rust-tops.diff -j 2'";
+        assert_eq!(
+            steps::tool_binary(&[coverage.to_string()]).as_deref(),
+            Some("cargo-llvm-cov")
+        );
+        assert_eq!(
+            steps::tool_binary(&[mutation.to_string()]).as_deref(),
+            Some("cargo-mutants")
+        );
+    }
+
+    #[test]
+    fn coverage_and_crap_check_their_own_binary() {
+        let coverage = chains("coverage");
+        assert_eq!(coverage.len(), 1);
+        assert_eq!(
+            steps::tool_binary(&tool_step(&coverage[0]).argv).as_deref(),
+            Some("cargo-llvm-cov")
+        );
+        assert_eq!(
+            coverage[0].last().map(|step| step.kind),
+            Some(Kind::Artifact)
+        );
+        let crap = chains("crap");
+        assert_eq!(
+            steps::tool_binary(&tool_step(&crap[0]).argv).as_deref(),
+            Some("cargo-crap")
+        );
+        assert_eq!(
+            crap[0].last().and_then(Step::artifact_path),
+            Some(Path::new("target/crap.json"))
+        );
+    }
+
+    #[test]
+    fn the_mutation_diff_uses_merge_base_and_the_report_dir() {
+        let report = Path::new("/work/target/rust-tops");
+        let Some(Plan::Mutation(plan)) = plan_for(&layer("mutation"), report) else {
+            panic!("mutation has no plan");
+        };
+        assert_eq!(plan.diff_path, report.join("rust-tops.diff"));
+        let script = plan.diff.argv.join(" ");
+        assert!(
+            script.contains("git merge-base origin/main HEAD"),
+            "{script}"
+        );
+        assert!(script.contains("&&"), "{script}");
+        assert!(!script.contains(';'), "{script}");
+        assert!(!script.contains("/tmp"), "{script}");
+        assert!(plan
+            .mutants
+            .argv
+            .contains(&"/work/target/rust-tops/rust-tops.diff".to_string()));
+        assert_eq!(
+            steps::tool_binary(&plan.mutants.argv).as_deref(),
+            Some("cargo-mutants")
+        );
+    }
+
+    #[test]
+    fn no_mapped_layer_writes_under_tmp() {
+        for id in [
+            "static-lint",
+            "unit",
+            "integration",
+            "doc",
+            "coverage",
+            "crap",
+            "property",
+            "security-advisory",
+        ] {
+            for chain in chains(id) {
+                for step in chain {
+                    assert!(!step.display().contains("/tmp"), "{id}: {}", step.display());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unmapped_layers_have_no_plan() {
+        for id in ["acceptance", "fuzz", "miri", "formal-kani", "laws"] {
+            assert!(plan_for(&layer(id), Path::new("/r")).is_none(), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_failed_diff_is_failed_even_over_a_stale_diff() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-diff-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let stale = dir.join("stale.diff");
+        fs::write(&stale, "+changed\n").expect("write");
+        let empty = dir.join("empty.diff");
+        fs::write(&empty, "").expect("write");
+        assert_eq!(steps::judge_diff(false, &stale), Outcome::Failed);
+        assert_eq!(steps::judge_diff(false, &empty), Outcome::Failed);
+        assert_eq!(steps::judge_diff(true, &empty), Outcome::Vacuous);
+        assert_eq!(steps::judge_diff(true, &stale), Outcome::Passed);
+        assert_eq!(
+            steps::judge_diff(true, &dir.join("absent")),
+            Outcome::Failed
+        );
+        let _ = fs::remove_dir_all(&dir);
+        assert!(!Outcome::Vacuous.fails_the_gate());
+        assert!(!Outcome::Vacuous.counts_for_a_law());
+    }
+
+    #[test]
+    fn init_yaml_has_no_exemption_for_every_class() {
+        for class in [
+            CrateClass::LibraryCore,
+            CrateClass::ParserCodec,
+            CrateClass::NoStdEmbedded,
+            CrateClass::UnsafeKernel,
+            CrateClass::BinaryCli,
+        ] {
+            let yaml = with_init_exemptions(&profiles::profile_yaml(class.as_str(), "x"));
+            let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
+            assert_eq!(
+                doc["exemptions"],
+                serde_json::json!([]),
+                "{}",
+                class.as_str()
+            );
+            assert!(!yaml.contains("generated protobuf"), "{}", class.as_str());
+            assert!(doc["layers"].as_array().is_some_and(|l| !l.is_empty()));
+        }
+    }
+
+    #[test]
+    fn the_exemptions_block_is_replaced_in_place() {
+        let yaml = "a: 1\nexemptions:\n  - layer: crap\n    expires: \"2027-01-01\"\nb: 2\n";
+        assert_eq!(with_init_exemptions(yaml), "a: 1\nexemptions: []\nb: 2\n");
+        assert_eq!(with_init_exemptions("a: 1\n"), "a: 1\nexemptions: []\n");
+    }
 }
