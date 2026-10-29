@@ -437,7 +437,11 @@ fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubb
         text.contains("skip acceptance: no local command mapped"),
         "{class}: {text}"
     );
-    assert!(text.contains("Vacuous: the diff from"), "{class}: {text}");
+    assert!(
+        text.contains("Vacuous: no origin/main; the mutation diff is empty"),
+        "{class}: {text}"
+    );
+    assert!(!text.contains("Vacuous: the diff from"), "{class}: {text}");
     assert!(
         text.contains("1 vacuous (counted for no law)"),
         "{class}: {text}"
@@ -747,7 +751,11 @@ fn no_origin_main_is_an_empty_diff_and_vacuous() {
     stale_diff(&fixture);
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("Vacuous: the diff from"), "{text}");
+    assert!(
+        text.contains("Vacuous: no origin/main; the mutation diff is empty"),
+        "{text}"
+    );
+    assert!(!text.contains("Vacuous: the diff from"), "{text}");
     assert!(!text.contains("a failed diff is never waived"), "{text}");
     assert!(
         !cargo_ran(&fixture, "mutants"),
@@ -769,7 +777,11 @@ fn an_empty_diff_is_vacuous_and_counts_for_no_law() {
     stub_bend(&fixture);
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("Vacuous: the diff from"), "{text}");
+    assert!(
+        text.contains("Vacuous: the diff from `git merge-base origin/main HEAD` is empty"),
+        "{text}"
+    );
+    assert!(!text.contains("Vacuous: no origin/main"), "{text}");
     assert!(
         text.contains("ok: 3 command(s) passed, 1 vacuous (counted for no law)"),
         "{text}"

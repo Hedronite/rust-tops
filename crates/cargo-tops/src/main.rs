@@ -493,9 +493,14 @@ fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
     let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
     let diff = steps::judge_diff(diff_ok, &plan.diff_path);
     let Some(mutants) = plan.after_diff(diff) else {
-        if diff == Outcome::Vacuous {
+        if diff == Outcome::Vacuous && has_origin_main(dir) {
             println!(
                 "Vacuous: the diff from `git merge-base origin/main HEAD` is empty; \
+                 cargo mutants did not run and no law counts this layer"
+            );
+        } else if diff == Outcome::Vacuous {
+            println!(
+                "Vacuous: no origin/main; the mutation diff is empty; \
                  cargo mutants did not run and no law counts this layer"
             );
         } else {
@@ -506,6 +511,22 @@ fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
     ran.push(mutants.display());
     let outcome = run_step(dir, mutants)?;
     Ok(finish(layer, &ran, outcome))
+}
+
+/// Whether `refs/remotes/origin/main` exists, for the Vacuous wording only.
+fn has_origin_main(dir: &Path) -> bool {
+    Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/remotes/origin/main",
+        ])
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
