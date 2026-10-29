@@ -345,12 +345,18 @@ impl MutationPlan {
     }
 }
 
+/// Not a git work tree, or no commit: the command fails. No `origin/main`:
+/// it writes an empty diff, so the layer is Vacuous. `origin/main` with no
+/// merge-base: it fails. Otherwise the diff from the merge-base to `HEAD`.
 fn mutation_diff_script(report_dir: &Path, diff_path: &Path) -> String {
     let dir = shell_quote(report_dir);
     let file = shell_quote(diff_path);
     format!(
-        "mkdir -p {dir} && git merge-base origin/main HEAD >/dev/null \
-         && git diff \"$(git merge-base origin/main HEAD)\" HEAD --unified=0 > {file}"
+        "mkdir -p {dir} && git rev-parse --verify --quiet HEAD >/dev/null \
+         && if git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; \
+         then base=\"$(git merge-base origin/main HEAD)\" \
+         && git diff \"$base\" HEAD --unified=0 > {file}; \
+         else : > {file}; fi"
     )
 }
 

@@ -727,8 +727,9 @@ mod tests {
             script.contains("git merge-base origin/main HEAD"),
             "{script}"
         );
-        assert!(script.contains("&&"), "{script}");
-        assert!(!script.contains(';'), "{script}");
+        assert!(script.contains("refs/remotes/origin/main"), "{script}");
+        assert!(script.contains("&& git diff"), "{script}");
+        assert!(!script.contains("mutants"), "{script}");
         assert!(!script.contains("/tmp"), "{script}");
         assert!(plan
             .mutants

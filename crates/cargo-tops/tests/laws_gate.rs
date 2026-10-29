@@ -5,8 +5,8 @@
 //! `Refuse`, stops at the first one like `bend` does, and otherwise prints
 //! one `Allow{}` per law. Cargo and its plugins are stubs that pass and
 //! leave the artifacts a real run records. Fresh-init fixtures are git repos
-//! with one commit pushed to a local `origin`, the way an adopter's clone
-//! looks; the mutation tests build the diff cases from there. The
+//! with one commit and no remote; the mutation tests add a local `origin`
+//! where a case needs one. The
 //! `#[ignore]` test at the end
 //! swaps the stub for the real pinned Bend; CI runs it in `bend-gate-matrix`.
 use std::ffi::OsString;
@@ -231,7 +231,7 @@ enum Origin {
 
 /// Turn the init repo into an adopter's: a crate with a `Cargo.lock`, `git
 /// init`, and one commit of everything. With [`Origin::Pushed`] that commit
-/// is `origin/main`, so the mutation diff is empty.
+/// is `origin/main`. Either way the mutation diff is empty.
 fn adopt(fixture: &Fixture, origin: Origin) {
     let repo = &fixture.repo;
     fs::write(
@@ -261,6 +261,45 @@ fn adopt(fixture: &Fixture, origin: Origin) {
         git(fixture, repo, &["remote", "add", "origin", &url]);
         git(fixture, repo, &["push", "-q", "origin", "main"]);
     }
+}
+
+/// `origin/main` names a commit with no history in common with `HEAD`, so
+/// `git merge-base origin/main HEAD` fails.
+fn unrelated_origin(fixture: &Fixture) {
+    let out = Command::new("git")
+        .args([
+            "commit-tree",
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            "-m",
+            "unrelated",
+        ])
+        .current_dir(&fixture.repo)
+        .env("HOME", &fixture.home)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+        .env("GIT_COMMITTER_NAME", "fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+        .output()
+        .expect("spawn git commit-tree");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let orphan = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    git(
+        fixture,
+        &fixture.repo,
+        &["update-ref", "refs/remotes/origin/main", &orphan],
+    );
+}
+
+/// Plant a non-empty diff where a failed run must not read it.
+fn stale_diff(fixture: &Fixture) {
+    let report = fixture.repo.join("target/rust-tops");
+    fs::create_dir_all(&report).expect("mkdir report");
+    fs::write(report.join("rust-tops.diff"), "+stale\n").expect("write stale diff");
 }
 
 /// A second commit, not pushed: the diff from `origin/main` is not empty.
@@ -382,13 +421,13 @@ fn law<'v>(cases: &'v serde_json::Value, name: &str) -> &'v serde_json::Value {
         .unwrap_or_else(|| panic!("{name} missing from cases.json"))
 }
 
-/// A fresh init repo for `class`, committed and pushed, passes `gate` with
-/// every layer it enables, and the self-fail laws chose their passing facts.
-/// Unmapped layers are skipped, not failed; the empty mutation diff is
-/// `Vacuous`.
+/// A fresh init repo for `class`, `git init` plus one commit and no remote,
+/// passes `gate` with every layer it enables, and the self-fail laws chose
+/// their passing facts. Unmapped layers are skipped, not failed; with no
+/// `origin/main` the mutation diff is empty, so the layer is `Vacuous`.
 fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubbed: bool) {
     let fixture = init_fixture(&format!("fresh-{class}-{stubbed}"), class);
-    adopt(&fixture, Origin::Pushed);
+    adopt(&fixture, Origin::None);
     if stubbed {
         stub_bend(&fixture);
     }
@@ -402,6 +441,10 @@ fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubb
     assert!(
         text.contains("1 vacuous (counted for no law)"),
         "{class}: {text}"
+    );
+    assert!(
+        !cargo_ran(&fixture, "mutants"),
+        "{class}: cargo mutants ran on an empty diff"
     );
     let cases = cases_json(&fixture);
     assert_eq!(cases["passed"], true, "{class}");
@@ -663,30 +706,60 @@ fn a_missing_mutants_tool_is_not_on_path_even_when_the_diff_is_empty() {
 
 #[test]
 fn a_failed_diff_is_failed_with_no_escape() {
-    // No `origin`: `git merge-base origin/main HEAD` fails. A stale,
-    // non-empty diff from an earlier run must not rescue it.
-    let fixture = fixture_with("diff-failed", &["static-lint", "mutation", "laws"]);
-    adopt(&fixture, Origin::None);
-    stub_bend(&fixture);
-    let report = fixture.repo.join("target/rust-tops");
-    fs::create_dir_all(&report).expect("mkdir report");
-    fs::write(report.join("rust-tops.diff"), "+stale\n").expect("write stale diff");
-    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
-    assert!(text.contains("a failed diff is never waived"), "{text}");
-    assert!(text.contains("mutation: `sh -c mkdir -p"), "{text}");
-    assert!(text.contains("git merge-base origin/main HEAD"), "{text}");
-    assert!(!text.contains("Vacuous"), "{text}");
-    assert!(
-        !cargo_ran(&fixture, "mutants"),
-        "cargo mutants ran after a failed diff"
-    );
-
-    // Not a git work tree at all: same outcome.
-    let plain = fixture_with("diff-no-git", &["mutation"]);
+    // Not a git work tree. A stale, non-empty diff from an earlier run must
+    // not rescue it.
+    let plain = fixture_with("diff-no-git", &["static-lint", "mutation", "laws"]);
+    stub_bend(&plain);
+    stale_diff(&plain);
     let (out, text) = gate(&plain, path_without_bend(&plain.bin));
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(text.contains("a failed diff is never waived"), "{text}");
+    assert!(text.contains("mutation: `sh -c mkdir -p"), "{text}");
+    assert!(!text.contains("Vacuous"), "{text}");
+    assert!(
+        !cargo_ran(&plain, "mutants"),
+        "cargo mutants ran after a failed diff"
+    );
+
+    // `origin/main` exists, but `git merge-base origin/main HEAD` fails.
+    let unrelated = fixture_with("diff-unrelated", &["static-lint", "mutation", "laws"]);
+    adopt(&unrelated, Origin::None);
+    unrelated_origin(&unrelated);
+    stub_bend(&unrelated);
+    stale_diff(&unrelated);
+    let (out, text) = gate(&unrelated, path_without_bend(&unrelated.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("a failed diff is never waived"), "{text}");
+    assert!(!text.contains("Vacuous"), "{text}");
+    assert!(
+        !cargo_ran(&unrelated, "mutants"),
+        "cargo mutants ran after a failed merge-base"
+    );
+}
+
+#[test]
+fn no_origin_main_is_an_empty_diff_and_vacuous() {
+    // `git init` plus one commit and no remote. A stale diff is replaced by
+    // the empty one, not read.
+    let fixture = fixture_with("diff-no-origin", &["static-lint", "mutation", "laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    stale_diff(&fixture);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("Vacuous: the diff from"), "{text}");
+    assert!(!text.contains("a failed diff is never waived"), "{text}");
+    assert!(
+        !cargo_ran(&fixture, "mutants"),
+        "cargo mutants ran with no origin/main"
+    );
+    let diff = fixture.repo.join("target/rust-tops/rust-tops.diff");
+    assert_eq!(fs::metadata(&diff).map(|m| m.len()).ok(), Some(0));
+    let cases = cases_json(&fixture);
+    assert_eq!(
+        law(&cases, "baseline_green_before_mutants")["status"],
+        "not-evaluated"
+    );
 }
 
 #[test]
