@@ -81,6 +81,23 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
     value
 }
 
+/// The unmapped-layers pack turned `acceptance` off in the bundled template:
+/// it has no command, and an enabled layer with none fails the gate. Check
+/// that, then undo it so the rest still compares to the `968c390` oracle.
+fn with_acceptance_restored(mut value: serde_json::Value) -> serde_json::Value {
+    let layers = value["layers"].as_array_mut().expect("layers array");
+    let acceptance = layers
+        .iter_mut()
+        .find(|layer| layer["id"] == "acceptance")
+        .expect("template has an acceptance layer");
+    assert_eq!(
+        acceptance["enabled"], false,
+        "template must write acceptance off"
+    );
+    acceptance["enabled"] = serde_json::Value::from(true);
+    value
+}
+
 fn expect_config(name: &str, cfg: &TopsConfig) {
     expect_value(name, config_json(cfg));
 }
@@ -111,7 +128,10 @@ fn bundled_profile_templates_parse_to_pre_migration_config() {
         assert_eq!(cfg.crate_.name, "golden-crate");
         assert_eq!(cfg.crate_.class, *class);
         assert_eq!(cfg.protocol.id, "rust-tops");
-        expect_value(class, without_protocol_1_1(config_json(&cfg)));
+        expect_value(
+            class,
+            with_acceptance_restored(without_protocol_1_1(config_json(&cfg))),
+        );
     }
 }
 

@@ -31,7 +31,7 @@ layers:
   - { id: unit,              enabled: true,  tier: 0, runner: "cargo nextest",         scope: lib }
   - { id: doc,               enabled: true,  tier: 0, runner: "cargo test --doc",      scope: lib }
   - { id: integration,       enabled: true,  tier: 1, runner: "cargo nextest",         scope: tests }
-  - { id: acceptance,        enabled: true,  tier: 1, runner: "assert_cmd journeys",   scope: tests }
+  - { id: acceptance,        enabled: false, tier: 1, runner: "assert_cmd journeys",   scope: tests }
   - { id: snapshot,          enabled: false, tier: 2, runner: insta,                   scope: tests }
   - { id: compile-fail,      enabled: false, tier: 2, runner: trybuild,                scope: tests }
   - { id: coverage,          enabled: true,  tier: 0, runner: cargo-llvm-cov,          scope: lib }

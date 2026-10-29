@@ -42,13 +42,17 @@ done
 exit 0
 "#;
 
-const PLUGINS: [&str; 5] = [
+const PLUGINS: [&str; 6] = [
     "cargo-deny",
     "cargo-nextest",
     "cargo-llvm-cov",
     "cargo-crap",
     "cargo-mutants",
+    "cargo-kani",
 ];
+
+/// Enabled layers `init` leaves above the default `--max-tier 1`.
+const ABOVE_TIER_1: &str = "above --max-tier 1, not judged: fuzz, miri, sanitizer, formal-kani, bench-criterion, bench-callgrind, density-audit";
 
 /// Constructors that `LAWS.bend` claims `Refuse` for, from its one-argument
 /// `law` lines.
@@ -177,7 +181,8 @@ fn fixture(name: &str) -> Fixture {
     fixture_with(name, &["static-lint", "laws"])
 }
 
-/// A library-core repo with only the `keep` layers on.
+/// A library-core repo with only the `keep` layers on, whatever `init`
+/// wrote for them.
 fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
     let fixture = init_fixture(name, "library-core");
     let yaml_path = fixture.repo.join("rust-tops.yaml");
@@ -186,10 +191,12 @@ fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
         .lines()
         .map(|line| {
             let kept = keep.iter().any(|id| line.contains(&format!("id: {id},")));
-            if line.contains("- { id:") && !kept {
-                line.replace("enabled: true", "enabled: false")
-            } else {
+            if !line.contains("- { id:") {
                 line.to_string()
+            } else if kept {
+                line.replace("enabled: false,", "enabled: true, ")
+            } else {
+                line.replace("enabled: true", "enabled: false")
             }
         })
         .collect();
@@ -361,7 +368,7 @@ fn path_without_bend(bin: &Path) -> OsString {
 fn path_with_only_stubs(bin: &Path) -> OsString {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let real = |dir: &PathBuf| {
-        ["bend", "cargo"]
+        ["bend", "cargo", "kani"]
             .iter()
             .chain(PLUGINS.iter())
             .any(|name| dir.join(name).exists())
@@ -383,9 +390,20 @@ fn gate(fixture: &Fixture, path: OsString) -> (Output, String) {
 }
 
 fn gate_at(fixture: &Fixture, path: OsString, cargo_target: Option<&Path>) -> (Output, String) {
+    gate_with(fixture, path, cargo_target, &[])
+}
+
+/// `gate --path <repo>` plus `args`, such as `--max-tier 4`.
+fn gate_with(
+    fixture: &Fixture,
+    path: OsString,
+    cargo_target: Option<&Path>,
+    args: &[&str],
+) -> (Output, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-tops"));
     cmd.args(["gate", "--path"])
         .arg(&fixture.repo)
+        .args(args)
         .env("PATH", path)
         .env("HOME", &fixture.home)
         .env("BEND_STUB_LOG", fixture.root.join("bend.log"))
@@ -433,9 +451,12 @@ fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubb
     }
     let (out, text) = gate(&fixture, path(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{class}: {text}");
+    assert!(!text.contains("NotRun"), "{class}: {text}");
+    assert!(!text.contains("acceptance"), "{class}: {text}");
+    assert!(text.contains(ABOVE_TIER_1), "{class}: {text}");
     assert!(
-        text.contains("skip acceptance: no local command mapped"),
-        "{class}: {text}"
+        !cargo_ran(&fixture, "kani"),
+        "{class}: cargo kani ran at --max-tier 1"
     );
     assert!(
         text.contains("Vacuous: no origin/main; the mutation diff is empty"),
@@ -494,6 +515,14 @@ fn init_writes_the_laws_layer_the_bend_kit_and_the_toolchain_pin() {
     assert!(yaml.contains("version: \"1.1.0\""));
     assert!(yaml.contains("msrv: \"1.88\""));
     assert!(yaml.contains("{ id: laws,              enabled: true,  tier: 0, runner: bend,"));
+    assert!(yaml.contains(
+        "{ id: acceptance,        enabled: false, tier: 1, runner: \"assert_cmd journeys\","
+    ));
+    assert!(
+        yaml.lines().any(|line| line.contains("{ id: formal-kani,")
+            && line.contains("tier: 4, runner: cargo-kani,")),
+        "formal-kani left tier 4"
+    );
     let doc: serde_json::Value = serde_saphyr::from_str(&yaml).expect("yaml parses");
     assert_eq!(
         doc["exemptions"],
@@ -820,6 +849,128 @@ fn a_real_diff_runs_mutants_on_the_report_dir_diff() {
         "BaselineGreen"
     );
     assert_eq!(law(&cases, "missing_tool_not_green")["case"], "ToolPresent");
+}
+
+#[test]
+fn an_enabled_unmapped_layer_in_range_is_not_run_and_fails() {
+    // `init` writes `acceptance` off. Turned on, it is in range at tier 1
+    // and has no command: NotRun, and the gate exits 1. No exemption.
+    let fixture = fixture_with("not-run", &["static-lint", "acceptance", "laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("NotRun [acceptance]: enabled at tier 1 (<= --max-tier 1)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  - acceptance: NotRun (enabled at tier 1, no command mapped"),
+        "{text}"
+    );
+    assert!(!text.contains("skip acceptance"), "{text}");
+    let yaml = fs::read_to_string(fixture.repo.join("rust-tops.yaml")).expect("yaml");
+    let doc: serde_json::Value = serde_saphyr::from_str(&yaml).expect("yaml parses");
+    assert_eq!(doc["exemptions"], serde_json::json!([]));
+
+    // A dry run lists it and exits 1 too.
+    let (out, text) = gate_with(
+        &fixture,
+        path_without_bend(&fixture.bin),
+        None,
+        &["--dry-run"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("1 layer(s) NotRun, so the gate would fail"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_layer_above_max_tier_is_not_judged_and_in_range_it_is() {
+    let fixture = fixture_with("above-tier", &["static-lint", "fuzz", "laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("above --max-tier 1, not judged: fuzz"),
+        "{text}"
+    );
+    assert!(!text.contains("NotRun"), "{text}");
+
+    let (out, text) = gate_with(
+        &fixture,
+        path_without_bend(&fixture.bin),
+        None,
+        &["--max-tier", "3"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("NotRun [fuzz]: enabled at tier 3 (<= --max-tier 3)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn formal_kani_in_range_runs_cargo_kani() {
+    let fixture = fixture_with("kani", &["static-lint", "formal-kani", "laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    let (out, text) = gate_with(
+        &fixture,
+        path_without_bend(&fixture.bin),
+        None,
+        &["--max-tier", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("==> [formal-kani] cargo kani --workspace"),
+        "{text}"
+    );
+    assert!(
+        cargo_log(&fixture)
+            .lines()
+            .any(|line| line == "kani --workspace"),
+        "{}",
+        cargo_log(&fixture)
+    );
+    assert!(!text.contains("NotRun"), "{text}");
+}
+
+#[test]
+fn a_missing_cargo_kani_fails_in_range_and_not_at_tier_1() {
+    let fixture = fixture_with("no-kani", &["static-lint", "formal-kani", "laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    fs::remove_file(fixture.bin.join("cargo-kani")).expect("remove stub");
+    let (out, text) = gate_with(
+        &fixture,
+        path_with_only_stubs(&fixture.bin),
+        None,
+        &["--max-tier", "4"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("formal-kani: `cargo-kani` not on PATH"),
+        "{text}"
+    );
+    assert!(
+        !cargo_ran(&fixture, "kani"),
+        "cargo kani ran without cargo-kani"
+    );
+
+    // A fresh init, every layer as `init` wrote it, at the default
+    // `--max-tier 1`: Kani is missing and the gate still passes.
+    let fresh = init_fixture("no-kani-fresh", "library-core");
+    adopt(&fresh, Origin::None);
+    stub_bend(&fresh);
+    fs::remove_file(fresh.bin.join("cargo-kani")).expect("remove stub");
+    let (out, text) = gate(&fresh, path_with_only_stubs(&fresh.bin));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(ABOVE_TIER_1), "{text}");
+    assert!(!text.contains("not on PATH"), "{text}");
 }
 
 /// Real Bend 2.0.36 on `PATH`: a refusing repo fails, and a fresh init of

@@ -321,12 +321,37 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
     // not be relative to the caller's.
     let report = std::path::absolute(laws::report_dir(dir))
         .with_context(|| format!("resolve the report dir of {}", dir.display()))?;
+    // Enabled layers above the range are not judged, so they cannot fail
+    // the gate. Name them so the run says what it left out.
+    let above: Vec<&str> = cfg
+        .layers
+        .iter()
+        .filter(|l| l.enabled && l.tier.unwrap_or(0) > max_tier)
+        .map(|l| l.id.as_str())
+        .collect();
+    if !above.is_empty() {
+        println!(
+            "above --max-tier {max_tier}, not judged: {}",
+            above.join(", ")
+        );
+    }
+
     let started = SystemTime::now();
     let mut runs: Vec<Run> = Vec::new();
+    // Enabled, in range, and no plan: a skip is never a pass (H-37).
+    let mut not_run: Vec<String> = Vec::new();
     let mut listed = 0;
     for layer in enabled.iter().filter(|l| l.id != "laws") {
         let Some(plan) = plan_for(layer, &report) else {
-            println!("skip {}: no local command mapped", layer.id);
+            let tier = layer.tier.unwrap_or(0);
+            println!(
+                "\nNotRun [{}]: enabled at tier {tier} (<= --max-tier {max_tier}) and no command is mapped",
+                layer.id
+            );
+            not_run.push(format!(
+                "{}: NotRun (enabled at tier {tier}, no command mapped; disable it or lower --max-tier)",
+                layer.id
+            ));
             continue;
         };
         let chains = match plan {
@@ -370,11 +395,22 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         }
         println!();
         println!("laws evaluated: 0/{total} (dry run: bend did not run)");
-        println!("dry-run: {listed} command(s) listed");
-        return Ok(ExitCode::SUCCESS);
+        if not_run.is_empty() {
+            println!("dry-run: {listed} command(s) listed");
+            return Ok(ExitCode::SUCCESS);
+        }
+        println!(
+            "dry-run: {listed} command(s) listed; {} layer(s) NotRun, so the gate would fail",
+            not_run.len()
+        );
+        for n in &not_run {
+            println!("  - {n}");
+        }
+        return Ok(ExitCode::from(1));
     }
 
-    let mut failed: Vec<String> = runs.iter().filter_map(run_failure).collect();
+    let mut failed: Vec<String> = not_run;
+    failed.extend(runs.iter().filter_map(run_failure));
     let evaluated = match judge {
         Some(judge) => {
             // A report from an earlier gate must not be counted for this one.
@@ -625,6 +661,7 @@ fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
             "property",
         ])],
         "security-advisory" => vec![tool(&["cargo", "deny", "check", "advisories"])],
+        "formal-kani" => vec![tool(&["cargo", "kani", "--workspace"])],
         _ => return None,
     };
     Some(Plan::Chains(chains))
@@ -784,8 +821,47 @@ mod tests {
 
     #[test]
     fn unmapped_layers_have_no_plan() {
-        for id in ["acceptance", "fuzz", "miri", "formal-kani", "laws"] {
+        for id in [
+            "acceptance",
+            "fuzz",
+            "miri",
+            "sanitizer",
+            "bench-criterion",
+            "bench-callgrind",
+            "density-audit",
+            "laws",
+        ] {
             assert!(plan_for(&layer(id), Path::new("/r")).is_none(), "{id}");
+        }
+    }
+
+    #[test]
+    fn formal_kani_runs_cargo_kani() {
+        let kani = chains("formal-kani");
+        assert_eq!(kani.len(), 1);
+        let step = tool_step(&kani[0]);
+        assert_eq!(step.argv, ["cargo", "kani", "--workspace"]);
+        assert_eq!(
+            steps::tool_binary(&step.argv).as_deref(),
+            Some("cargo-kani")
+        );
+    }
+
+    #[test]
+    fn init_turns_acceptance_off_and_keeps_kani_at_tier_4() {
+        for class in ["library-core", "binary-cli"] {
+            let yaml = with_init_exemptions(&profiles::profile_yaml(class, "x"));
+            let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
+            let layer = |id: &str| {
+                doc["layers"]
+                    .as_array()
+                    .and_then(|layers| layers.iter().find(|l| l["id"] == id))
+                    .cloned()
+                    .unwrap_or_else(|| panic!("{class}: no {id} layer"))
+            };
+            assert_eq!(layer("acceptance")["enabled"], false, "{class}");
+            assert_eq!(layer("formal-kani")["tier"], 4, "{class}");
+            assert_eq!(layer("laws")["enabled"], true, "{class}");
         }
     }
 
