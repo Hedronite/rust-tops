@@ -1,0 +1,17 @@
+# First-class profile: library-util
+class: library-util
+coverage:
+  line_min_pct: 90
+  region_min_pct: 85
+crap:
+  threshold_human: 4
+  threshold_agent: 6
+mutation:
+  scope: diff
+  kill_rate_min_pct: 90
+  unexplained_survivors_max: 0
+property: encouraged
+fuzz: false
+miri: if-unsafe
+kani: false
+callgrind: optional
