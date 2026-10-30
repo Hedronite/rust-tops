@@ -402,15 +402,19 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         }
         println!();
         println!("laws evaluated: 0/{total} (dry run: bend did not run)");
+        // Nothing ran, so the count is short for every layer: a dry run
+        // lists the commands and is never a pass.
+        let (count, _) = command_count(0, &enabled, &[], false, max_tier);
+        println!("{count}");
         if not_run.is_empty() {
-            println!("dry-run: {listed} command(s) listed");
-            return Ok(ExitCode::SUCCESS);
+            println!("dry-run: {listed} command(s) listed, 0 run; a dry run is not a pass");
+        } else {
+            println!(
+                "dry-run: {listed} command(s) listed, 0 run; {} layer(s) NotRun, so the gate would fail",
+                not_run.len()
+            );
         }
-        println!(
-            "dry-run: {listed} command(s) listed; {} layer(s) NotRun, so the gate would fail",
-            not_run.len()
-        );
-        for n in &not_run {
+        for n in not_run.iter().chain([&count]) {
             println!("  - {n}");
         }
         return Ok(ExitCode::from(1));
@@ -418,6 +422,7 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
 
     let mut failed: Vec<String> = not_run;
     failed.extend(runs.iter().filter_map(run_failure));
+    let mut bend_ran = false;
     let evaluated = match judge {
         Some(judge) => {
             // A report from an earlier gate must not be counted for this one.
@@ -441,7 +446,10 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
                 workflows: facts::load_workflows(dir),
             };
             failed.extend(laws::run(&judge, &ctx)?);
-            let (checked, of) = laws_evaluated(&cases).unwrap_or((0, total));
+            // `cases.json` was removed above, so one here means bend ran.
+            let report = laws_evaluated(&cases);
+            bend_ran = report.is_some();
+            let (checked, of) = report.unwrap_or((0, total));
             format!("laws evaluated: {checked}/{of}")
         }
         None => format!("laws evaluated: 0/{total} (laws layer off)"),
@@ -452,8 +460,19 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         .iter()
         .filter(|run| run.outcome == Outcome::Vacuous)
         .count();
+    let (count, short) = command_count(
+        ran_commands(&runs, bend_ran),
+        &enabled,
+        &runs,
+        bend_ran,
+        max_tier,
+    );
+    if short {
+        failed.push(count.clone());
+    }
     println!();
     println!("{evaluated}");
+    println!("{count}");
     if failed.is_empty() {
         if vacuous == 0 {
             println!("ok: {ran} command(s) passed");
@@ -470,6 +489,48 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
             println!("  - {f}");
         }
         Ok(ExitCode::from(1))
+    }
+}
+
+/// Commands that ran: each run whose tool was found, and `bend` once when it
+/// judged the laws layer.
+fn ran_commands(runs: &[Run], bend_ran: bool) -> usize {
+    runs.iter()
+        .filter(|run| run.outcome != Outcome::ToolMissing)
+        .count()
+        + usize::from(bend_ran)
+}
+
+/// The `count:` line, and whether it is short: an enabled layer in range
+/// ran no command (NotRun, a missing tool, or a dry run). Every run belongs
+/// to one enabled layer, so fewer commands than layers is always short. A
+/// short count fails the gate.
+fn command_count(
+    ran: usize,
+    enabled: &[&config::Layer],
+    runs: &[Run],
+    bend_ran: bool,
+    max_tier: u8,
+) -> (String, bool) {
+    let none: Vec<&str> = enabled
+        .iter()
+        .map(|layer| layer.id.as_str())
+        .filter(|id| match *id {
+            "laws" => !bend_ran,
+            _ => !runs
+                .iter()
+                .any(|run| run.layer == *id && run.outcome != Outcome::ToolMissing),
+        })
+        .collect();
+    let line = format!(
+        "count: {ran} command(s) ran; {} of {} enabled layer(s) at tier <= {max_tier} ran one",
+        enabled.len() - none.len(),
+        enabled.len()
+    );
+    if none.is_empty() {
+        (line, false)
+    } else {
+        (format!("{line}; none ran for: {}", none.join(", ")), true)
     }
 }
 
@@ -871,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn init_turns_acceptance_off_and_keeps_kani_at_tier_4() {
+    fn init_turns_acceptance_and_laws_off_and_keeps_kani_at_tier_4() {
         for class in PROFILE_CLASSES {
             let yaml = init_yaml(class);
             let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
@@ -884,7 +945,7 @@ mod tests {
             };
             assert_eq!(layer("acceptance")["enabled"], false, "{class}");
             assert_eq!(layer("formal-kani")["tier"], 4, "{class}");
-            assert_eq!(layer("laws")["enabled"], true, "{class}");
+            assert_eq!(layer("laws")["enabled"], false, "{class}");
         }
     }
 

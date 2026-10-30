@@ -3,7 +3,8 @@
 //! Recorded from main `968c390` by decoding with serde_yaml 0.9.34 into this
 //! struct (free-form fields as `serde_json::Value`) and sorting object keys.
 //! `crate.msrv` is not a field, so it is absent. The templates match that
-//! commit; `rust-tops.yaml` there differs from this branch only in `msrv`.
+//! commit; `rust-tops.yaml` there differs from this branch in `msrv` and in
+//! what [`without_kit_drop_in`] checks and undoes.
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
@@ -61,8 +62,9 @@ fn load_yaml(label: &str, yaml: &str) -> TopsConfig {
 }
 
 /// Protocol 1.1.0 changed the bundled template in two places: it moved
-/// `protocol.version` and added an enabled `laws` layer. Check both, then undo
-/// them so the rest still compares to the `968c390` serde_yaml oracle.
+/// `protocol.version` and added a `laws` layer, which the drop-in pack turned
+/// off (D3: adopters opt in). Check both, then undo them so the rest still
+/// compares to the `968c390` serde_yaml oracle.
 fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
     assert_eq!(value["protocol"]["version"], "1.1.0");
     value["protocol"]["version"] = serde_json::Value::from("1.0.0");
@@ -74,8 +76,8 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
         .collect();
     assert_eq!(
         laws,
-        [serde_json::json!({"enabled": true, "id": "laws", "runner": "bend", "tier": 0})],
-        "template must carry one enabled tier-0 laws layer"
+        [serde_json::json!({"enabled": false, "id": "laws", "runner": "bend", "tier": 0})],
+        "template must carry one disabled tier-0 laws layer"
     );
     layers.retain(|layer| layer["id"] != "laws");
     value
@@ -110,8 +112,41 @@ fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::
     value
 }
 
-fn expect_config(name: &str, cfg: &TopsConfig) {
-    expect_value(name, config_json(cfg));
+/// The drop-in pack fixed the kit's own `rust-tops.yaml` (K5): protocol
+/// 1.1.0, `laws` on, `acceptance` off, no `release_profile`, and no
+/// `src/generated/**` exemption. Check that, then undo it so the rest still
+/// compares to the `968c390` oracle.
+fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
+    assert_eq!(value["protocol"]["version"], "1.1.0");
+    value["protocol"]["version"] = serde_json::Value::from("1.0.0");
+    let layers = value["layers"].as_array_mut().expect("layers array");
+    let laws: Vec<serde_json::Value> = layers
+        .iter()
+        .filter(|layer| layer["id"] == "laws")
+        .cloned()
+        .collect();
+    assert_eq!(
+        laws,
+        [serde_json::json!({"enabled": true, "id": "laws", "runner": "bend", "tier": 0})],
+        "the kit must judge its own laws"
+    );
+    layers.retain(|layer| layer["id"] != "laws");
+    let mut value = with_acceptance_restored(value);
+    assert_eq!(
+        value["performance"].get("release_profile"),
+        None,
+        "Cargo.toml has no [profile.release]"
+    );
+    value["performance"]["release_profile"] = serde_json::json!({
+        "codegen-units": 1, "debug": 0, "lto": "thin", "opt-level": 3, "panic": "abort",
+    });
+    assert_eq!(value["exemptions"], serde_json::json!([]));
+    value["exemptions"] = serde_json::json!([{
+        "expires": "2027-09-24", "layer": "crap", "owner": "platform",
+        "path": "src/generated/**",
+        "reason": "generated protobuf; public decode roundtrip is the oracle",
+    }]);
+    value
 }
 
 fn expect_value(name: &str, value: serde_json::Value) {
@@ -163,7 +198,11 @@ fn workspace_instance_parses_to_pre_migration_config() {
     check(&cfg).unwrap_or_else(|err| panic!("check workspace instance: {err:#}"));
     assert_eq!(cfg.crate_.name, "cargo-tops");
     assert_eq!(cfg.crate_.class, "binary-cli");
-    expect_config("workspace", &cfg);
+    // `unsafe_policy` is not a config field; the workspace forbids unsafe.
+    let raw = fs::read_to_string(&instance).expect("read workspace instance");
+    let doc = super::facts::parse_yaml(&raw).expect("workspace instance parses");
+    assert_eq!(doc["crate"]["unsafe_policy"], "forbid");
+    expect_value("workspace", without_kit_drop_in(config_json(&cfg)));
 }
 
 const YAML11_BOOL_WORDS: &[&str] = &["yes", "no", "on", "off", "y", "n"];

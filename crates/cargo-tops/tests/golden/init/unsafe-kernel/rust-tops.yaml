@@ -223,7 +223,7 @@ layers:
     scope: "workspace"
     tier: 5
   -
-    enabled: true
+    enabled: false
     id: "laws"
     runner: "bend"
     scope: "workspace"

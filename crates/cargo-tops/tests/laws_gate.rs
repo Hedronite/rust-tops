@@ -1,9 +1,11 @@
 //! `cargo tops gate` with the `laws` layer, against a `cargo tops init` repo.
+//! `init` writes `laws` off (D3); the fixtures that judge laws turn it on.
 //!
 //! `bend` is a POSIX sh stub, as in `scripts/test-bend-gate.sh`. It refuses
 //! exactly the case constructors the fixture's own `LAWS.bend` maps to
 //! `Refuse`, stops at the first one like `bend` does, and otherwise prints
-//! one `Allow{}` per law. Cargo and its plugins are stubs that pass and
+//! one `Allow{}` per law. Given a file with no `law` (the gate's `main.bend`
+//! after a failed proof), it prints one verdict per call in `main`. Cargo and its plugins are stubs that pass and
 //! leave the artifacts a real run records. Fresh-init fixtures are git repos
 //! with one commit and no remote; the mutation tests add a local `origin`
 //! where a case needs one. The
@@ -80,7 +82,9 @@ fn refused_constructors(pack: &str) -> Vec<String> {
 }
 
 fn bend_stub(pack: &str) -> String {
-    let arms: String = refused_constructors(pack)
+    let refused = refused_constructors(pack);
+    let list = refused.join(" ");
+    let arms: String = refused
         .iter()
         .map(|ctor| {
             format!(
@@ -109,6 +113,20 @@ while IFS= read -r line || [ -n "$line" ]; do
       ;;
 {arms}  esac
 done < "$1"
+if [ "$n" -eq 0 ]; then
+  refused="{list}"
+  out=
+  for call in $(grep -o 'Laws\.[A-Za-z0-9_]*(Laws\.[A-Za-z0-9_]*{{}})' "$1"); do
+    ctor=${{call#*(Laws.}}
+    ctor=${{ctor%%\{{*}}
+    case " $refused " in
+      *" $ctor "*) out="$out${{out:+, }}LAWS.Refuse{{}}" ;;
+      *) out="$out${{out:+, }}LAWS.Allow{{}}" ;;
+    esac
+  done
+  printf '(%s)\n' "$out"
+  exit 0
+fi
 if [ -n "$refuse" ]; then
   printf 'SOME PROOFS FAIL\nLocation: case_%s\n' "$refuse"
   exit 1
@@ -206,6 +224,17 @@ fn edit_yaml(fixture: &Fixture, edit: impl FnOnce(&mut serde_json::Value)) {
     edit(&mut doc);
     let json = serde_json::to_string_pretty(&doc).expect("json");
     fs::write(&path, json + "\n").expect("write rust-tops.yaml");
+}
+
+/// Enable layer `id` as `init` wrote it.
+fn turn_on(fixture: &Fixture, id: &str) {
+    edit_yaml(fixture, |doc| {
+        for layer in doc["layers"].as_array_mut().expect("layers") {
+            if layer["id"] == id {
+                layer["enabled"] = serde_json::Value::Bool(true);
+            }
+        }
+    });
 }
 
 fn yaml_doc(fixture: &Fixture) -> serde_json::Value {
@@ -361,6 +390,54 @@ fn laws_evaluated(text: &str) -> (usize, usize) {
     (n.parse().expect("N"), m.parse().expect("M"))
 }
 
+/// `(layers that ran a command, enabled layers in range)` from the gate's
+/// `count: N command(s) ran; K of M enabled layer(s) ...` line.
+fn count(text: &str) -> (usize, usize) {
+    let line = text
+        .lines()
+        .find_map(|line| line.strip_prefix("count: "))
+        .unwrap_or_else(|| panic!("no `count` line: {text}"));
+    let (_, layers) = line
+        .split_once("; ")
+        .expect("count: N command(s) ran; K of M");
+    let mut words = layers.split_whitespace();
+    let ran = words.next().expect("K").parse().expect("K");
+    assert_eq!(words.next(), Some("of"), "{line}");
+    let of = words.next().expect("M").parse().expect("M");
+    (ran, of)
+}
+
+/// The proof refuses `clippy_toolchain_pinned` and stops there, as `bend`
+/// does.
+const PROOF_REFUSES_CLIPPY: &str = r#"  printf 'SOME PROOFS FAIL\nLocation: case_clippy_toolchain_pinned\n'
+  exit 1"#;
+
+/// One `Allow{}` per verdict call in the file.
+const PRINT_ALL_ALLOW: &str = r#"out=
+for call in $(grep -o 'Laws\.[A-Za-z0-9_]*(Laws\.[A-Za-z0-9_]*{})' "$1"); do
+  out="$out${out:+, }LAWS.Allow{}"
+done
+printf '(%s)\n' "$out""#;
+
+/// A `bend` that answers `cases.bend` with the sh lines `proof` and any
+/// other file (the gate's `main.bend`) with `print`. It logs every run.
+fn stub_bend_runs(fixture: &Fixture, proof: &str, print: &str) {
+    let body = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$BEND_STUB_LOG\"\nif [ \"$1\" = version ]; then echo \"bend 2.0.36\"; exit 0; fi\nif [ \"$1\" = cases.bend ]; then\n{proof}\nfi\n{print}\n"
+    );
+    stub(&fixture.bin, "bend", &body);
+}
+
+/// The file each `bend` run judged, in order, from the stub's log.
+fn bend_runs(fixture: &Fixture) -> Vec<String> {
+    fs::read_to_string(fixture.root.join("bend.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| *line != "version")
+        .map(str::to_string)
+        .collect()
+}
+
 fn stub_bend(fixture: &Fixture) {
     let pack = fs::read_to_string(fixture.repo.join("LAWS.bend")).expect("LAWS.bend");
     stub(&fixture.bin, "bend", &bend_stub(&pack));
@@ -455,23 +532,15 @@ fn law<'v>(cases: &'v serde_json::Value, name: &str) -> &'v serde_json::Value {
         .unwrap_or_else(|| panic!("{name} missing from cases.json"))
 }
 
-/// A fresh init repo for `class`, `git init` plus one commit and no remote,
-/// passes `gate` with every layer it enables, and the self-fail laws chose
-/// their passing facts. Unmapped layers are skipped, not failed; with no
-/// `origin/main` the mutation diff is empty, so the layer is `Vacuous`.
-fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubbed: bool) {
-    let fixture = init_fixture(&format!("fresh-{class}-{stubbed}"), class);
-    adopt(&fixture, Origin::None);
-    if stubbed {
-        stub_bend(&fixture);
-    }
-    let (out, text) = gate(&fixture, path(&fixture.bin));
-    assert_eq!(out.status.code(), Some(0), "{class}: {text}");
+/// What every fresh-init gate run says, laws on or off: nothing NotRun,
+/// nothing above tier 1 run, the mutation layer `Vacuous` with no
+/// `origin/main`, and a count that is not short.
+fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
     assert!(!text.contains("NotRun"), "{class}: {text}");
     assert!(!text.contains("acceptance"), "{class}: {text}");
     assert!(text.contains(ABOVE_TIER_1), "{class}: {text}");
     assert!(
-        !cargo_ran(&fixture, "kani"),
+        !cargo_ran(fixture, "kani"),
         "{class}: cargo kani ran at --max-tier 1"
     );
     assert!(
@@ -484,9 +553,62 @@ fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubb
         "{class}: {text}"
     );
     assert!(
-        !cargo_ran(&fixture, "mutants"),
+        !cargo_ran(fixture, "mutants"),
         "{class}: cargo mutants ran on an empty diff"
     );
+    let (ran, of) = count(text);
+    assert_eq!(ran, of, "{class}: {text}");
+    assert!(!text.contains("none ran for"), "{class}: {text}");
+}
+
+/// A fresh init repo for `class`, `git init` plus one commit and no remote,
+/// passes `gate` as `init` wrote it. `laws` is off, so the gate neither
+/// fetches nor calls Bend: `curl` fails and `bend` is on no `PATH` entry.
+fn expect_fresh_init_passes(class: &str) {
+    let fixture = init_fixture(&format!("fresh-{class}"), class);
+    assert_eq!(
+        layer(&yaml_doc(&fixture), "laws")["enabled"],
+        false,
+        "{class}"
+    );
+    adopt(&fixture, Origin::None);
+    stub(&fixture.bin, "curl", "#!/bin/sh\nexit 22\n");
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{class}: {text}");
+    expect_fresh_init_outcomes(class, &fixture, &text);
+    assert!(
+        text.contains("laws evaluated: 0/53 (laws layer off)"),
+        "{class}: {text}"
+    );
+    assert!(!text.contains("fetch-bend"), "{class}: {text}");
+    assert!(!text.contains("==> [laws]"), "{class}: {text}");
+    assert!(
+        !fixture.home.join(".bend").exists(),
+        "{class}: Bend fetched"
+    );
+    assert!(!fixture.root.join("bend.log").exists(), "{class}: bend ran");
+    assert!(
+        !fixture.repo.join("target/rust-tops/cases.json").exists(),
+        "{class}: laws judged with the layer off"
+    );
+}
+
+/// A fresh init repo for `class` with `laws` turned on before the one
+/// commit passes `gate`, and the self-fail laws chose their passing facts.
+fn expect_fresh_init_with_laws_passes(
+    class: &str,
+    path: impl Fn(&Path) -> OsString,
+    stubbed: bool,
+) {
+    let fixture = init_fixture(&format!("fresh-laws-{class}-{stubbed}"), class);
+    turn_on(&fixture, "laws");
+    adopt(&fixture, Origin::None);
+    if stubbed {
+        stub_bend(&fixture);
+    }
+    let (out, text) = gate(&fixture, path(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{class}: {text}");
+    expect_fresh_init_outcomes(class, &fixture, &text);
     let cases = cases_json(&fixture);
     assert_eq!(cases["passed"], true, "{class}");
     let checked = cases["laws"]
@@ -525,7 +647,7 @@ fn expect_fresh_init_passes(class: &str, path: impl Fn(&Path) -> OsString, stubb
 }
 
 #[test]
-fn init_writes_the_laws_layer_the_bend_kit_and_the_toolchain_pin() {
+fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
     let fixture = fixture("init");
     let fresh = init_fixture("init-fresh", "library-core");
     let doc = yaml_doc(&fresh);
@@ -536,10 +658,11 @@ fn init_writes_the_laws_layer_the_bend_kit_and_the_toolchain_pin() {
     assert_eq!(
         (&laws["enabled"], &laws["tier"], &laws["runner"]),
         (
-            &serde_json::json!(true),
+            &serde_json::json!(false),
             &serde_json::json!(0),
             &serde_json::json!("bend")
-        )
+        ),
+        "init must write laws off (D3)"
     );
     let acceptance = layer(&doc, "acceptance");
     assert_eq!(
@@ -590,8 +713,92 @@ fn the_stub_refuses_what_the_pack_refuses() {
 #[test]
 fn fresh_init_then_gate_passes_for_every_class() {
     for class in INIT_CLASSES {
-        expect_fresh_init_passes(class, path_without_bend, true);
+        expect_fresh_init_passes(class);
     }
+}
+
+#[test]
+fn fresh_init_with_laws_on_then_gate_passes_for_every_class() {
+    for class in INIT_CLASSES {
+        expect_fresh_init_with_laws_passes(class, path_without_bend, true);
+    }
+}
+
+#[test]
+fn a_dry_run_runs_nothing_and_never_passes() {
+    for class in INIT_CLASSES {
+        let fixture = init_fixture(&format!("dry-{class}"), class);
+        adopt(&fixture, Origin::None);
+        let (out, text) = gate_with(
+            &fixture,
+            path_with_only_stubs(&fixture.bin),
+            None,
+            &["--dry-run"],
+        );
+        assert_eq!(out.status.code(), Some(1), "{class}: {text}");
+        let (ran, of) = count(&text);
+        assert_eq!(ran, 0, "{class}: {text}");
+        assert!(of > 0, "{class}: {text}");
+        assert!(
+            text.contains("count: 0 command(s) ran; 0 of"),
+            "{class}: {text}"
+        );
+        assert!(
+            text.contains("none ran for: static-lint"),
+            "{class}: {text}"
+        );
+        assert!(text.contains("a dry run is not a pass"), "{class}: {text}");
+        assert!(!text.contains("\nok: "), "{class}: {text}");
+        // `cargo metadata` finds the report dir; no layer's command ran.
+        assert!(
+            cargo_log(&fixture)
+                .lines()
+                .all(|line| line.starts_with("metadata ")),
+            "{class}: a dry run ran a layer: {}",
+            cargo_log(&fixture)
+        );
+
+        // The same repo, run for real: every enabled layer ran a command.
+        let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+        assert_eq!(out.status.code(), Some(0), "{class}: {text}");
+        assert_eq!(count(&text), (of, of), "{class}: {text}");
+    }
+}
+
+#[test]
+fn a_layer_that_runs_no_command_makes_the_count_short() {
+    // The cargo-llvm-cov stub is gone, so `coverage` runs no command.
+    let fixture = fixture_with("short", &["static-lint", "coverage"]);
+    adopt(&fixture, Origin::Pushed);
+    fs::remove_file(fixture.bin.join("cargo-llvm-cov")).expect("remove stub");
+    let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("  - count: 3 command(s) ran; 1 of 2 enabled layer(s) at tier <= 1 ran one; none ran for: coverage"),
+        "{text}"
+    );
+    assert!(!text.contains("\nok: "), "{text}");
+}
+
+#[test]
+fn the_bend_run_is_the_laws_layer_s_command() {
+    // Only `laws` is on. Bend ran, so the count is whole; the gate fails on
+    // the law that wants static-lint, not on the count.
+    let fixture = fixture_with("laws-only", &["laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("count: 1 command(s) ran; 1 of 1 enabled layer(s) at tier <= 1 ran one\n"),
+        "{text}"
+    );
+    assert!(!text.contains("none ran for"), "{text}");
+    assert!(
+        text.contains("  - laws: bend refused fmt_is_tier0"),
+        "{text}"
+    );
+    assert!(text.contains("fail: 1 problem(s)"), "{text}");
 }
 
 #[test]
@@ -611,7 +818,116 @@ fn a_refusing_case_fails_the_gate() {
     let cases = cases_json(&fixture);
     assert_eq!(cases["passed"], false);
     assert_eq!(law(&cases, "clippy_toolchain_pinned")["verdict"], "Refuse");
+    assert_eq!(law(&cases, "single_deny_site")["verdict"], "Allow");
+    assert_eq!(bend_runs(&fixture), ["cases.bend", "main.bend"]);
+}
+
+#[test]
+fn a_failed_proof_prints_every_refusal() {
+    // Two facts refuse: the toolchain is unpinned (clippy_toolchain_pinned)
+    // and static-lint is off (fmt_is_tier0). The proof stops at the first;
+    // the main.bend run names every one.
+    let fixture = fixture_with("refuse-all", &["laws"]);
+    unpin_toolchain(&fixture);
+    stub_bend(&fixture);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(bend_runs(&fixture), ["cases.bend", "main.bend"]);
+    let cases = cases_json(&fixture);
+    assert_eq!(cases["passed"], false);
+    let checked: Vec<&serde_json::Value> = cases["laws"]
+        .as_array()
+        .expect("laws")
+        .iter()
+        .filter(|law| law["status"] == "checked")
+        .collect();
+    assert!(
+        checked.iter().all(|law| law["verdict"] != "unreported"),
+        "{cases}"
+    );
+    let refused: Vec<&str> = checked
+        .iter()
+        .filter(|law| law["verdict"] == "Refuse")
+        .map(|law| law["law"].as_str().expect("law name"))
+        .collect();
+    assert!(refused.len() >= 2, "{refused:?}");
+    assert!(refused.contains(&"clippy_toolchain_pinned"), "{refused:?}");
+    assert!(refused.contains(&"fmt_is_tier0"), "{refused:?}");
+    let failure = format!("  - laws: bend refused {} (", refused.join(", "));
+    assert!(text.contains(&failure), "{failure}: {text}");
+    for law in &refused {
+        assert!(
+            text.lines()
+                .any(|line| line.trim_start().starts_with("Refuse") && line.contains(law)),
+            "{law}: {text}"
+        );
+    }
+    assert!(
+        !text.contains("`unreported` laws were not judged"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_proof_run_decides_pass_or_fail() {
+    // The proof refuses; main.bend prints only Allow. The gate still fails.
+    let fixture = fixture("proof-decides");
+    stub_bend_runs(&fixture, PROOF_REFUSES_CLIPPY, PRINT_ALL_ALLOW);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(bend_runs(&fixture), ["cases.bend", "main.bend"]);
+    assert!(
+        text.contains("laws: bend refused clippy_toolchain_pinned"),
+        "{text}"
+    );
+    assert_eq!(cases_json(&fixture)["passed"], false);
+}
+
+#[test]
+fn a_print_run_short_of_verdicts_leaves_later_laws_unreported() {
+    // main.bend prints no verdict, so only the proof's refusal is known.
+    let fixture = fixture("print-short");
+    stub_bend_runs(&fixture, PROOF_REFUSES_CLIPPY, "printf '()\\n'");
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(bend_runs(&fixture), ["cases.bend", "main.bend"]);
+    assert!(
+        text.contains("laws: bend stops at the first refusal; `unreported` laws were not judged"),
+        "{text}"
+    );
+    let cases = cases_json(&fixture);
+    assert_eq!(law(&cases, "clippy_toolchain_pinned")["verdict"], "Refuse");
     assert_eq!(law(&cases, "single_deny_site")["verdict"], "unreported");
+}
+
+#[test]
+fn a_passing_proof_that_prints_too_few_verdicts_fails() {
+    let fixture = fixture("proof-short");
+    stub_bend_runs(
+        &fixture,
+        "  printf '(LAWS.Allow{})\\n'\n  exit 0",
+        PRINT_ALL_ALLOW,
+    );
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(bend_runs(&fixture), ["cases.bend"]);
+    assert!(
+        text.contains("laws: bend printed 1 verdict(s) for "),
+        "{text}"
+    );
+    assert_eq!(cases_json(&fixture)["passed"], false);
+}
+
+#[test]
+fn a_failed_proof_with_no_checked_law_runs_bend_once() {
+    // A pack with no law: nothing to print, so no main.bend run.
+    let fixture = fixture("no-law");
+    fs::write(fixture.repo.join("LAWS.bend"), "# no law\n").expect("write LAWS.bend");
+    stub_bend_runs(&fixture, "  exit 1", PRINT_ALL_ALLOW);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(bend_runs(&fixture), ["cases.bend"]);
+    assert!(text.contains("laws: bend exited"), "{text}");
 }
 
 #[test]
@@ -620,6 +936,8 @@ fn a_non_refusing_case_passes_and_lists_not_evaluated_laws() {
     stub_bend(&fixture);
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
+    // A passing proof is the only run: no main.bend.
+    assert_eq!(bend_runs(&fixture), ["cases.bend"]);
     let cases = cases_json(&fixture);
     assert_eq!(cases["passed"], true);
     assert_eq!(
@@ -897,6 +1215,7 @@ fn an_enabled_unmapped_layer_in_range_is_not_run_and_fails() {
         "{text}"
     );
     assert!(!text.contains("skip acceptance"), "{text}");
+    assert!(text.contains("none ran for: acceptance"), "{text}");
     let yaml = fs::read_to_string(fixture.repo.join("rust-tops.yaml")).expect("yaml");
     let doc: serde_json::Value = serde_saphyr::from_str(&yaml).expect("yaml parses");
     assert_eq!(doc["exemptions"], serde_json::json!([]));
@@ -1002,7 +1321,7 @@ fn a_missing_cargo_kani_fails_in_range_and_not_at_tier_1() {
 }
 
 /// Real Bend 2.0.36 on `PATH`: a refusing repo fails, and a fresh init of
-/// every class passes.
+/// every class with `laws` turned on passes.
 #[test]
 #[ignore = "needs the pinned Bend 2.0.36 on PATH; CI runs it in bend-gate-matrix"]
 fn the_pinned_bend_judges_the_case_file() {
@@ -1024,8 +1343,18 @@ fn the_pinned_bend_judges_the_case_file() {
         "{text}"
     );
     assert!(text.contains("SOME PROOFS FAIL"), "{text}");
+    // The main.bend run gave every checked law a verdict.
+    let cases = cases_json(&refused);
+    let laws = cases["laws"].as_array().expect("laws");
+    assert!(
+        laws.iter()
+            .filter(|law| law["status"] == "checked")
+            .all(|law| matches!(law["verdict"].as_str(), Some("Allow" | "Ack" | "Refuse"))),
+        "{cases}"
+    );
+    assert_eq!(law(&cases, "clippy_toolchain_pinned")["verdict"], "Refuse");
 
     for class in INIT_CLASSES {
-        expect_fresh_init_passes(class, path_with_bend, false);
+        expect_fresh_init_with_laws_passes(class, path_with_bend, false);
     }
 }

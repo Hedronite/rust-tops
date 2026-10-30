@@ -47,7 +47,7 @@ layers:
   - { id: bench-callgrind,   enabled: true,  tier: 4, runner: gungraun,                scope: hot-paths }
   - { id: security-advisory, enabled: true,  tier: 0, runner: cargo-deny,              scope: workspace }
   - { id: density-audit,     enabled: true,  tier: 5, runner: review+clippy,           scope: workspace }
-  - { id: laws,              enabled: true,  tier: 0, runner: bend,                    scope: workspace }
+  - { id: laws,              enabled: false, tier: 0, runner: bend,                    scope: workspace }
 
 gates:
   lint:
