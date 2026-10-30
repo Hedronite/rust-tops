@@ -123,7 +123,7 @@ fn sync(root: &Path, check: bool) -> Result<bool> {
     for pair in &pairs {
         let source = read_source(&root.join(&pair.source))?;
         let dest = root.join(&pair.dest);
-        if let Some(dir) = linked_dir(root, &pair.dest)? {
+        if let Some(dir) = linked_dir(root, &pair.dest) {
             problems.push(format!(
                 "{} is under {dir}, which is a symlink; copies sit in real directories, so remove the link {dir}",
                 pair.dest
@@ -241,25 +241,21 @@ fn read_source(path: &Path) -> Result<Source> {
     })
 }
 
-/// The first directory above `rel`, under `root`, that is a symlink. A
-/// directory that is not there yet is not a link, and `write` makes it.
-fn linked_dir(root: &Path, rel: &str) -> Result<Option<String>> {
+/// The first directory above `rel`, under `root`, that is a symlink. One
+/// that is not there yet, or cannot be read, is not a link: `write` makes
+/// it, or `state` reports why the copy cannot be read.
+fn linked_dir(root: &Path, rel: &str) -> Option<String> {
     let mut dir = PathBuf::new();
     let parents = Path::new(rel).parent().map(Path::components);
     for part in parents.into_iter().flatten() {
         dir.push(part);
         match fs::symlink_metadata(root.join(&dir)) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Ok(Some(dir.display().to_string()));
-            }
+            Ok(meta) if meta.file_type().is_symlink() => return Some(dir.display().to_string()),
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
-            Err(err) => {
-                return Err(err).with_context(|| format!("stat {}", root.join(&dir).display()));
-            }
+            Err(_) => break,
         }
     }
-    Ok(None)
+    None
 }
 
 fn state(dest: &Path, source: &Source) -> Result<State> {

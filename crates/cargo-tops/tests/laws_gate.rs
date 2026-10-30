@@ -194,6 +194,9 @@ fn init_fixture(name: &str, class: &str) -> Fixture {
     for plugin in PLUGINS {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
     }
+    // No test fetches Bend from the network: a gate that falls through to
+    // `fetch-bend.sh` fails at once instead of downloading.
+    stub(&fixture.bin, "curl", "#!/bin/sh\nexit 22\n");
     fixture
 }
 
@@ -947,6 +950,16 @@ fn a_failed_proof_prints_every_refusal() {
     assert!(
         !text.contains("`unreported` laws were not judged"),
         "{text}"
+    );
+
+    // A second run finds the first run's main.bend, a regular file, and
+    // writes it again: only a link is refused.
+    let (out, again) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{again}");
+    assert!(again.contains(&failure), "{failure}: {again}");
+    assert_eq!(
+        bend_runs(&fixture),
+        ["cases.bend", "main.bend", "cases.bend", "main.bend"]
     );
 }
 
