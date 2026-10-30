@@ -391,6 +391,54 @@ fn cargo_ran(fixture: &Fixture, sub: &str) -> bool {
         .any(|line| line.split_whitespace().next() == Some(sub))
 }
 
+/// The test runs the cargo stub logged, in order: `nextest run ...` and
+/// `llvm-cov nextest ...`.
+fn nextest_runs(fixture: &Fixture) -> Vec<String> {
+    cargo_log(fixture)
+        .lines()
+        .filter(|line| {
+            let mut words = line.split_whitespace();
+            match words.next() {
+                Some("nextest") => true,
+                Some("llvm-cov") => words.next() == Some("nextest"),
+                _ => false,
+            }
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// The cargo stub, except that it exits `code` (after logging) when its
+/// argv matches the shell `case` pattern `pattern`.
+fn stub_cargo_failing(fixture: &Fixture, pattern: &str, code: u8) {
+    let body = CARGO_STUB.replacen(
+        "#!/bin/sh\n",
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in {pattern})\n  printf '%s\\n' \"$*\" >> \"$CARGO_STUB_LOG\"\n  exit {code}\n  ;;\nesac\n"
+        ),
+        1,
+    );
+    stub(&fixture.bin, "cargo", &body);
+}
+
+fn set_tier(fixture: &Fixture, id: &str, tier: u8) {
+    edit_yaml(fixture, |doc| {
+        for layer in doc["layers"].as_array_mut().expect("layers") {
+            if layer["id"] == id {
+                layer["tier"] = serde_json::Value::from(tier);
+            }
+        }
+    });
+}
+
+/// The layers that run the test suite.
+const TEST_LAYERS: [&str; 4] = ["unit", "integration", "coverage", "property"];
+/// What the cargo stub logs for each test command the gate runs.
+const UNIT_RUN: &str = "nextest run --workspace --all-features --profile ci";
+const COVERAGE_RUN: &str = "llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path target/coverage/lcov.info";
+const PROPERTY_RUN: &str =
+    "nextest run --workspace --all-features --profile ci --no-tests=fail property";
+
 /// `laws evaluated: N/53` from gate output.
 fn laws_evaluated(text: &str) -> (usize, usize) {
     let line = text
@@ -505,12 +553,20 @@ fn gate_with(
     cargo_target: Option<&Path>,
     args: &[&str],
 ) -> (Output, String) {
+    let mut cmd = gate_command(fixture, path, cargo_target);
+    cmd.args(args);
+    run_gate(cmd)
+}
+
+/// The gate command every test runs. The stub `bend` is on `PATH`, which the
+/// gate reads only with `CARGO_TOPS_BEND_PATH=1`, so that is set.
+fn gate_command(fixture: &Fixture, path: OsString, cargo_target: Option<&Path>) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-tops"));
     cmd.args(["gate", "--path"])
         .arg(&fixture.repo)
-        .args(args)
         .env("PATH", path)
         .env("HOME", &fixture.home)
+        .env("CARGO_TOPS_BEND_PATH", "1")
         .env("BEND_STUB_LOG", fixture.root.join("bend.log"))
         .env("CARGO_STUB_LOG", fixture.root.join("cargo.log"))
         .env_remove("RUST_TOPS_ROOT");
@@ -522,6 +578,10 @@ fn gate_with(
             cmd.env_remove("CARGO_TARGET_DIR");
         }
     }
+    cmd
+}
+
+fn run_gate(mut cmd: Command) -> (Output, String) {
     let out = cmd.output().expect("spawn cargo-tops gate");
     let text = format!(
         "{}{}",
@@ -575,6 +635,12 @@ fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
     let (ran, of) = count(text);
     assert_eq!(ran, of, "{class}: {text}");
     assert!(!text.contains("none ran for"), "{class}: {text}");
+    // Coverage is in range, so its run is the one test run.
+    assert_eq!(nextest_runs(fixture), [COVERAGE_RUN], "{class}");
+    assert!(
+        text.contains("; unit, integration, property took the coverage run\n"),
+        "{class}: {text}"
+    );
 }
 
 /// A fresh init repo for `class`, `git init` plus one commit and no remote,
@@ -988,6 +1054,228 @@ fn a_non_refusing_case_passes_and_lists_not_evaluated_laws() {
             .any(|line| line.trim_start().starts_with("not-evaluated")
                 && line.contains("evidence_not_self_served")),
         "{text}"
+    );
+}
+
+#[test]
+fn coverage_in_range_is_the_one_test_run_of_unit_integration_and_property() {
+    let fixture = fixture_with("one-run", &TEST_LAYERS);
+    let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(nextest_runs(&fixture), [COVERAGE_RUN], "{text}");
+    for layer in ["unit", "integration", "property"] {
+        assert!(
+            text.contains(&format!(
+                "\n==> [{layer}] no command of its own: it takes the coverage run's outcome\n"
+            )),
+            "{layer}: {text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "\n[{layer}] took the coverage run's outcome: passed\n"
+            )),
+            "{layer}: {text}"
+        );
+        assert!(!text.contains(&format!("==> [{layer}] cargo")), "{text}");
+    }
+    assert!(
+        text.contains("\ncount: 1 command(s) ran; 4 of 4 enabled layer(s) at tier <= 1 ran one; unit, integration, property took the coverage run\n"),
+        "{text}"
+    );
+    assert!(text.contains("\nok: 1 command(s) passed\n"), "{text}");
+
+    // A dry run lists the one command and still is not a pass.
+    fs::remove_file(fixture.root.join("cargo.log")).expect("clear the cargo log");
+    let (out, text) = gate_with(
+        &fixture,
+        path_with_only_stubs(&fixture.bin),
+        None,
+        &["--dry-run"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("\n==> [unit] no command of its own: it takes the coverage run's outcome\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("dry-run: 1 command(s) listed, 0 run"),
+        "{text}"
+    );
+    assert!(nextest_runs(&fixture).is_empty(), "{}", cargo_log(&fixture));
+}
+
+#[test]
+fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
+    // Missing: no cargo-llvm-cov, so nothing runs the suite.
+    let missing = fixture_with("one-run-missing", &TEST_LAYERS);
+    fs::remove_file(missing.bin.join("cargo-llvm-cov")).expect("remove stub");
+    let (out, text) = gate(&missing, path_with_only_stubs(&missing.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(nextest_runs(&missing).is_empty(), "{}", cargo_log(&missing));
+    for layer in ["unit", "integration", "property"] {
+        assert!(
+            text.contains(&format!(
+                "\n  - {layer}: no command of its own; the coverage run it took is not on PATH\n"
+            )),
+            "{layer}: {text}"
+        );
+    }
+    assert!(
+        text.contains("count: 0 command(s) ran; 0 of 4 enabled layer(s) at tier <= 1 ran one; unit, integration, property took the coverage run; none ran for: unit, integration, coverage, property"),
+        "{text}"
+    );
+    assert!(!text.contains("\nok: "), "{text}");
+
+    // Failed: the coverage run exits 1, and that is what the three take.
+    let failed = fixture_with("one-run-failed", &TEST_LAYERS);
+    stub_cargo_failing(&failed, "llvm-cov*", 1);
+    let (out, text) = gate(&failed, path_with_only_stubs(&failed.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(nextest_runs(&failed), [COVERAGE_RUN], "{text}");
+    assert!(
+        text.contains("\n  - coverage: `cargo llvm-cov nextest"),
+        "{text}"
+    );
+    for layer in ["unit", "integration", "property"] {
+        assert!(
+            text.contains(&format!(
+                "\n  - {layer}: no command of its own; the coverage run it took is Failed\n"
+            )),
+            "{layer}: {text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "\n[{layer}] took the coverage run's outcome: Failed\n"
+            )),
+            "{layer}: {text}"
+        );
+    }
+    assert!(
+        text.contains("fail: 4 problem(s), 1 command(s) run"),
+        "{text}"
+    );
+}
+
+#[test]
+fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself() {
+    // Coverage above --max-tier, then coverage off: no coverage run either way.
+    for (name, edit) in [("above", true), ("off", false)] {
+        let fixture = fixture_with(&format!("one-run-{name}"), &TEST_LAYERS);
+        if edit {
+            set_tier(&fixture, "coverage", 2);
+        } else {
+            edit_yaml(&fixture, |doc| {
+                for layer in doc["layers"].as_array_mut().expect("layers") {
+                    if layer["id"] == "coverage" {
+                        layer["enabled"] = serde_json::Value::Bool(false);
+                    }
+                }
+            });
+        }
+        let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+        assert_eq!(out.status.code(), Some(0), "{name}: {text}");
+        assert_eq!(
+            nextest_runs(&fixture),
+            [UNIT_RUN, PROPERTY_RUN],
+            "{name}: {text}"
+        );
+        assert!(
+            text.contains(
+                "\n==> [unit] cargo nextest run --workspace --all-features --profile ci\n"
+            ),
+            "{name}: {text}"
+        );
+        assert!(
+            text.contains(
+                "\n==> [integration] no command of its own: it takes the unit run's outcome\n"
+            ),
+            "{name}: {text}"
+        );
+        assert!(
+            text.contains("\n[integration] took the unit run's outcome: passed\n"),
+            "{name}: {text}"
+        );
+        assert!(
+            text.contains("\n==> [property] cargo nextest run --workspace --all-features --profile ci --no-tests=fail property\n"),
+            "{name}: {text}"
+        );
+        assert!(!text.contains("==> [coverage]"), "{name}: {text}");
+        assert!(
+            text.contains("\ncount: 2 command(s) ran; 3 of 3 enabled layer(s) at tier <= 1 ran one; integration took the unit run\n"),
+            "{name}: {text}"
+        );
+        let skipped = if edit {
+            "above --max-tier 1, not judged: coverage"
+        } else {
+            "not run (enabled: false): "
+        };
+        assert!(text.contains(skipped), "{name}: {text}");
+    }
+
+    // --max-tier below coverage's tier: only unit is in range, and it runs.
+    let fixture = fixture_with("one-run-tier-0", &TEST_LAYERS);
+    set_tier(&fixture, "coverage", 1);
+    let (out, text) = gate_with(
+        &fixture,
+        path_with_only_stubs(&fixture.bin),
+        None,
+        &["--max-tier", "0"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(nextest_runs(&fixture), [UNIT_RUN], "{text}");
+    assert!(
+        text.contains("above --max-tier 0, not judged: integration, coverage, property"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\ncount: 1 command(s) ran; 1 of 1 enabled layer(s) at tier <= 0 ran one\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_property_filter_that_matches_nothing_fails() {
+    // nextest exits 4 when `--no-tests=fail` finds no test; the stub does too.
+    let fixture = fixture_with("one-run-empty-filter", &["property"]);
+    stub_cargo_failing(&fixture, "*' --no-tests=fail property'", 4);
+    let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(nextest_runs(&fixture), [PROPERTY_RUN], "{text}");
+    assert!(
+        text.contains("\n  - property: `cargo nextest run --workspace --all-features --profile ci --no-tests=fail property` failed\n"),
+        "{text}"
+    );
+    assert!(!text.contains("\nok: "), "{text}");
+}
+
+#[test]
+fn a_path_bend_runs_only_when_opted_in_and_the_log_names_it() {
+    let fixture = fixture_with("path-bend", &["laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    stub(&fixture.bin, "curl", "#!/bin/sh\nexit 22\n");
+    let mut cmd = gate_command(&fixture, path_without_bend(&fixture.bin), None);
+    cmd.env_remove("CARGO_TOPS_BEND_PATH");
+    let (out, text) = run_gate(cmd);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("laws: scripts/fetch-bend.sh failed"),
+        "{text}"
+    );
+    assert!(!text.contains("bend PATH fallback"), "{text}");
+    assert!(bend_runs(&fixture).is_empty(), "{:?}", bend_runs(&fixture));
+
+    let (_, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert!(
+        text.contains(&format!(
+            "laws: bend PATH fallback {}\n",
+            fixture.bin.join("bend").display()
+        )),
+        "{text}"
+    );
+    assert_eq!(
+        bend_runs(&fixture).first().map(String::as_str),
+        Some("cases.bend")
     );
 }
 

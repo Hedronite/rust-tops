@@ -51,17 +51,17 @@ pub fn emit(dir: &Path, force: bool) -> Result<()> {
     for skill in SKILLS {
         write_skill(dir, skill, force)?;
     }
-    write_file(dir.join("CLAUDE.md"), CLAUDE_MD, force)?;
-    write_file(dir.join("docs/REVIEW.md"), REVIEW_MD, force)?;
+    write_file(dir, "CLAUDE.md", CLAUDE_MD, force)?;
+    write_file(dir, "docs/REVIEW.md", REVIEW_MD, force)?;
     Ok(())
 }
 
 fn write_skill(dir: &Path, skill: &Skill, force: bool) -> Result<()> {
     let script = format!("{}.nu", skill.name);
     for root in SKILL_ROOTS {
-        let skill_dir = dir.join(root).join(skill.name);
-        write_file(skill_dir.join("SKILL.md"), skill.skill_md, force)?;
-        write_file(skill_dir.join(&script), skill.script, force)?;
+        let skill_dir = Path::new(root).join(skill.name);
+        write_file(dir, skill_dir.join("SKILL.md"), skill.skill_md, force)?;
+        write_file(dir, skill_dir.join(&script), skill.script, force)?;
     }
     Ok(())
 }

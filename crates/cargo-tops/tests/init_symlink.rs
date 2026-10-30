@@ -1,7 +1,8 @@
 //! `init` never writes through a symlink. A link at a destination, dangling
-//! or not, fails `init` with or without `--force`, and the file it points at
-//! is left as it was. A regular file is still skipped, or rewritten with
-//! `--force`.
+//! or not, or at a directory between `--path` and the destination, fails
+//! `init` with or without `--force`, and what it points at is left as it
+//! was. `--path` itself may be a link. A regular file is still skipped, or
+//! rewritten with `--force`.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
@@ -143,4 +144,71 @@ fn a_regular_file_is_skipped_or_rewritten_with_force() {
     );
     let mode = fs::metadata(&script).expect("stat").permissions().mode();
     assert_eq!(mode & 0o777, 0o755, "{text}");
+}
+
+#[test]
+fn a_symlinked_directory_below_the_root_fails_init_with_or_without_force() {
+    let root = scratch("linked-dir");
+    let repo = root.join("repo");
+    // `.github` points outside, at a directory that does not hold a
+    // workflow yet; `.claude` points at an empty directory.
+    let github = root.join("outside-github");
+    let claude = root.join("outside-claude");
+    fs::create_dir_all(&github).expect("mkdir");
+    fs::create_dir_all(&claude).expect("mkdir");
+    symlink(&github, repo.join(".github")).expect("symlink");
+
+    for extra in [&[][..], &["--force"]] {
+        let (ok, text) = init(&repo, extra);
+        assert!(!ok, "{extra:?}: {text}");
+        assert!(
+            text.contains(&format!(
+                "refusing to write {}: {} is a symlink, and init does not follow one",
+                repo.join(".github/workflows/rust-tops.yml").display(),
+                repo.join(".github").display()
+            )),
+            "{extra:?}: {text}"
+        );
+        assert_eq!(
+            fs::read_dir(&github).expect("read outside").count(),
+            0,
+            "{extra:?}: init wrote through the .github link"
+        );
+    }
+
+    fs::remove_file(repo.join(".github")).expect("unlink .github");
+    symlink(&claude, repo.join(".claude")).expect("symlink");
+    let (ok, text) = init(&repo, &["--skills", "--force"]);
+    assert!(!ok, "{text}");
+    assert!(
+        text.contains(&format!(
+            "{} is a symlink, and init does not follow one",
+            repo.join(".claude").display()
+        )),
+        "{text}"
+    );
+    assert_eq!(
+        fs::read_dir(&claude).expect("read outside").count(),
+        0,
+        "init wrote through the .claude link"
+    );
+}
+
+#[test]
+fn a_root_that_is_a_link_is_written_through_as_the_path_named() {
+    let root = scratch("linked-root");
+    let real = root.join("repo");
+    let link = root.join("link");
+    symlink(&real, &link).expect("symlink");
+
+    let (ok, text) = init(&link, &[]);
+    assert!(ok, "{text}");
+    assert!(
+        text.contains(&format!("wrote {}", link.join("AGENTS.md").display())),
+        "{text}"
+    );
+    assert_eq!(
+        fs::read_to_string(real.join("AGENTS.md")).expect("read"),
+        template("AGENTS.md")
+    );
 }

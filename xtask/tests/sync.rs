@@ -50,7 +50,8 @@ fn sync(root: &Path, check: bool) -> (i32, String) {
     }
 }
 
-/// The `(source, dest)` pairs of `copies.toml` under `root`.
+/// The `(source, dest)` pairs of `copies.toml` under `root`: each `to` of
+/// each `[[copy]]`, with its `from`.
 fn pairs(root: &Path) -> Vec<(String, String)> {
     let raw = fs::read_to_string(root.join("copies.toml")).expect("read copies.toml");
     let table: toml::Table = raw.parse().expect("parse copies.toml");
@@ -58,9 +59,14 @@ fn pairs(root: &Path) -> Vec<(String, String)> {
         .as_array()
         .expect("[[copy]]")
         .iter()
-        .map(|pair| {
-            let field = |key: &str| pair[key].as_str().expect(key).to_string();
-            (field("source"), field("dest"))
+        .flat_map(|entry| {
+            let from = entry["from"].as_str().expect("from").to_string();
+            entry["to"]
+                .as_array()
+                .expect("to")
+                .iter()
+                .map(move |to| (from.clone(), to.as_str().expect("to path").to_string()))
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -339,11 +345,75 @@ fn a_symlinked_copy_fails_and_sync_does_not_follow_it() {
     assert!(root.join("docs/REVIEW.md").is_dir());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlinked_directory_above_a_copy_fails_and_sync_does_not_write_through_it() {
+    let root = fixture("linked-dir");
+    let total = pairs(&root).len();
+    // Same bytes when followed: `.cursor/skills` is a link to `.agents/skills`.
+    let skills = root.join(".cursor/skills");
+    fs::remove_dir_all(&skills).expect("remove .cursor/skills");
+    std::os::unix::fs::symlink(root.join(".agents/skills"), &skills).expect("symlink");
+    // Different bytes: `config/drop-in` is a link to a drifted directory.
+    let outside = root.join("outside-drop-in");
+    fs::rename(root.join("config/drop-in"), &outside).expect("move config/drop-in");
+    flip_last_byte(&outside.join("clippy.toml"));
+    let drifted = fs::read(outside.join("clippy.toml")).expect("read");
+    std::os::unix::fs::symlink(&outside, root.join("config/drop-in")).expect("symlink");
+    let linked: Vec<String> = pairs(&root)
+        .into_iter()
+        .map(|(_, dest)| dest)
+        .filter(|dest| dest.starts_with(".cursor/skills/") || dest.starts_with("config/drop-in/"))
+        .collect();
+    assert!(linked.len() > 6, "{linked:?}");
+
+    for check in [true, false] {
+        let (code, text) = sync(&root, check);
+        assert_eq!(code, 1, "{text}");
+        for dest in &linked {
+            let dir = if dest.starts_with(".cursor/") {
+                ".cursor/skills"
+            } else {
+                "config/drop-in"
+            };
+            assert!(
+                text.contains(&format!(
+                    "  - {dest} is under {dir}, which is a symlink; copies sit in real directories, so remove the link {dir}\n"
+                )),
+                "{dest}: {text}"
+            );
+        }
+        if check {
+            assert!(
+                text.contains(&format!("{} of {total} copies differ", linked.len())),
+                "{text}"
+            );
+        } else {
+            assert!(
+                text.contains(&format!("sync: wrote 0 of {total} copies")),
+                "{text}"
+            );
+        }
+    }
+    for link in [&skills, &root.join("config/drop-in")] {
+        let meta = fs::symlink_metadata(link).expect("stat");
+        assert!(
+            meta.file_type().is_symlink(),
+            "sync replaced {}",
+            link.display()
+        );
+    }
+    assert_eq!(
+        fs::read(outside.join("clippy.toml")).expect("read"),
+        drifted
+    );
+}
+
 #[test]
 fn a_list_that_writes_a_source_or_a_non_copy_is_refused() {
     let root = fixture("bad-list");
     let pair =
-        |source: &str, dest: &str| format!("[[copy]]\nsource = \"{source}\"\ndest = \"{dest}\"\n");
+        |source: &str, dest: &str| format!("[[copy]]\nfrom = \"{source}\"\nto = [\"{dest}\"]\n");
     let drop_in = format!("{TEMPLATES}/drop-in/rust-tops.yml");
     let golden = "crates/cargo-tops/tests/golden/init/binary-cli/.github/workflows/rust-tops.yml";
     let cases = [
@@ -419,9 +489,23 @@ fn a_list_that_writes_a_source_or_a_non_copy_is_refused() {
             "copies.toml lists no copy",
         ),
         (
-            format!(
-                "[[copy]]\nsource = \"{TEMPLATES}/AGENTS.md\"\ndest = \"AGENTS.md\"\nmode = 1\n"
-            ),
+            format!("[[copy]]\nfrom = \"{TEMPLATES}/AGENTS.md\"\nto = []\n"),
+            "AGENTS.md",
+            "its `to` lists no copy",
+        ),
+        (
+            pair(&format!("{TEMPLATES}/AGENTS.md"), "AGENTS.md")
+                + &pair(&format!("{TEMPLATES}/AGENTS.md"), "docs/AGENTS.md"),
+            "AGENTS.md",
+            "listed twice; one table per source",
+        ),
+        (
+            format!("[[copy]]\nfrom = \"{TEMPLATES}/AGENTS.md\"\nto = [\"AGENTS.md\"]\nmode = 1\n"),
+            "AGENTS.md",
+            "parse",
+        ),
+        (
+            format!("[[copy]]\nsource = \"{TEMPLATES}/AGENTS.md\"\ndest = \"AGENTS.md\"\n"),
             "AGENTS.md",
             "parse",
         ),
@@ -478,7 +562,7 @@ fn a_copy_that_cannot_be_read_is_an_error() {
         let (code, text) = sync(&root, check);
         assert_eq!(code, 2, "{text}");
         assert!(text.contains("error: stat "), "{text}");
-        assert!(text.contains(".grok/skills/"), "{text}");
+        assert!(text.contains(".grok/skills"), "{text}");
         assert!(!text.contains("missing"), "{text}");
     }
     assert_eq!(

@@ -181,7 +181,9 @@ pub fn tool_binary(argv: &[String]) -> Option<String> {
 }
 
 /// Coverage is `mkdir`, then `cargo llvm-cov`, then `test -s`.
-/// The tool step names `cargo-llvm-cov`, not `mkdir`.
+/// The tool step names `cargo-llvm-cov`, not `mkdir`. It runs the suite with
+/// the same `--workspace`, `--all-features` and `--profile ci` as `unit`, so
+/// its run can stand for `unit`, `integration` and `property`.
 #[must_use]
 pub fn coverage_steps() -> Vec<Step> {
     vec![
@@ -192,6 +194,8 @@ pub fn coverage_steps() -> Vec<Step> {
             "nextest",
             "--workspace",
             "--all-features",
+            "--profile",
+            "ci",
             "--lcov",
             "--output-path",
             "target/coverage/lcov.info",
