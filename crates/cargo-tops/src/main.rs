@@ -7,6 +7,7 @@ use std::process::{Command, ExitCode};
 use std::time::SystemTime;
 
 mod config;
+mod credit;
 mod facts;
 mod laws;
 mod profile_data;
@@ -200,42 +201,31 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
         .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
         .ok_or_else(|| anyhow!("the {class} profile has no crate.msrv"))?;
 
+    // The directory named on the command line may sit behind a link; the
+    // directories below it may not, and `write_file` makes those.
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    fs::create_dir_all(dir.join(".config"))?;
-    fs::create_dir_all(dir.join(".cargo"))?;
-    fs::create_dir_all(dir.join(".github/workflows"))?;
-    write_file(dir.join("rust-tops.yaml"), &yaml, force)?;
+    write_file(dir, "rust-tops.yaml", &yaml, force)?;
     write_file(
-        dir.join("rust-toolchain.toml"),
+        dir,
+        "rust-toolchain.toml",
         &profiles::rust_toolchain_toml(&msrv),
         force,
     )?;
-    write_file(dir.join("AGENTS.md"), profiles::AGENTS_MD, force)?;
-    write_file(dir.join("clippy.toml"), profiles::CLIPPY_TOML, force)?;
+    write_file(dir, "AGENTS.md", profiles::AGENTS_MD, force)?;
+    write_file(dir, "clippy.toml", profiles::CLIPPY_TOML, force)?;
+    write_file(dir, ".config/nextest.toml", profiles::NEXTEST_TOML, force)?;
+    write_file(dir, ".cargo/mutants.toml", profiles::MUTANTS_TOML, force)?;
+    write_file(dir, ".cargo-crap.toml", profiles::CARGO_CRAP_TOML, force)?;
+    write_file(dir, "deny.toml", profiles::DENY_TOML, force)?;
     write_file(
-        dir.join(".config/nextest.toml"),
-        profiles::NEXTEST_TOML,
-        force,
-    )?;
-    write_file(
-        dir.join(".cargo/mutants.toml"),
-        profiles::MUTANTS_TOML,
-        force,
-    )?;
-    write_file(
-        dir.join(".cargo-crap.toml"),
-        profiles::CARGO_CRAP_TOML,
-        force,
-    )?;
-    write_file(dir.join("deny.toml"), profiles::DENY_TOML, force)?;
-    write_file(
-        dir.join(".github/workflows/rust-tops.yml"),
+        dir,
+        ".github/workflows/rust-tops.yml",
         &profiles::workflow_yml(class),
         force,
     )?;
-    write_file(dir.join(laws::PACK), profiles::LAWS_BEND, force)?;
-    write_file(dir.join(laws::LOCK), profiles::BEND_LOCK, force)?;
-    if write_file(dir.join(laws::FETCH), profiles::FETCH_BEND_SH, force)? {
+    write_file(dir, laws::PACK, profiles::LAWS_BEND, force)?;
+    write_file(dir, laws::LOCK, profiles::BEND_LOCK, force)?;
+    if write_file(dir, laws::FETCH, profiles::FETCH_BEND_SH, force)? {
         make_executable(&dir.join(laws::FETCH))?;
     }
     if skills {
@@ -259,13 +249,33 @@ fn dir_name(dir: &Path) -> Option<String> {
     full.file_name().map(|s| s.to_string_lossy().into_owned())
 }
 
-/// Returns whether the file was written (false when it existed and `force` was off).
+/// Writes `root/rel`. Returns whether the file was written (false when it
+/// existed and `force` was off).
 ///
-/// A symlink at `path` is refused, with or without `force`, and so is a
-/// dangling one: the write never follows a link. `force` removes the old
-/// file and writes a new one with `create_new`, which fails rather than
-/// follow a link that appears in between.
-pub(crate) fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<bool> {
+/// A symlink at the file is refused, with or without `force`, and so is a
+/// dangling one: the write never follows a link. So is a link at any
+/// directory between `root` and the file; `root` itself may be one. `force`
+/// removes the old file and writes a new one with `create_new`, which fails
+/// rather than follow a link that appears in between.
+pub(crate) fn write_file(
+    root: &Path,
+    rel: impl AsRef<Path>,
+    contents: &str,
+    force: bool,
+) -> Result<bool> {
+    let rel = rel.as_ref();
+    let path = root.join(rel);
+    let mut dir = root.to_path_buf();
+    for part in rel.parent().map(Path::components).into_iter().flatten() {
+        dir.push(part);
+        if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(anyhow!(
+                "refusing to write {}: {} is a symlink, and init does not follow one",
+                path.display(),
+                dir.display()
+            ));
+        }
+    }
     match fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => {
             return Err(anyhow!(
@@ -381,7 +391,18 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
     // Enabled, in range, and no plan: a skip is never a pass (H-37).
     let mut not_run: Vec<String> = Vec::new();
     let mut listed = 0;
+    let tests = TestCommands::new(&enabled, &report);
+    // Layers that add no command, each with the layer whose run it takes.
+    let mut shared: Vec<(&str, &str)> = Vec::new();
     for layer in enabled.iter().filter(|l| l.id != "laws") {
+        if let Some(from) = tests.shared_from(&layer.id) {
+            println!(
+                "\n==> [{}] no command of its own: it takes the {from} run's outcome",
+                layer.id
+            );
+            shared.push((&layer.id, from));
+            continue;
+        }
         let Some(plan) = plan_for(layer, &report) else {
             let tier = layer.tier.unwrap_or(0);
             println!(
@@ -437,7 +458,7 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         println!("laws evaluated: 0/{total} (dry run: bend did not run)");
         // Nothing ran, so the count is short for every layer: a dry run
         // lists the commands and is never a pass.
-        let (count, _) = command_count(0, &enabled, &[], false, max_tier);
+        let (count, _) = command_count(0, &enabled, &[], false, max_tier, &shared);
         println!("{count}");
         if not_run.is_empty() {
             println!("dry-run: {listed} command(s) listed, 0 run; a dry run is not a pass");
@@ -453,8 +474,23 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         return Ok(ExitCode::from(1));
     }
 
+    for &(layer, from) in &shared {
+        let run = tests.take(layer, from, &runs);
+        println!("[{layer}] took the {from} run's outcome: {}", run.outcome);
+        runs.push(run);
+    }
     let mut failed: Vec<String> = not_run;
-    failed.extend(runs.iter().filter_map(run_failure));
+    failed.extend(runs.iter().filter_map(|run| {
+        match shared.iter().find(|(layer, _)| *layer == run.layer) {
+            Some((_, from)) => run.outcome.fails_the_gate().then(|| {
+                format!(
+                    "{}: no command of its own; the {from} run it took is {}",
+                    run.layer, run.outcome
+                )
+            }),
+            None => run_failure(run),
+        }
+    }));
     let mut bend_ran = false;
     let evaluated = match judge {
         Some(judge) => {
@@ -488,17 +524,19 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         None => format!("laws evaluated: 0/{total} (laws layer off)"),
     };
 
-    let ran = runs.len();
+    // A layer that took another's run ran no command of its own.
+    let ran = runs.len() - shared.len();
     let vacuous = runs
         .iter()
         .filter(|run| run.outcome == Outcome::Vacuous)
         .count();
     let (count, short) = command_count(
-        ran_commands(&runs, bend_ran),
+        ran_commands(&runs, bend_ran, &shared),
         &enabled,
         &runs,
         bend_ran,
         max_tier,
+        &shared,
     );
     if short {
         failed.push(count.clone());
@@ -526,12 +564,103 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
 }
 
 /// Commands that ran: each run whose tool was found, and `bend` once when it
-/// judged the laws layer.
-fn ran_commands(runs: &[Run], bend_ran: bool) -> usize {
+/// judged the laws layer. A layer that took another layer's run ran none.
+fn ran_commands(runs: &[Run], bend_ran: bool, shared: &[(&str, &str)]) -> usize {
     runs.iter()
         .filter(|run| run.outcome != Outcome::ToolMissing)
+        .filter(|run| !shared.iter().any(|(layer, _)| *layer == run.layer))
         .count()
         + usize::from(bend_ran)
+}
+
+/// The test commands of the enabled layers in range, which decide whether a
+/// layer runs its own or takes another layer's run ([`credit`]). A layer
+/// that is off or above the range has no command here, so nothing takes its
+/// run.
+struct TestCommands {
+    coverage_in_range: bool,
+    coverage: Vec<String>,
+    unit: Vec<String>,
+    integration: Vec<String>,
+}
+
+impl TestCommands {
+    fn new(enabled: &[&config::Layer], report: &Path) -> Self {
+        let argv = |id: &str| {
+            enabled
+                .iter()
+                .find(|layer| layer.id == id)
+                .and_then(|layer| plan_for(layer, report))
+                .and_then(|plan| match plan {
+                    Plan::Chains(chains) => chains
+                        .into_iter()
+                        .flatten()
+                        .find(|step| step.kind == Kind::Tool),
+                    Plan::Mutation(_) => None,
+                })
+                .map(|step| step.argv)
+                .unwrap_or_default()
+        };
+        Self {
+            coverage_in_range: enabled.iter().any(|layer| layer.id == "coverage"),
+            coverage: argv("coverage"),
+            unit: argv("unit"),
+            integration: argv("integration"),
+        }
+    }
+
+    fn query<'a>(&'a self, layer: &'a str, runs: &[Run]) -> credit::Query<'a> {
+        let outcome = |id: &str| {
+            runs.iter()
+                .find(|run| run.layer == id)
+                .map(|run| match run.outcome {
+                    Outcome::Passed => credit::Outcome::Passed,
+                    Outcome::ToolMissing => credit::Outcome::ToolMissing,
+                    // A test run is never Vacuous; if one were, it is no pass.
+                    Outcome::Failed | Outcome::Vacuous => credit::Outcome::Failed,
+                })
+        };
+        credit::Query {
+            layer,
+            coverage_in_range: self.coverage_in_range,
+            coverage_argv: &self.coverage,
+            coverage_outcome: outcome("coverage"),
+            unit_argv: &self.unit,
+            integration_argv: &self.integration,
+            unit_outcome: outcome("unit"),
+        }
+    }
+
+    /// The layer whose run `layer` takes, or `None` when it runs its own.
+    /// Credit from coverage is only possible in range, and from `unit` only
+    /// out of it, so the range names the source.
+    fn shared_from(&self, layer: &str) -> Option<&'static str> {
+        if credit::runs_itself(&self.query(layer, &[])) {
+            None
+        } else if self.coverage_in_range {
+            Some("coverage")
+        } else {
+            Some("unit")
+        }
+    }
+
+    /// The run `layer` records once `from` has run: `from`'s command, and the
+    /// outcome [`credit::recorded_outcome`] gives. A source that did not run
+    /// is not a pass.
+    fn take(&self, layer: &str, from: &str, runs: &[Run]) -> Run {
+        let outcome = match credit::recorded_outcome(&self.query(layer, runs)) {
+            Some(credit::Outcome::Passed) => Outcome::Passed,
+            Some(credit::Outcome::ToolMissing) => Outcome::ToolMissing,
+            Some(credit::Outcome::Failed) | None => Outcome::Failed,
+        };
+        let source = runs.iter().find(|run| run.layer == from);
+        Run {
+            layer: layer.to_string(),
+            cmd: source.map(|run| run.cmd.clone()).unwrap_or_default(),
+            step: source.map(|run| run.step.clone()).unwrap_or_default(),
+            outcome,
+        }
+    }
 }
 
 /// The `count:` line, and whether it is short: an enabled layer in range
@@ -544,6 +673,7 @@ fn command_count(
     runs: &[Run],
     bend_ran: bool,
     max_tier: u8,
+    shared: &[(&str, &str)],
 ) -> (String, bool) {
     let none: Vec<&str> = enabled
         .iter()
@@ -555,11 +685,23 @@ fn command_count(
                 .any(|run| run.layer == *id && run.outcome != Outcome::ToolMissing),
         })
         .collect();
-    let line = format!(
+    let mut line = format!(
         "count: {ran} command(s) ran; {} of {} enabled layer(s) at tier <= {max_tier} ran one",
         enabled.len() - none.len(),
         enabled.len()
     );
+    // A layer that took another's run is counted when that run happened,
+    // with the run named.
+    for from in ["coverage", "unit"] {
+        let took: Vec<&str> = shared
+            .iter()
+            .filter(|(_, source)| *source == from)
+            .map(|(layer, _)| *layer)
+            .collect();
+        if !took.is_empty() {
+            let _ = write!(line, "; {} took the {from} run", took.join(", "));
+        }
+    }
     if none.is_empty() {
         (line, false)
     } else {
@@ -759,6 +901,7 @@ fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
             "--all-features",
             "--profile",
             "ci",
+            "--no-tests=fail",
             "property",
         ])],
         "security-advisory" => vec![tool(&["cargo", "deny", "check", "advisories"])],
@@ -855,7 +998,7 @@ mod tests {
 
     #[test]
     fn the_g0_strings_name_the_tool_they_run() {
-        let coverage = "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info";
+        let coverage = "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info";
         let mutation = "sh -c 'git diff origin/main...HEAD --unified=0 > /tmp/rust-tops.diff; cargo mutants --in-diff /tmp/rust-tops.diff -j 2'";
         assert_eq!(
             steps::tool_binary(&[coverage.to_string()]).as_deref(),
@@ -888,6 +1031,145 @@ mod tests {
             crap[0].last().and_then(Step::artifact_path),
             Some(Path::new("target/crap.json"))
         );
+    }
+
+    fn argv(words: &str) -> Vec<String> {
+        words.split_whitespace().map(str::to_string).collect()
+    }
+
+    const COVERAGE: &str = "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov";
+    const UNIT: &str = "cargo nextest run --workspace --all-features --profile ci";
+
+    fn tests_with(in_range: bool, coverage: &str, integration: &str) -> TestCommands {
+        TestCommands {
+            coverage_in_range: in_range,
+            coverage: argv(coverage),
+            unit: argv(UNIT),
+            integration: argv(integration),
+        }
+    }
+
+    fn run(layer: &str, outcome: Outcome) -> Run {
+        Run {
+            layer: layer.to_string(),
+            cmd: format!("{layer} cmd"),
+            step: format!("{layer} step"),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn the_shipped_test_commands_share_one_coverage_run() {
+        let layers: Vec<config::Layer> = ["unit", "integration", "coverage", "property"]
+            .into_iter()
+            .map(layer)
+            .collect();
+        let enabled: Vec<&config::Layer> = layers.iter().collect();
+        let tests = TestCommands::new(&enabled, Path::new("/r"));
+        assert!(tests.coverage_in_range);
+        assert!(
+            credit::coverage_grants_credit(&tests.coverage),
+            "{:?}",
+            tests.coverage
+        );
+        assert_eq!(tests.unit, tests.integration);
+        for id in ["unit", "integration", "property"] {
+            assert_eq!(tests.shared_from(id), Some("coverage"), "{id}");
+        }
+        for id in ["coverage", "doc", "static-lint", "crap"] {
+            assert_eq!(tests.shared_from(id), None, "{id}");
+        }
+        // Out of range, nothing names a coverage command and none is shared.
+        let unit_only: Vec<&config::Layer> = enabled
+            .iter()
+            .copied()
+            .filter(|l| l.id != "coverage")
+            .collect();
+        let tests = TestCommands::new(&unit_only, Path::new("/r"));
+        assert!(!tests.coverage_in_range);
+        assert!(tests.coverage.is_empty());
+        assert_eq!(tests.shared_from("integration"), Some("unit"));
+        assert_eq!(tests.shared_from("unit"), None);
+        assert_eq!(tests.shared_from("property"), None);
+    }
+
+    #[test]
+    fn a_coverage_command_missing_a_flag_shares_nothing() {
+        for missing in ["--workspace", "--all-features", "--profile ci"] {
+            let coverage = COVERAGE.replace(&format!(" {missing}"), "");
+            let tests = tests_with(true, &coverage, UNIT);
+            for id in ["unit", "integration", "property"] {
+                assert_eq!(tests.shared_from(id), None, "{missing}: {id}");
+            }
+        }
+        let tests = tests_with(
+            true,
+            &COVERAGE.replace("--profile ci", "--profile default"),
+            UNIT,
+        );
+        assert_eq!(tests.shared_from("unit"), None);
+    }
+
+    #[test]
+    fn integration_takes_unit_only_when_its_command_is_unit_s() {
+        let tests = tests_with(false, COVERAGE, UNIT);
+        assert_eq!(tests.shared_from("integration"), Some("unit"));
+        let tests = tests_with(false, COVERAGE, &format!("{UNIT} --test it"));
+        assert_eq!(tests.shared_from("integration"), None);
+        // Unit off or out of range: no unit command, so integration runs.
+        let mut tests = tests_with(false, COVERAGE, UNIT);
+        tests.unit.clear();
+        assert_eq!(tests.shared_from("integration"), None);
+    }
+
+    #[test]
+    fn a_shared_layer_records_its_source_run_and_no_source_is_no_pass() {
+        let tests = tests_with(true, COVERAGE, UNIT);
+        for outcome in [Outcome::Passed, Outcome::Failed, Outcome::ToolMissing] {
+            let took = tests.take("unit", "coverage", &[run("coverage", outcome)]);
+            assert_eq!(took.outcome, outcome);
+            assert_eq!(took.layer, "unit");
+            assert_eq!(took.cmd, "coverage cmd");
+            assert_eq!(took.step, "coverage step");
+        }
+        let took = tests.take("unit", "coverage", &[run("coverage", Outcome::Vacuous)]);
+        assert_eq!(took.outcome, Outcome::Failed);
+        let took = tests.take("property", "coverage", &[run("unit", Outcome::Passed)]);
+        assert_eq!(took.outcome, Outcome::Failed);
+        assert_eq!(took.cmd, "");
+        let tests = tests_with(false, COVERAGE, UNIT);
+        let took = tests.take("integration", "unit", &[run("unit", Outcome::Failed)]);
+        assert_eq!(took.outcome, Outcome::Failed);
+        assert_eq!(took.cmd, "unit cmd");
+    }
+
+    #[test]
+    fn a_shared_run_is_not_a_command_and_its_source_is_named() {
+        let runs = [
+            run("coverage", Outcome::Passed),
+            run("unit", Outcome::Passed),
+            run("doc", Outcome::ToolMissing),
+        ];
+        assert_eq!(ran_commands(&runs, false, &[("unit", "coverage")]), 1);
+        assert_eq!(ran_commands(&runs, true, &[]), 3);
+        let layers: Vec<config::Layer> =
+            ["coverage", "unit", "doc"].into_iter().map(layer).collect();
+        let enabled: Vec<&config::Layer> = layers.iter().collect();
+        let (line, short) = command_count(1, &enabled, &runs, false, 1, &[("unit", "coverage")]);
+        assert!(short);
+        assert_eq!(
+            line,
+            "count: 1 command(s) ran; 2 of 3 enabled layer(s) at tier <= 1 ran one; unit took the coverage run; none ran for: doc"
+        );
+        let (line, short) =
+            command_count(2, &enabled[..2], &runs, false, 1, &[("unit", "coverage")]);
+        assert!(!short);
+        assert!(
+            line.ends_with("ran one; unit took the coverage run"),
+            "{line}"
+        );
+        let (line, _) = command_count(2, &enabled[..2], &runs, false, 1, &[("unit", "unit")]);
+        assert!(line.ends_with("ran one; unit took the unit run"), "{line}");
     }
 
     #[test]

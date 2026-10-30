@@ -1,16 +1,18 @@
 //! `cargo run -p xtask -- sync [--check] [--root DIR]`.
 //!
-//! `copies.toml` at the repo root pairs each hand copy (`dest`) with the
-//! file it copies (`source`). Sources are under `crates/cargo-tops/templates/`,
-//! except `schema/rust-tops.schema.json`, which the template vendors.
+//! `copies.toml` at the repo root has one `[[copy]]` table per source: `from`
+//! is the file read, and `to` lists the hand copies written from it. Sources
+//! are under `crates/cargo-tops/templates/`, except
+//! `schema/rust-tops.schema.json`, which the template vendors.
 //!
 //! - `sync` rewrites every dest that is missing or differs from its source.
 //! - `sync --check` writes nothing. It exits 1 when a dest is missing, is not
 //!   a regular file, or differs from its source by one byte or by the
 //!   executable bit.
 //!
-//! A dest is a regular file. Sync does not follow or replace a symlink: it
-//! names the link and exits 1. A list that would write under `schema/`,
+//! A dest is a regular file in real directories. Sync does not follow or
+//! replace a symlink, at the dest or at a directory above it under the root:
+//! it names the link and exits 1. A list that would write under `schema/`,
 //! `.github/` or the init goldens is refused before any file is read, with
 //! exit 2.
 use anyhow::{anyhow, bail, Context, Result};
@@ -33,11 +35,18 @@ const USAGE: &str = "usage: cargo run -p xtask -- sync [--check] [--root DIR]";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct List {
-    copy: Vec<Pair>,
+    copy: Vec<Entry>,
 }
 
+/// One `[[copy]]` table: a source and every copy of it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Entry {
+    from: String,
+    to: Vec<String>,
+}
+
+/// One copy and its source.
 struct Pair {
     source: String,
     dest: String,
@@ -114,6 +123,13 @@ fn sync(root: &Path, check: bool) -> Result<bool> {
     for pair in &pairs {
         let source = read_source(&root.join(&pair.source))?;
         let dest = root.join(&pair.dest);
+        if let Some(dir) = linked_dir(root, &pair.dest) {
+            problems.push(format!(
+                "{} is under {dir}, which is a symlink; copies sit in real directories, so remove the link {dir}",
+                pair.dest
+            ));
+            continue;
+        }
         let problem = match state(&dest, &source)? {
             State::Same => continue,
             State::Symlink => "is a symlink; copies are regular files, so remove the link",
@@ -148,8 +164,28 @@ fn read_list(root: &Path) -> Result<Vec<Pair>> {
     let path = root.join(LIST);
     let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let list: List = toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    validate(&list.copy)?;
-    Ok(list.copy)
+    let mut froms = HashSet::new();
+    for entry in &list.copy {
+        if !froms.insert(entry.from.as_str()) {
+            bail!("from {}: listed twice; one table per source", entry.from);
+        }
+        if entry.to.is_empty() {
+            bail!("from {}: its `to` lists no copy", entry.from);
+        }
+    }
+    let pairs: Vec<Pair> = list
+        .copy
+        .into_iter()
+        .flat_map(|entry| {
+            let source = entry.from;
+            entry.to.into_iter().map(move |dest| Pair {
+                source: source.clone(),
+                dest,
+            })
+        })
+        .collect();
+    validate(&pairs)?;
+    Ok(pairs)
 }
 
 /// Refuse a list that could write a source, a path outside the repo, or a
@@ -203,6 +239,23 @@ fn read_source(path: &Path) -> Result<Source> {
         bytes,
         executable: executable(&meta),
     })
+}
+
+/// The first directory above `rel`, under `root`, that is a symlink. One
+/// that is not there yet, or cannot be read, is not a link: `write` makes
+/// it, or `state` reports why the copy cannot be read.
+fn linked_dir(root: &Path, rel: &str) -> Option<String> {
+    let mut dir = PathBuf::new();
+    let parents = Path::new(rel).parent().map(Path::components);
+    for part in parents.into_iter().flatten() {
+        dir.push(part);
+        match fs::symlink_metadata(root.join(&dir)) {
+            Ok(meta) if meta.file_type().is_symlink() => return Some(dir.display().to_string()),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    None
 }
 
 fn state(dest: &Path, source: &Source) -> Result<State> {
