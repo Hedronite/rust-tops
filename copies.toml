@@ -1,192 +1,128 @@
 # Hand copies for `cargo run -p xtask -- sync`.
-# `source` is read. `dest` is the regular file sync writes.
-# templates/ is the source, except the schema pair: schema/ is the source
-# and the template is the dest. Sync must not write schema/.
-# Not listed: init goldens under tests/golden, class workflow goldens,
-# rust-toolchain.toml goldens, root deny.toml, the license pairs, and the
-# kit workflow .github/workflows/rust-tops.yml.
+# One table per source. `from` is read. `to` lists the regular files sync writes.
+# Every `from` is under crates/cargo-tops/templates/ except schema/rust-tops.schema.json.
+# Nothing under schema/, .github/, or crates/cargo-tops/tests/golden/ is a `to`.
+# Not listed: init goldens, class workflow goldens, rust-toolchain.toml goldens,
+# root deny.toml, the license pairs, and the kit workflow.
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/SKILL.md"
-dest = ".agents/skills/rust-tops-adopt/SKILL.md"
+from = "crates/cargo-tops/templates/skills/rust-tops-adopt/SKILL.md"
+to = [
+    ".agents/skills/rust-tops-adopt/SKILL.md",
+    ".claude/skills/rust-tops-adopt/SKILL.md",
+    ".cursor/skills/rust-tops-adopt/SKILL.md",
+    ".grok/skills/rust-tops-adopt/SKILL.md",
+]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/SKILL.md"
-dest = ".claude/skills/rust-tops-adopt/SKILL.md"
+from = "crates/cargo-tops/templates/skills/rust-tops-adopt/rust-tops-adopt.nu"
+to = [
+    ".agents/skills/rust-tops-adopt/rust-tops-adopt.nu",
+    ".claude/skills/rust-tops-adopt/rust-tops-adopt.nu",
+    ".cursor/skills/rust-tops-adopt/rust-tops-adopt.nu",
+    ".grok/skills/rust-tops-adopt/rust-tops-adopt.nu",
+]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/SKILL.md"
-dest = ".cursor/skills/rust-tops-adopt/SKILL.md"
+from = "crates/cargo-tops/templates/skills/rust-tops-gate/SKILL.md"
+to = [
+    ".agents/skills/rust-tops-gate/SKILL.md",
+    ".claude/skills/rust-tops-gate/SKILL.md",
+    ".cursor/skills/rust-tops-gate/SKILL.md",
+    ".grok/skills/rust-tops-gate/SKILL.md",
+]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/SKILL.md"
-dest = ".grok/skills/rust-tops-adopt/SKILL.md"
+from = "crates/cargo-tops/templates/skills/rust-tops-gate/rust-tops-gate.nu"
+to = [
+    ".agents/skills/rust-tops-gate/rust-tops-gate.nu",
+    ".claude/skills/rust-tops-gate/rust-tops-gate.nu",
+    ".cursor/skills/rust-tops-gate/rust-tops-gate.nu",
+    ".grok/skills/rust-tops-gate/rust-tops-gate.nu",
+]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/rust-tops-adopt.nu"
-dest = ".agents/skills/rust-tops-adopt/rust-tops-adopt.nu"
+from = "crates/cargo-tops/templates/skills/rust-tops-review/SKILL.md"
+to = [
+    ".agents/skills/rust-tops-review/SKILL.md",
+    ".claude/skills/rust-tops-review/SKILL.md",
+    ".cursor/skills/rust-tops-review/SKILL.md",
+    ".grok/skills/rust-tops-review/SKILL.md",
+]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/rust-tops-adopt.nu"
-dest = ".claude/skills/rust-tops-adopt/rust-tops-adopt.nu"
+from = "crates/cargo-tops/templates/skills/rust-tops-review/rust-tops-review.nu"
+to = [
+    ".agents/skills/rust-tops-review/rust-tops-review.nu",
+    ".claude/skills/rust-tops-review/rust-tops-review.nu",
+    ".cursor/skills/rust-tops-review/rust-tops-review.nu",
+    ".grok/skills/rust-tops-review/rust-tops-review.nu",
+]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/rust-tops-adopt.nu"
-dest = ".cursor/skills/rust-tops-adopt/rust-tops-adopt.nu"
+from = "crates/cargo-tops/templates/drop-in/cargo-crap.toml"
+to = ["config/drop-in/cargo-crap.toml", ".cargo-crap.toml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-adopt/rust-tops-adopt.nu"
-dest = ".grok/skills/rust-tops-adopt/rust-tops-adopt.nu"
+from = "crates/cargo-tops/templates/drop-in/clippy.toml"
+to = ["config/drop-in/clippy.toml", "clippy.toml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/SKILL.md"
-dest = ".agents/skills/rust-tops-gate/SKILL.md"
+from = "crates/cargo-tops/templates/drop-in/mutants.toml"
+to = ["config/drop-in/mutants.toml", ".cargo/mutants.toml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/SKILL.md"
-dest = ".claude/skills/rust-tops-gate/SKILL.md"
+from = "crates/cargo-tops/templates/drop-in/nextest.toml"
+to = ["config/drop-in/nextest.toml", ".config/nextest.toml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/SKILL.md"
-dest = ".cursor/skills/rust-tops-gate/SKILL.md"
+from = "crates/cargo-tops/templates/drop-in/deny.toml"
+to = ["config/drop-in/deny.toml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/SKILL.md"
-dest = ".grok/skills/rust-tops-gate/SKILL.md"
+from = "crates/cargo-tops/templates/drop-in/jobs/callgrind.yml"
+to = ["config/drop-in/jobs/callgrind.yml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/rust-tops-gate.nu"
-dest = ".agents/skills/rust-tops-gate/rust-tops-gate.nu"
+from = "crates/cargo-tops/templates/drop-in/jobs/fuzz.yml"
+to = ["config/drop-in/jobs/fuzz.yml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/rust-tops-gate.nu"
-dest = ".claude/skills/rust-tops-gate/rust-tops-gate.nu"
+from = "crates/cargo-tops/templates/drop-in/jobs/kani.yml"
+to = ["config/drop-in/jobs/kani.yml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/rust-tops-gate.nu"
-dest = ".cursor/skills/rust-tops-gate/rust-tops-gate.nu"
+from = "crates/cargo-tops/templates/drop-in/jobs/miri.yml"
+to = ["config/drop-in/jobs/miri.yml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-gate/rust-tops-gate.nu"
-dest = ".grok/skills/rust-tops-gate/rust-tops-gate.nu"
+from = "crates/cargo-tops/templates/drop-in/rust-tops.yml"
+to = ["config/drop-in/rust-tops.yml"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/SKILL.md"
-dest = ".agents/skills/rust-tops-review/SKILL.md"
+from = "crates/cargo-tops/templates/LAWS.bend"
+to = ["LAWS.bend", "laws/LAWS.bend"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/SKILL.md"
-dest = ".claude/skills/rust-tops-review/SKILL.md"
+from = "crates/cargo-tops/templates/bend.lock"
+to = ["laws/bend.lock"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/SKILL.md"
-dest = ".cursor/skills/rust-tops-review/SKILL.md"
+from = "crates/cargo-tops/templates/fetch-bend.sh"
+to = ["scripts/fetch-bend.sh"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/SKILL.md"
-dest = ".grok/skills/rust-tops-review/SKILL.md"
+from = "crates/cargo-tops/templates/AGENTS.md"
+to = ["AGENTS.md"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/rust-tops-review.nu"
-dest = ".agents/skills/rust-tops-review/rust-tops-review.nu"
+from = "crates/cargo-tops/templates/CLAUDE.md"
+to = ["CLAUDE.md"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/rust-tops-review.nu"
-dest = ".claude/skills/rust-tops-review/rust-tops-review.nu"
+from = "crates/cargo-tops/templates/docs/REVIEW.md"
+to = ["docs/REVIEW.md"]
 
 [[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/rust-tops-review.nu"
-dest = ".cursor/skills/rust-tops-review/rust-tops-review.nu"
-
-[[copy]]
-source = "crates/cargo-tops/templates/skills/rust-tops-review/rust-tops-review.nu"
-dest = ".grok/skills/rust-tops-review/rust-tops-review.nu"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/cargo-crap.toml"
-dest = "config/drop-in/cargo-crap.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/clippy.toml"
-dest = "config/drop-in/clippy.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/deny.toml"
-dest = "config/drop-in/deny.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/mutants.toml"
-dest = "config/drop-in/mutants.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/nextest.toml"
-dest = "config/drop-in/nextest.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/rust-tops.yml"
-dest = "config/drop-in/rust-tops.yml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/jobs/callgrind.yml"
-dest = "config/drop-in/jobs/callgrind.yml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/jobs/fuzz.yml"
-dest = "config/drop-in/jobs/fuzz.yml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/jobs/kani.yml"
-dest = "config/drop-in/jobs/kani.yml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/jobs/miri.yml"
-dest = "config/drop-in/jobs/miri.yml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/cargo-crap.toml"
-dest = ".cargo-crap.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/mutants.toml"
-dest = ".cargo/mutants.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/nextest.toml"
-dest = ".config/nextest.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/drop-in/clippy.toml"
-dest = "clippy.toml"
-
-[[copy]]
-source = "crates/cargo-tops/templates/LAWS.bend"
-dest = "LAWS.bend"
-
-[[copy]]
-source = "crates/cargo-tops/templates/LAWS.bend"
-dest = "laws/LAWS.bend"
-
-[[copy]]
-source = "crates/cargo-tops/templates/bend.lock"
-dest = "laws/bend.lock"
-
-[[copy]]
-source = "crates/cargo-tops/templates/fetch-bend.sh"
-dest = "scripts/fetch-bend.sh"
-
-[[copy]]
-source = "crates/cargo-tops/templates/AGENTS.md"
-dest = "AGENTS.md"
-
-[[copy]]
-source = "crates/cargo-tops/templates/CLAUDE.md"
-dest = "CLAUDE.md"
-
-[[copy]]
-source = "crates/cargo-tops/templates/docs/REVIEW.md"
-dest = "docs/REVIEW.md"
-
-[[copy]]
-source = "schema/rust-tops.schema.json"
-dest = "crates/cargo-tops/templates/rust-tops.schema.json"
-
+from = "schema/rust-tops.schema.json"
+to = ["crates/cargo-tops/templates/rust-tops.schema.json"]
