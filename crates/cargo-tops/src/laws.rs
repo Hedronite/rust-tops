@@ -4,7 +4,8 @@
 //! [`crate::facts`] chose as one Bend program, and runs `bend` on it. The
 //! program's only obligation is that each verdict is not `Refuse`; the
 //! verdicts themselves come from `LAWS.bend`, and the pass or fail is
-//! `bend`'s exit status.
+//! `bend`'s exit status on that proof. When the proof fails, one more run
+//! of `main` alone prints every verdict. That run does not decide pass or fail.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -256,7 +257,7 @@ def not_refuse(v: Laws.Verdict) -> Bool:
 ";
 
 /// The case file: one obligation per checked law, and a `main` that returns
-/// every verdict so `bend` prints them.
+/// every verdict so `bend` prints them when the proof passes.
 fn program(rows: &[Row]) -> String {
     let mut out = PROGRAM_HEAD.to_string();
     let mut calls = Vec::new();
@@ -264,7 +265,7 @@ fn program(rows: &[Row]) -> String {
         let Some((fun, ctor)) = row.case else {
             continue;
         };
-        let call = format!("Laws.{fun}(Laws.{ctor}{{}})");
+        let call = verdict_call(fun, ctor);
         let read = row.read.join(", ").replace(['\n', '\r'], " ");
         let _ = write!(
             out,
@@ -273,6 +274,33 @@ fn program(rows: &[Row]) -> String {
         );
         calls.push(call);
     }
+    write_main(&mut out, &calls);
+    out
+}
+
+/// `main` and nothing else. Bend prints every verdict instead of stopping
+/// at the first `law` that refuses. This file is not a proof.
+fn main_program(rows: &[Row]) -> String {
+    let mut out = "\
+# Written by `cargo tops gate` after the proof run failed.
+# `main` prints every verdict. This run does not decide pass or fail.
+import Base
+import ./LAWS.bend as Laws
+"
+    .to_string();
+    let calls = rows
+        .iter()
+        .filter_map(|row| row.case.map(|(fun, ctor)| verdict_call(fun, ctor)))
+        .collect::<Vec<_>>();
+    write_main(&mut out, &calls);
+    out
+}
+
+fn verdict_call(fun: &str, ctor: &str) -> String {
+    format!("Laws.{fun}(Laws.{ctor}{{}})")
+}
+
+fn write_main(out: &mut String, calls: &[String]) {
     match calls.len() {
         0 => {}
         1 => {
@@ -283,7 +311,6 @@ fn program(rows: &[Row]) -> String {
             let _ = write!(out, "\ndef main() -> {types}:\n  ({})\n", calls.join(", "));
         }
     }
-    out
 }
 
 /// Verdict names in the order `bend` printed `main`'s value.
@@ -316,18 +343,33 @@ impl Judged<'_> {
         if row.case.is_none() {
             return "not-evaluated".into();
         }
+        if let Some(verdict) = self.verdicts.get(checked_index) {
+            return verdict.clone();
+        }
         if self.passed {
-            return self
-                .verdicts
-                .get(checked_index)
-                .cloned()
-                .unwrap_or_else(|| "unread".into());
+            return "unread".into();
         }
         if self.failed_law.as_deref() == Some(row.law.as_str()) {
             "Refuse".into()
         } else {
             "unreported".into()
         }
+    }
+
+    /// Every checked law whose printed verdict is `Refuse`.
+    fn refusals(&self) -> Vec<&str> {
+        let mut index = 0;
+        let mut names = Vec::new();
+        for row in self.rows {
+            if row.case.is_none() {
+                continue;
+            }
+            if self.status(row, index) == "Refuse" {
+                names.push(row.law.as_str());
+            }
+            index += 1;
+        }
+        names
     }
 
     fn print(&self) {
@@ -356,7 +398,7 @@ impl Judged<'_> {
         println!(
             "laws: {checked} checked by bend, {skipped} not-evaluated (not checked, not passed)"
         );
-        if !self.passed && self.failed_law.is_some() {
+        if !self.passed && self.verdicts.len() != checked {
             println!("laws: bend stops at the first refusal; `unreported` laws were not judged");
         }
     }
@@ -394,8 +436,33 @@ impl Judged<'_> {
     }
 }
 
+/// Second `bend` run: `main.bend` has no `law` obligation, so Bend prints
+/// every verdict instead of stopping at the first refusal. The returned
+/// names are for the report. The caller does not use this exit status.
+fn verdicts_from_main(judge: &Judge, out: &Path, rows: &[Row]) -> Result<Vec<String>> {
+    fs::write(out.join("main.bend"), main_program(rows))
+        .with_context(|| format!("write {}/main.bend", out.display()))?;
+    let output = Command::new(&judge.bend)
+        .arg("main.bend")
+        .current_dir(out)
+        .env("BEND_NO_TELEMETRY", "1")
+        .output()
+        .with_context(|| format!("spawn {}", judge.bend.display()))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(printed_verdicts(&text)
+        .into_iter()
+        .map(str::to_string)
+        .collect())
+}
+
 /// Write the case file, run `bend`, print and record the result. Returns
 /// the gate failures, empty when `bend` accepted every checked law.
+/// A failing proof is followed by [`verdicts_from_main`]; that run only
+/// fills the verdict column.
 pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
     let Ok(pack) = fs::read_to_string(ctx.dir.join(PACK)) else {
         return Ok(vec![format!(
@@ -433,11 +500,24 @@ pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
     );
 
     let checked = rows.iter().filter(|row| row.case.is_some()).count();
-    let verdicts: Vec<String> = printed_verdicts(&text)
+    let proof_verdicts: Vec<String> = printed_verdicts(&text)
         .into_iter()
         .map(str::to_string)
         .collect();
-    let readable = verdicts.len() == checked && !verdicts.iter().any(|v| v == "Refuse");
+    // A failed proof stops at the first refusal, so this output does not
+    // name the later laws. Run `main` alone and print those verdicts. The
+    // proof run's status is still what passes or fails the gate.
+    let verdicts = if !output.status.success() && checked > 0 {
+        let printed = verdicts_from_main(judge, &out, &rows)?;
+        if printed.len() == checked {
+            printed
+        } else {
+            proof_verdicts
+        }
+    } else {
+        proof_verdicts
+    };
+    let readable = verdicts.len() == checked && !verdicts.iter().any(|verdict| verdict == "Refuse");
     let judged = Judged {
         rows: &rows,
         passed: output.status.success() && readable,
@@ -451,9 +531,15 @@ pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
         for line in text.lines() {
             println!("    | {line}");
         }
-        failures.push(match &judged.failed_law {
-            Some(law) => format!("laws: bend refused {law} ({shown}/cases.bend)"),
-            None => format!("laws: bend exited {} on {shown}/cases.bend", output.status),
+        failures.push(match judged.refusals().as_slice() {
+            [] => match &judged.failed_law {
+                Some(law) => format!("laws: bend refused {law} ({shown}/cases.bend)"),
+                None => format!("laws: bend exited {} on {shown}/cases.bend", output.status),
+            },
+            names => format!(
+                "laws: bend refused {} ({shown}/cases.bend)",
+                names.join(", ")
+            ),
         });
     } else if !readable {
         failures.push(format!(
@@ -518,6 +604,38 @@ mod tests {
     fn single_checked_law_returns_one_verdict() {
         let text = program(&[row("fmt_is_tier0", Some(("fmt_verdict", "FmtTier0")))]);
         assert!(text.contains("def main() -> Laws.Verdict:\n  Laws.fmt_verdict(Laws.FmtTier0{})\n"));
+    }
+
+    #[test]
+    fn main_program_prints_every_verdict_and_states_no_law() {
+        let rows = [
+            row("fmt_is_tier0", Some(("fmt_verdict", "FmtTier0"))),
+            row("evidence_not_self_served", None),
+            row("lock_honesty", Some(("lock_verdict", "LockDrift"))),
+        ];
+        let text = main_program(&rows);
+        assert!(text.contains("import ./LAWS.bend as Laws"));
+        assert!(!text.contains("law case_"), "{text}");
+        assert!(text.contains(
+            "def main() -> Laws.Verdict & Laws.Verdict:\n  (Laws.fmt_verdict(Laws.FmtTier0{}), Laws.lock_verdict(Laws.LockDrift{}))"
+        ));
+    }
+
+    #[test]
+    fn a_failed_proof_reports_every_printed_verdict() {
+        let rows = [
+            row("fmt_is_tier0", Some(("fmt_verdict", "FmtTier0"))),
+            row("lock_honesty", Some(("lock_verdict", "LockDrift"))),
+        ];
+        let judged = Judged {
+            rows: &rows,
+            verdicts: vec!["Refuse".into(), "Allow".into()],
+            passed: false,
+            failed_law: Some("fmt_is_tier0".into()),
+        };
+        assert!(!judged.passed);
+        assert_eq!(judged.status(&rows[0], 0), "Refuse");
+        assert_eq!(judged.status(&rows[1], 1), "Allow");
     }
 
     #[test]

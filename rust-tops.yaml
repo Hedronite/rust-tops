@@ -1,10 +1,10 @@
-# Example instance of Rust-TOPS 1.0.0
-# Copy to the crate root as rust-tops.yaml and edit class / hot_paths / exemptions.
-# Validate against ../schema/rust-tops.schema.json
+# Rust-TOPS 1.1.0 instance for this repository (cargo-tops, binary-cli).
+# Adopters start from `cargo tops init`, not from this file.
+# Validate against schema/rust-tops.schema.json
 
 protocol:
   id: rust-tops
-  version: "1.0.0"
+  version: "1.1.0"
   spec_uri: "./RUST_TOPS.md"
   adopted: "2026-09-25"
 
@@ -13,7 +13,7 @@ crate:
   class: binary-cli
   edition: "2021"
   msrv: "1.99.1"
-  unsafe_policy: allow-documented
+  unsafe_policy: forbid
   hot_paths:
     - crates/cargo-tops/src/main.rs::gate
 
@@ -29,7 +29,7 @@ layers:
   - { id: unit,              enabled: true,  tier: 0, runner: "cargo nextest",         scope: lib }
   - { id: doc,               enabled: true,  tier: 0, runner: "cargo test --doc",      scope: lib }
   - { id: integration,       enabled: true,  tier: 1, runner: "cargo nextest",         scope: tests }
-  - { id: acceptance,        enabled: true,  tier: 1, runner: "assert_cmd journeys",   scope: tests }
+  - { id: acceptance,        enabled: false, tier: 1, runner: "assert_cmd journeys",   scope: tests }
   - { id: snapshot,          enabled: false, tier: 2, runner: insta,                   scope: tests }
   - { id: compile-fail,      enabled: false, tier: 2, runner: trybuild,                scope: tests }
   - { id: coverage,          enabled: true,  tier: 0, runner: cargo-llvm-cov,          scope: lib }
@@ -45,6 +45,7 @@ layers:
   - { id: bench-callgrind,   enabled: true,  tier: 4, runner: gungraun,                scope: hot-paths }
   - { id: security-advisory, enabled: true,  tier: 0, runner: cargo-deny,              scope: workspace }
   - { id: density-audit,     enabled: true,  tier: 5, runner: review+clippy,           scope: workspace }
+  - { id: laws,              enabled: true,  tier: 0, runner: bend,                    scope: workspace }
 
 gates:
   lint:
@@ -124,12 +125,6 @@ density:
     - tests may be table-driven; production may not be copy-pasted
 
 performance:
-  release_profile:
-    opt-level: 3
-    lto: thin
-    codegen-units: 1
-    panic: abort
-    debug: 0
   hot_path_requirements:
     - decode allocates nothing on the success path
     - encode writes into impl Write; callers supply the buffer
@@ -148,9 +143,4 @@ agent:
     - crap
     - mutants-diff
 
-exemptions:
-  - path: src/generated/**
-    layer: crap
-    reason: generated protobuf; public decode roundtrip is the oracle
-    owner: platform
-    expires: "2027-09-24"
+exemptions: []

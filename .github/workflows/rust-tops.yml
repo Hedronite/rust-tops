@@ -252,6 +252,42 @@ jobs:
       - name: Laws layer on an adopter
         run: cargo test -p cargo-tops --locked --test laws_gate -- --ignored
 
+  # Runs this repository's own gate: every enabled layer at tier <= 1 in
+  # rust-tops.yaml, laws included. Not a --dry-run. fetch-depth: 0 because
+  # the mutation layer diffs against origin/main. cargo-tops is built from
+  # this checkout, so the gate under test is the one on this commit. Bend is
+  # not preinstalled: the laws layer fetches it by laws/bend.lock, as it
+  # does on an adopter.
+  tops-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: 1.99.1
+          components: clippy, rustfmt, llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deny@0.18.9
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: nextest@0.9.145
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-crap@0.5.0
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-mutants@27.1.0
+      - run: cargo install --path crates/cargo-tops --locked
+      - run: cargo tops gate --max-tier 1
+
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
   # features usually need no FFI sysdeps. Do not mark required until one
   # GHA run has a measured wall time.

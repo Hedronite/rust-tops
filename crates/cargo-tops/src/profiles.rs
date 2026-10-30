@@ -150,8 +150,9 @@ mod tests {
                 }
             }
         }
-        // fmt-clippy-deny, nextest, msrv, feature-matrix, coverage-crap, kani, callgrind-hot
-        assert_eq!(pinned_jobs, 7);
+        // fmt-clippy-deny, nextest, msrv, feature-matrix, coverage-crap,
+        // tops-gate, kani, callgrind-hot
+        assert_eq!(pinned_jobs, 8);
     }
 
     #[test]

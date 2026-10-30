@@ -3,6 +3,8 @@
 //! version in `rust-tops.yaml`, the Bend kit (`laws/bend.lock`,
 //! `scripts/fetch-bend.sh`), `rust-toolchain.toml`, and the per-class
 //! workflow (drop-in floor plus the jobs §4 requires).
+//! Re-recorded for the drop-in pack: `laws` off (D3) and the drop-in
+//! `tops-gate` job.
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
