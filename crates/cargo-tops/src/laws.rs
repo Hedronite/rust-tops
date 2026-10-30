@@ -130,26 +130,38 @@ fn home_bend() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".bend/bin/bend")).filter(|path| path.is_file())
 }
 
-fn path_bend() -> Option<PathBuf> {
+fn path_bend_opt_in(want: &str) -> Option<PathBuf> {
+    if std::env::var("CARGO_TOPS_BEND_PATH").ok().as_deref() != Some("1") {
+        return None;
+    }
     let out = Command::new("sh")
         .args(["-c", "command -v bend"])
         .output()
         .ok()?;
     let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (out.status.success() && !found.is_empty()).then(|| PathBuf::from(found))
+    if !out.status.success() || found.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(found);
+    if !reports_version(&path, want) {
+        return None;
+    }
+    println!("laws: bend PATH fallback {}", path.display());
+    Some(path)
 }
 
-/// Find the pinned Bend in `$HOME/.bend` first. A `sh -c` search of `PATH`
-/// runs only when that pin is missing or reports the wrong version. Else run
-/// the vendored `scripts/fetch-bend.sh` (sha256-checked, no `curl | sh`).
-/// Every miss is a failed gate, never a skip (H-37).
+/// Find the pinned Bend in `$HOME/.bend`. A `sh -c` search of `PATH` runs
+/// only when `CARGO_TOPS_BEND_PATH=1` and that pin is missing or the wrong
+/// version. The fallback log names the binary. Else run the vendored
+/// `scripts/fetch-bend.sh` (sha256-checked, no `curl | sh`). Every miss is
+/// a failed gate, never a skip (H-37).
 pub fn ensure_bend(dir: &Path) -> Result<Judge, String> {
     let raw = fs::read_to_string(dir.join(LOCK))
         .map_err(|_| format!("laws: {LOCK} is missing; run `cargo tops init` to write it"))?;
     let want = lock_version(&raw).ok_or_else(|| format!("laws: {LOCK} has no [bend] version"))?;
     let found = home_bend()
         .filter(|bend| reports_version(bend, &want))
-        .or_else(|| path_bend().filter(|bend| reports_version(bend, &want)));
+        .or_else(|| path_bend_opt_in(&want));
     if let Some(bend) = found {
         return Ok(Judge {
             bend,
@@ -436,18 +448,32 @@ impl Judged<'_> {
     }
 }
 
-/// Second `bend` run: `main.bend` has no `law` obligation, so Bend prints
-/// every verdict instead of stopping at the first refusal. The returned
-/// names are for the report. The caller does not use this exit status.
-/// Write `contents` only when `path` is not a symlink. `symlink_metadata`
-/// does not follow the link, and a symlink is an error before `fs::write`.
+/// Write `contents` to a new file. A symlink is refused and not followed.
+/// An existing regular file is removed, then `create_new` creates the
+/// replacement, so a link that appears in between fails the create instead
+/// of being written through.
 fn write_refusing_symlink(path: &Path, contents: &str) -> Result<()> {
-    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        anyhow::bail!("{} is a symlink", path.display());
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            anyhow::bail!(
+                "refusing to write {}: it is a symlink, and the laws layer does not follow one",
+                path.display()
+            );
+        }
+        Ok(_) => fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?,
+        Err(_) => {}
     }
-    fs::write(path, contents).with_context(|| format!("write {}", path.display()))
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("create {}", path.display()))?;
+    std::io::Write::write_all(&mut file, contents.as_bytes())
+        .with_context(|| format!("write {}", path.display()))
 }
 
+/// Second `bend` run. `main.bend` has no `law` obligation, so Bend prints
+/// every verdict. The caller does not use this exit status.
 fn verdicts_from_main(judge: &Judge, out: &Path, rows: &[Row]) -> Result<Vec<String>> {
     let path = out.join("main.bend");
     write_refusing_symlink(&path, &main_program(rows))?;
