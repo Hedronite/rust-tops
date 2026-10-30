@@ -139,17 +139,17 @@ fn path_bend() -> Option<PathBuf> {
     (out.status.success() && !found.is_empty()).then(|| PathBuf::from(found))
 }
 
-/// Find the pinned Bend on `PATH` or in `$HOME/.bend`, else run the vendored
-/// `scripts/fetch-bend.sh` (sha256-checked, no `curl | sh`). Every miss is a
-/// failed gate, never a skip (H-37).
+/// Find the pinned Bend in `$HOME/.bend` first. A `sh -c` search of `PATH`
+/// runs only when that pin is missing or reports the wrong version. Else run
+/// the vendored `scripts/fetch-bend.sh` (sha256-checked, no `curl | sh`).
+/// Every miss is a failed gate, never a skip (H-37).
 pub fn ensure_bend(dir: &Path) -> Result<Judge, String> {
     let raw = fs::read_to_string(dir.join(LOCK))
         .map_err(|_| format!("laws: {LOCK} is missing; run `cargo tops init` to write it"))?;
     let want = lock_version(&raw).ok_or_else(|| format!("laws: {LOCK} has no [bend] version"))?;
-    let found = path_bend()
-        .into_iter()
-        .chain(home_bend())
-        .find(|bend| reports_version(bend, &want));
+    let found = home_bend()
+        .filter(|bend| reports_version(bend, &want))
+        .or_else(|| path_bend().filter(|bend| reports_version(bend, &want)));
     if let Some(bend) = found {
         return Ok(Judge {
             bend,
@@ -439,9 +439,18 @@ impl Judged<'_> {
 /// Second `bend` run: `main.bend` has no `law` obligation, so Bend prints
 /// every verdict instead of stopping at the first refusal. The returned
 /// names are for the report. The caller does not use this exit status.
+/// Write `contents` only when `path` is not a symlink. `symlink_metadata`
+/// does not follow the link, and a symlink is an error before `fs::write`.
+fn write_refusing_symlink(path: &Path, contents: &str) -> Result<()> {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        anyhow::bail!("{} is a symlink", path.display());
+    }
+    fs::write(path, contents).with_context(|| format!("write {}", path.display()))
+}
+
 fn verdicts_from_main(judge: &Judge, out: &Path, rows: &[Row]) -> Result<Vec<String>> {
-    fs::write(out.join("main.bend"), main_program(rows))
-        .with_context(|| format!("write {}/main.bend", out.display()))?;
+    let path = out.join("main.bend");
+    write_refusing_symlink(&path, &main_program(rows))?;
     let output = Command::new(&judge.bend)
         .arg("main.bend")
         .current_dir(out)
@@ -718,5 +727,22 @@ mod tests {
         let laws = pack_laws(profiles::LAWS_BEND);
         assert_eq!(laws.len(), 53);
         assert_eq!(laws[0], "evidence_not_self_served");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn main_bend_write_refuses_a_symlink_and_does_not_follow_it() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("cargo-tops-main-bend-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real.bend");
+        let link = dir.join("main.bend");
+        fs::write(&real, "kept").unwrap();
+        symlink(&real, &link).unwrap();
+        let err = write_refusing_symlink(&link, "replaced").unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert_eq!(fs::read_to_string(&real).unwrap(), "kept");
+        let _ = fs::remove_dir_all(&dir);
     }
 }
