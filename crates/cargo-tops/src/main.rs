@@ -250,7 +250,6 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
     Ok(())
 }
 
-/// Returns whether the file was written (false when it existed and `force` was off).
 /// The last path component of `dir`, which need not exist yet.
 fn dir_name(dir: &Path) -> Option<String> {
     let full = dir
@@ -260,15 +259,39 @@ fn dir_name(dir: &Path) -> Option<String> {
     full.file_name().map(|s| s.to_string_lossy().into_owned())
 }
 
+/// Returns whether the file was written (false when it existed and `force` was off).
+///
+/// A symlink at `path` is refused, with or without `force`, and so is a
+/// dangling one: the write never follows a link. `force` removes the old
+/// file and writes a new one with `create_new`, which fails rather than
+/// follow a link that appears in between.
 pub(crate) fn write_file(path: PathBuf, contents: &str, force: bool) -> Result<bool> {
-    if path.exists() && !force {
-        println!("skip existing {}", path.display());
-        return Ok(false);
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(anyhow!(
+                "refusing to write {}: it is a symlink, and init does not follow one",
+                path.display()
+            ));
+        }
+        Ok(_) if !force => {
+            println!("skip existing {}", path.display());
+            return Ok(false);
+        }
+        Ok(_) => fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?,
+        // Nothing there, or nothing that can be read: `create_new` below
+        // either makes the file or fails, and never follows a link.
+        Err(_) => {}
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, contents).with_context(|| format!("write {}", path.display()))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create {}", path.display()))?;
+    std::io::Write::write_all(&mut file, contents.as_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
     println!("wrote {}", path.display());
     Ok(true)
 }
@@ -341,6 +364,16 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
             "above --max-tier {max_tier}, not judged: {}",
             above.join(", ")
         );
+    }
+    // A layer turned off still shows in the run: it is not run, not omitted.
+    let disabled: Vec<&str> = cfg
+        .layers
+        .iter()
+        .filter(|l| !l.enabled)
+        .map(|l| l.id.as_str())
+        .collect();
+    if !disabled.is_empty() {
+        println!("not run (enabled: false): {}", disabled.join(", "));
     }
 
     let started = SystemTime::now();

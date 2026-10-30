@@ -242,6 +242,18 @@ fn yaml_doc(fixture: &Fixture) -> serde_json::Value {
     serde_saphyr::from_str(&raw).expect("yaml parses")
 }
 
+/// The line the gate prints for the layers the yaml turns off, in yaml order.
+fn disabled_line(fixture: &Fixture) -> String {
+    let off: Vec<String> = yaml_doc(fixture)["layers"]
+        .as_array()
+        .expect("layers")
+        .iter()
+        .filter(|layer| layer["enabled"] == false)
+        .map(|layer| layer["id"].as_str().expect("layer id").to_string())
+        .collect();
+    format!("\nnot run (enabled: false): {}\n", off.join(", "))
+}
+
 fn layer<'a>(doc: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
     doc["layers"]
         .as_array()
@@ -533,11 +545,15 @@ fn law<'v>(cases: &'v serde_json::Value, name: &str) -> &'v serde_json::Value {
 }
 
 /// What every fresh-init gate run says, laws on or off: nothing NotRun,
-/// nothing above tier 1 run, the mutation layer `Vacuous` with no
-/// `origin/main`, and a count that is not short.
+/// `acceptance` listed as off and never run, nothing above tier 1 run, the
+/// mutation layer `Vacuous` with no `origin/main`, and a count that is not
+/// short.
 fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
     assert!(!text.contains("NotRun"), "{class}: {text}");
-    assert!(!text.contains("acceptance"), "{class}: {text}");
+    assert!(!text.contains("[acceptance]"), "{class}: {text}");
+    let off = disabled_line(fixture);
+    assert!(off.contains(": acceptance, "), "{class}: {off}");
+    assert!(text.contains(&off), "{class}: {text}");
     assert!(text.contains(ABOVE_TIER_1), "{class}: {text}");
     assert!(
         !cargo_ran(fixture, "kani"),
@@ -1024,6 +1040,53 @@ fn a_disabled_laws_layer_never_calls_bend() {
         "bend was called with laws off"
     );
     assert!(!fixture.repo.join("target/rust-tops").exists());
+}
+
+#[test]
+fn a_disabled_layer_is_printed_as_not_run() {
+    // Only static-lint is on. Every other layer, in range or above it, is
+    // named once as not run, and none of them is counted short.
+    let fixture = fixture_with("disabled", &["static-lint"]);
+    adopt(&fixture, Origin::None);
+    let off = disabled_line(&fixture);
+    for id in ["unit", "coverage", "mutation", "acceptance", "fuzz", "laws"] {
+        assert!(
+            off.contains(&format!(" {id},")) || off.ends_with(&format!(" {id}\n")),
+            "{id}: {off}"
+        );
+    }
+    for args in [&["--dry-run"][..], &[]] {
+        let (out, text) = gate_with(&fixture, path_with_only_stubs(&fixture.bin), None, args);
+        assert!(text.contains(&off), "{args:?}: {text}");
+        assert_eq!(
+            text.matches("not run (enabled: false)").count(),
+            1,
+            "{text}"
+        );
+        assert!(!text.contains("==> [unit]"), "{text}");
+        assert!(!text.contains("above --max-tier"), "{text}");
+        let code = if args.is_empty() { 0 } else { 1 };
+        assert_eq!(out.status.code(), Some(code), "{args:?}: {text}");
+    }
+    let (_, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    assert!(
+        text.contains("count: 3 command(s) ran; 1 of 1 enabled layer(s) at tier <= 1 ran one\n"),
+        "{text}"
+    );
+
+    // With every layer on, there is no such line.
+    edit_yaml(&fixture, |doc| {
+        for layer in doc["layers"].as_array_mut().expect("layers") {
+            layer["enabled"] = serde_json::Value::Bool(true);
+        }
+    });
+    let (_, text) = gate_with(
+        &fixture,
+        path_with_only_stubs(&fixture.bin),
+        None,
+        &["--dry-run"],
+    );
+    assert!(!text.contains("not run (enabled: false)"), "{text}");
 }
 
 #[test]
