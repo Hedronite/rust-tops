@@ -84,7 +84,7 @@ fn tokens(argv: &[String]) -> Vec<&str> {
 }
 
 fn has(tokens: &[&str], flag: &str) -> bool {
-    tokens.iter().any(|token| *token == flag)
+    tokens.contains(&flag)
 }
 
 fn has_profile(tokens: &[&str], profile: &str) -> bool {
