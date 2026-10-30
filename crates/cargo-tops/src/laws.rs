@@ -139,7 +139,7 @@ fn path_bend_opt_in(want: &str) -> Option<PathBuf> {
         .output()
         .ok()?;
     let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if !out.status.success() || found.is_empty() {
+    if found.is_empty() {
         return None;
     }
     let path = PathBuf::from(found);
