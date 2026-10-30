@@ -53,6 +53,8 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
+      # Hand copies match their source under crates/cargo-tops/templates/.
+      - run: cargo run -p xtask --locked -- sync --check
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
