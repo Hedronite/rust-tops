@@ -792,6 +792,45 @@ mod tests {
     }
 
     #[test]
+    fn a_second_project_on_the_same_thread_spawns_its_own_metadata() {
+        let root =
+            std::env::temp_dir().join(format!("cargo-tops-two-projects-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let alpha = root.join("alpha");
+        let beta = root.join("beta");
+        for (dir, name) in [(&alpha, "alpha"), (&beta, "beta")] {
+            fs::create_dir_all(dir.join("src")).unwrap();
+            fs::write(
+                dir.join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"),
+            )
+            .unwrap();
+            fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
+        }
+        let _env = EnvGuard::remove("CARGO_TARGET_DIR");
+        META_CACHE.with(|slot| *slot.borrow_mut() = None);
+        let before = META_SPAWNS.with(|count| count.get());
+        let first = report_dir(&alpha);
+        let after_first = META_SPAWNS.with(|count| count.get());
+        let second = report_dir(&beta);
+        let after_second = META_SPAWNS.with(|count| count.get());
+        assert_eq!(
+            after_first - before,
+            1,
+            "the first project did not spawn metadata"
+        );
+        assert_eq!(
+            after_second - after_first,
+            1,
+            "the second project reused the first project's metadata"
+        );
+        assert_ne!(first, second);
+        assert!(first.ends_with("alpha/target/rust-tops"), "{first:?}");
+        assert!(second.ends_with("beta/target/rust-tops"), "{second:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_nonempty_cargo_target_dir_skips_metadata_and_moves_artifacts() {
         let project =
             std::env::temp_dir().join(format!("cargo-tops-env-target-{}", std::process::id()));
