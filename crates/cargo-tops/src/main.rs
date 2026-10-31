@@ -333,7 +333,11 @@ impl Parent {
     fn open(root: &Path, rel: &Path, path: &Path) -> Result<Self> {
         use rustix::fs::{mkdirat, openat, Mode, OFlags, CWD};
         use rustix::io::Errno;
-        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+        // `union`, not `|`: on disjoint bits a mutated `^` is the same set,
+        // a mutant no test can catch.
+        let flags = OFlags::RDONLY
+            .union(OFlags::DIRECTORY)
+            .union(OFlags::CLOEXEC);
         let mut fd = openat(CWD, root, flags, Mode::empty())
             .with_context(|| format!("open {}", root.display()))?;
         let mut dir = root.to_path_buf();
@@ -344,7 +348,7 @@ impl Parent {
                 Ok(()) | Err(Errno::EXIST) => {}
                 Err(err) => return Err(err).with_context(|| format!("create {}", dir.display())),
             }
-            fd = match openat(&fd, name, flags | OFlags::NOFOLLOW, Mode::empty()) {
+            fd = match openat(&fd, name, flags.union(OFlags::NOFOLLOW), Mode::empty()) {
                 Ok(next) => next,
                 Err(Errno::LOOP | Errno::NOTDIR | Errno::NOENT) => return Err(refused(path, &dir)),
                 Err(err) => return Err(err).with_context(|| format!("open {}", dir.display())),
@@ -370,8 +374,11 @@ impl Parent {
 
     fn create_new(&self, name: &std::ffi::OsStr) -> std::io::Result<fs::File> {
         use rustix::fs::{openat, Mode, OFlags};
-        let flags =
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let flags = OFlags::WRONLY
+            .union(OFlags::CREATE)
+            .union(OFlags::EXCL)
+            .union(OFlags::NOFOLLOW)
+            .union(OFlags::CLOEXEC);
         let fd = openat(&self.0, name, flags, Mode::from_raw_mode(0o666))?;
         Ok(fs::File::from(fd))
     }
@@ -379,10 +386,14 @@ impl Parent {
 
 /// The directory a [`write_file`] writes into, as a path off Unix.
 #[cfg(not(unix))]
-struct Parent(PathBuf);
+type Parent = PathParent;
 
-#[cfg(not(unix))]
-impl Parent {
+/// The path walk. It is built on Unix too, so its tests run there.
+#[cfg_attr(all(unix, not(test)), allow(dead_code, reason = "the walk off Unix"))]
+struct PathParent(PathBuf);
+
+#[cfg_attr(all(unix, not(test)), allow(dead_code, reason = "the walk off Unix"))]
+impl PathParent {
     /// Each directory between `root` and the file is made with `create_dir`
     /// before anything looks at it, and a name it could not make must be a
     /// real directory. This walk goes by path, so the window is still open:
@@ -928,17 +939,11 @@ fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str) -> Result
     if steps::check_tool(&argv).is_err() {
         return run_chain(dir, layer, chain);
     }
-    let output = match Command::new(CRAP_VERSION[0])
+    let output = Command::new(CRAP_VERSION[0])
         .args(&CRAP_VERSION[1..])
         .current_dir(dir)
         .output()
-    {
-        Ok(output) => output,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return run_chain(dir, layer, chain);
-        }
-        Err(err) => return Err(err).with_context(|| format!("spawn: {version}")),
-    };
+        .with_context(|| format!("spawn: {version}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let printed = stdout.lines().next().unwrap_or_default().trim();
     let want = format!("cargo-crap {pin}");
@@ -1563,6 +1568,126 @@ mod tests {
                 .contains("is a symlink or not a directory, and init does not follow one"),
             "{err}"
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// `create_new` makes a file and nothing else. A name taken by a file,
+    /// a link or a dangling link fails it, and what a link points at is left
+    /// as it was.
+    #[cfg(unix)]
+    fn taken_names_fail(
+        dir: &Path,
+        outside: &Path,
+        create: impl Fn(&std::ffi::OsStr) -> std::io::Result<fs::File>,
+    ) {
+        fs::write(dir.join("file.md"), "old\n").expect("write file");
+        std::os::unix::fs::symlink(outside, dir.join("link.md")).expect("link");
+        std::os::unix::fs::symlink(dir.join("gone"), dir.join("dangling.md")).expect("link");
+        for name in ["file.md", "link.md", "dangling.md"] {
+            assert!(create(std::ffi::OsStr::new(name)).is_err(), "{name}");
+        }
+        assert_eq!(
+            fs::read_to_string(dir.join("file.md")).expect("read"),
+            "old\n"
+        );
+        assert_eq!(fs::read_to_string(outside).expect("read"), "keep\n");
+        assert!(!dir.join("gone").exists());
+        drop(create(std::ffi::OsStr::new("new.md")).expect("create"));
+        assert!(dir.join("new.md").is_file());
+    }
+
+    /// `write_file` removes an old file before `create_new`, so only a name
+    /// taken in between reaches it. Both walks refuse it.
+    #[cfg(unix)]
+    #[test]
+    fn create_new_refuses_a_name_that_is_taken_on_either_walk() {
+        let root =
+            std::env::temp_dir().join(format!("cargo-tops-create-new-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("mkdir");
+        let outside = root.join("outside.md");
+        fs::write(&outside, "keep\n").expect("write outside");
+        let rel = Path::new("docs/a.md");
+        for held in [true, false] {
+            let repo = root.join(if held { "held" } else { "path" });
+            fs::create_dir_all(&repo).expect("mkdir repo");
+            let dir = repo.join("docs");
+            if held {
+                let parent = Parent::open(&repo, rel, &repo.join(rel)).expect("walk");
+                taken_names_fail(&dir, &outside, |name| parent.create_new(name));
+            } else {
+                let parent = PathParent::open(&repo, rel, &repo.join(rel)).expect("walk");
+                taken_names_fail(&dir, &outside, |name| parent.create_new(name));
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A link or a regular file where a directory should be is refused by
+    /// the held walk and by the path walk, and nothing is made behind it.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_or_a_file_where_a_directory_should_be_is_refused_by_either_walk() {
+        let root =
+            std::env::temp_dir().join(format!("cargo-tops-walk-refuse-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        std::os::unix::fs::symlink(&outside, repo.join("linked")).expect("link");
+        fs::write(repo.join("file"), "keep\n").expect("write file");
+        for (at, dir) in [("linked/sub/a.md", "linked"), ("file/sub/a.md", "file")] {
+            let (rel, path) = (Path::new(at), repo.join(at));
+            let want = format!(
+                "refusing to write {}: {} is a symlink or not a directory, and init does not follow one",
+                path.display(),
+                repo.join(dir).display()
+            );
+            let held = Parent::open(&repo, rel, &path)
+                .err()
+                .expect("held walk refused");
+            let walked = PathParent::open(&repo, rel, &path)
+                .err()
+                .expect("path walk refused");
+            assert_eq!(held.to_string(), want);
+            assert_eq!(walked.to_string(), want);
+        }
+        assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        assert_eq!(
+            fs::read_to_string(repo.join("file")).expect("read"),
+            "keep\n"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The path walk `write_file` takes off Unix, run here: it makes the
+    /// missing directories, walks real ones again, and tells a file from a
+    /// link without following it.
+    #[cfg(unix)]
+    #[test]
+    fn the_path_walk_makes_directories_and_reads_what_is_at_a_name() {
+        let root =
+            std::env::temp_dir().join(format!("cargo-tops-path-walk-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        let rel = Path::new("a/b/f.md");
+        let parent = PathParent::open(&repo, rel, &repo.join(rel)).expect("walk");
+        assert!(repo.join("a/b").is_dir());
+        let again = PathParent::open(&repo, rel, &repo.join(rel)).expect("walk real dirs again");
+        let name = std::ffi::OsStr::new("f.md");
+        assert!(matches!(parent.entry(name), Entry::Absent));
+        drop(parent.create_new(name).expect("create"));
+        assert!(matches!(again.entry(name), Entry::Other));
+        parent.remove(name).expect("remove");
+        assert!(!repo.join(rel).exists());
+        assert!(matches!(parent.entry(name), Entry::Absent));
+        std::os::unix::fs::symlink(root.join("gone"), repo.join("a/b/l.md")).expect("link");
+        assert!(matches!(
+            parent.entry(std::ffi::OsStr::new("l.md")),
+            Entry::Symlink
+        ));
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -282,6 +282,24 @@ fn the_executable_bit_is_part_of_the_copy() {
 }
 
 #[cfg(unix)]
+/// A temp file left by a sync that was stopped is removed, not a reason to
+/// stop: the next sync writes the copy, and the temp file is gone.
+#[test]
+fn a_temp_file_left_by_an_interrupted_sync_does_not_stop_the_next() {
+    let root = fixture("stale-temp");
+    let (_, dest) = pairs(&root).into_iter().next().expect("a pair");
+    let dest = root.join(dest);
+    flip_last_byte(&dest);
+    let name = dest.file_name().expect("name").to_str().expect("utf-8");
+    let temp = dest.with_file_name(format!(".{name}.xtask-sync"));
+    fs::write(&temp, "left over\n").expect("write temp");
+    let (code, text) = sync(&root, false);
+    assert_eq!(code, 0, "{text}");
+    assert!(!temp.exists(), "{text}");
+    let (code, text) = sync(&root, true);
+    assert_eq!(code, 0, "{text}");
+}
+
 #[test]
 fn a_symlinked_copy_fails_and_sync_does_not_follow_it() {
     let root = fixture("symlink");

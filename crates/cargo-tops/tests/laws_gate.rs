@@ -1896,16 +1896,34 @@ fn a_pinned_cargo_crap_that_is_not_installed_is_missing_not_a_version_miss() {
 }
 
 #[test]
-fn a_rust_tops_lock_that_does_not_parse_stops_the_gate() {
-    let fixture = fixture_with("crap-pin-bad-lock", &["coverage", "crap"]);
+fn a_rust_tops_lock_that_cannot_be_read_or_parsed_stops_the_gate() {
+    for (how, verb) in [("toml", "parse "), ("dir", "read ")] {
+        let fixture = fixture_with(&format!("crap-pin-bad-lock-{how}"), &["coverage", "crap"]);
+        let lock = fixture.repo.join("rust-tops.lock");
+        if how == "dir" {
+            fs::create_dir(&lock).expect("mkdir lock");
+        } else {
+            fs::write(&lock, "[tools\n").expect("write lock");
+        }
+        let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+        assert_eq!(out.status.code(), Some(2), "{text}");
+        assert!(
+            text.contains(&format!("{verb}{}", lock.display())),
+            "{text}"
+        );
+        assert!(!cargo_ran(&fixture, "crap"), "{}", cargo_log(&fixture));
+    }
+}
+
+/// Only the crap layer reads the pin, so a gate without it runs on past a
+/// `rust-tops.lock` that does not parse.
+#[test]
+fn without_the_crap_layer_the_gate_does_not_read_the_pin() {
+    let fixture = fixture_with("crap-off-bad-lock", &["coverage"]);
     fs::write(fixture.repo.join("rust-tops.lock"), "[tools\n").expect("write lock");
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
-    assert_eq!(out.status.code(), Some(2), "{text}");
-    assert!(
-        text.contains("parse ") && text.contains("rust-tops.lock"),
-        "{text}"
-    );
-    assert!(!cargo_ran(&fixture, "crap"), "{}", cargo_log(&fixture));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(!text.contains("rust-tops.lock"), "{text}");
 }
 
 #[test]
