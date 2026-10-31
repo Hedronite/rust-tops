@@ -18,6 +18,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
@@ -284,44 +285,132 @@ fn state(dest: &Path, source: &Source) -> Result<State> {
 /// replaces the name, so a link that appeared at the dest since `state` is
 /// replaced, not followed.
 ///
-/// Each directory above the dest is made with `create_dir` before anything
-/// looks at it. `create_dir` fails on a name that is already there, link or
-/// not, so a name it could not make must be a real directory: a link that
-/// appeared since `linked_dir` looked is refused, never followed.
+/// [`Parent::open`] says how the directories are made and how far that
+/// holds against a link swapped in while sync runs.
 fn write(root: &Path, rel: &str, source: &Source) -> Result<()> {
-    let dest = root.join(rel);
-    let mut dir = root.to_path_buf();
-    for part in Path::new(rel)
-        .parent()
-        .map(Path::components)
-        .into_iter()
-        .flatten()
-    {
-        dir.push(part);
-        if fs::create_dir(&dir).is_err()
-            && !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
-        {
-            bail!(
-                "{rel}: {} is a symlink or not a directory; sync does not follow it",
-                dir.display()
-            );
-        }
-    }
-    let name = dest.file_name().unwrap_or_default().to_string_lossy();
-    let temp = dir.join(format!(".{name}.xtask-sync"));
+    let name = Path::new(rel)
+        .file_name()
+        .ok_or_else(|| anyhow!("{rel}: no file name"))?;
+    let temp = format!(".{}.xtask-sync", name.to_string_lossy());
+    let parent = Parent::open(root, rel)?;
+    let temp_path = parent.dir.join(&temp);
     // A temp file left by an interrupted sync. If it cannot go, `create_new`
     // below fails and names it.
-    let _ = fs::remove_file(&temp);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .with_context(|| format!("create {}", temp.display()))?;
+    let _ = parent.remove(temp.as_ref());
+    let mut file = parent
+        .create_new(temp.as_ref())
+        .with_context(|| format!("create {}", temp_path.display()))?;
     file.write_all(&source.bytes)
-        .with_context(|| format!("write {}", temp.display()))?;
+        .with_context(|| format!("write {}", temp_path.display()))?;
+    set_executable(&file, &temp_path, source.executable)?;
     drop(file);
-    set_executable(&temp, source.executable)?;
-    fs::rename(&temp, &dest).with_context(|| format!("rename to {}", dest.display()))
+    parent
+        .rename(temp.as_ref(), name)
+        .with_context(|| format!("rename to {}", root.join(rel).display()))
+}
+
+fn refused(rel: &str, dir: &Path) -> anyhow::Error {
+    anyhow!(
+        "{rel}: {} is a symlink or not a directory; sync does not follow it",
+        dir.display()
+    )
+}
+
+/// The directory a copy is written into: held open on Unix, a path off it.
+struct Parent {
+    dir: PathBuf,
+    #[cfg(unix)]
+    fd: std::os::fd::OwnedFd,
+}
+
+#[cfg(unix)]
+impl Parent {
+    /// Opens `root`, then each directory above `rel`, making the ones that
+    /// are missing.
+    ///
+    /// `root` is opened by path, so a link at `root` itself is followed.
+    /// Below it nothing is looked up by path again: each directory is made
+    /// with `mkdirat` and opened with `O_NOFOLLOW` relative to the one
+    /// above, and the temp file, its mode and the rename are relative to the
+    /// last. A link at any of those names, there before the walk or swapped
+    /// in during it, fails the open and sync stops. So does a name that is
+    /// gone again by the time it is opened.
+    fn open(root: &Path, rel: &str) -> Result<Self> {
+        use rustix::fs::{mkdirat, openat, Mode, OFlags, CWD};
+        use rustix::io::Errno;
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+        let mut fd = openat(CWD, root, flags, Mode::empty())
+            .with_context(|| format!("open {}", root.display()))?;
+        let mut dir = root.to_path_buf();
+        let parents = Path::new(rel).parent().map(Path::components);
+        for part in parents.into_iter().flatten() {
+            let name = part.as_os_str();
+            dir.push(name);
+            match mkdirat(&fd, name, Mode::from_raw_mode(0o777)) {
+                Ok(()) | Err(Errno::EXIST) => {}
+                Err(err) => return Err(err).with_context(|| format!("create {}", dir.display())),
+            }
+            fd = match openat(&fd, name, flags | OFlags::NOFOLLOW, Mode::empty()) {
+                Ok(next) => next,
+                Err(Errno::LOOP | Errno::NOTDIR | Errno::NOENT) => return Err(refused(rel, &dir)),
+                Err(err) => return Err(err).with_context(|| format!("open {}", dir.display())),
+            };
+        }
+        Ok(Self { dir, fd })
+    }
+
+    fn remove(&self, name: &OsStr) -> std::io::Result<()> {
+        rustix::fs::unlinkat(&self.fd, name, rustix::fs::AtFlags::empty()).map_err(Into::into)
+    }
+
+    fn create_new(&self, name: &OsStr) -> std::io::Result<fs::File> {
+        use rustix::fs::{openat, Mode, OFlags};
+        let flags =
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let fd = openat(&self.fd, name, flags, Mode::from_raw_mode(0o666))?;
+        Ok(fs::File::from(fd))
+    }
+
+    fn rename(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
+        rustix::fs::renameat(&self.fd, from, &self.fd, to).map_err(Into::into)
+    }
+}
+
+#[cfg(not(unix))]
+impl Parent {
+    /// Each directory above the dest is made with `create_dir` before
+    /// anything looks at it, and a name it could not make must be a real
+    /// directory. This walk goes by path, so the window is still open: a
+    /// directory removed and replaced by a link after it was checked and
+    /// before the temp file is made is followed.
+    fn open(root: &Path, rel: &str) -> Result<Self> {
+        let mut dir = root.to_path_buf();
+        let parents = Path::new(rel).parent().map(Path::components);
+        for part in parents.into_iter().flatten() {
+            dir.push(part);
+            if fs::create_dir(&dir).is_err()
+                && !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
+            {
+                return Err(refused(rel, &dir));
+            }
+        }
+        Ok(Self { dir })
+    }
+
+    fn remove(&self, name: &OsStr) -> std::io::Result<()> {
+        fs::remove_file(self.dir.join(name))
+    }
+
+    fn create_new(&self, name: &OsStr) -> std::io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.dir.join(name))
+    }
+
+    fn rename(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
+        fs::rename(self.dir.join(from), self.dir.join(to))
+    }
 }
 
 /// Git keeps one mode bit, so a copy keeps its source's. Off Unix there is
@@ -339,17 +428,63 @@ fn executable(meta: &fs::Metadata) -> bool {
     }
 }
 
-fn set_executable(path: &Path, executable: bool) -> Result<()> {
+/// Sets the mode through the open file, so it is the temp file's own.
+fn set_executable(file: &fs::File, path: &Path, executable: bool) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = if executable { 0o755 } else { 0o644 };
-        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        file.set_permissions(fs::Permissions::from_mode(mode))
             .with_context(|| format!("chmod {}", path.display()))
     }
     #[cfg(not(unix))]
     {
-        let _ = (path, executable);
+        let _ = (file, path, executable);
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The directories are held open, so a directory swapped for a link
+    /// after the walk is not where the copy goes: the temp file and the
+    /// rename land in the real directory, and nothing goes behind the link.
+    #[test]
+    fn a_directory_swapped_for_a_link_after_the_walk_is_not_followed() {
+        let root = std::env::temp_dir().join(format!("xtask-parent-swap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        let parent = Parent::open(&repo, "config/AGENTS.md").expect("walk");
+        fs::rename(repo.join("config"), repo.join("config-aside")).expect("move aside");
+        std::os::unix::fs::symlink(&outside, repo.join("config")).expect("link");
+        let mut file = parent
+            .create_new(OsStr::new(".AGENTS.md.xtask-sync"))
+            .expect("create");
+        file.write_all(b"copy\n").expect("write");
+        set_executable(&file, &parent.dir, false).expect("chmod");
+        drop(file);
+        parent
+            .rename(OsStr::new(".AGENTS.md.xtask-sync"), OsStr::new("AGENTS.md"))
+            .expect("rename");
+        assert_eq!(
+            fs::read(repo.join("config-aside/AGENTS.md")).expect("read"),
+            b"copy\n"
+        );
+        assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        // A walk that starts now meets the link and refuses it.
+        let err = Parent::open(&repo, "config/AGENTS.md")
+            .err()
+            .expect("refused");
+        assert!(
+            err.to_string()
+                .contains("is a symlink or not a directory; sync does not follow it"),
+            "{err}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

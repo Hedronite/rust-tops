@@ -1775,6 +1775,182 @@ fn a_missing_cargo_kani_fails_in_range_and_not_at_tier_1() {
     assert!(!text.contains("not on PATH"), "{text}");
 }
 
+/// The cargo stub, except that `cargo crap --version` prints `printed`
+/// (after logging), the way the binary `cargo crap` runs reports itself.
+fn stub_crap_version(fixture: &Fixture, printed: &str) {
+    let body = CARGO_STUB.replacen(
+        "#!/bin/sh\n",
+        &format!(
+            "#!/bin/sh\nif [ \"$*\" = \"crap --version\" ]; then\n  printf '%s\\n' \"$*\" >> \"$CARGO_STUB_LOG\"\n  echo '{printed}'\n  exit 0\nfi\n"
+        ),
+        1,
+    );
+    stub(&fixture.bin, "cargo", &body);
+}
+
+/// A `rust-tops.lock` beside `rust-tops.yaml` that pins cargo-crap.
+fn pin_crap(fixture: &Fixture, version: &str) {
+    fs::write(
+        fixture.repo.join("rust-tops.lock"),
+        format!("[tools]\nrustc = \"1.99.1\"\ncargo-crap = \"{version}\"\n"),
+    )
+    .expect("write rust-tops.lock");
+}
+
+#[test]
+fn a_cargo_crap_that_is_not_the_lock_pin_fails_the_crap_layer() {
+    // The second pin is not 0.9.0: the gate reads the pin, it has none built in.
+    for (pin, printed) in [("0.9.0", "cargo-crap 0.5.0"), ("1.2.3", "cargo-crap 0.9.0")] {
+        let fixture = fixture_with(&format!("crap-pin-miss-{pin}"), &["coverage", "crap"]);
+        pin_crap(&fixture, pin);
+        stub_crap_version(&fixture, printed);
+        let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+        assert_eq!(out.status.code(), Some(1), "{text}");
+        assert!(
+            text.contains(&format!(
+                "Failed [crap]: `cargo crap --version` printed `{printed}`, not `cargo-crap {pin}` from rust-tops.lock"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains("crap: `cargo crap --version` failed"),
+            "{text}"
+        );
+        let log = cargo_log(&fixture);
+        assert!(log.lines().any(|line| line == "crap --version"), "{log}");
+        assert!(
+            !log.lines().any(|line| line.starts_with("crap --lcov")),
+            "cargo crap ran past a version that is not the pin: {log}"
+        );
+        assert!(
+            !fixture.repo.join("target/rust-tops/crap.json").exists(),
+            "a report was written by the wrong cargo-crap: {text}"
+        );
+    }
+}
+
+#[test]
+fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
+    for pin in ["0.9.0", "1.2.3"] {
+        let fixture = fixture_with(&format!("crap-pin-hit-{pin}"), &["coverage", "crap"]);
+        pin_crap(&fixture, pin);
+        stub_crap_version(&fixture, &format!("cargo-crap {pin}"));
+        let must =
+            format!("`cargo crap --version` must print `cargo-crap {pin}`, the rust-tops.lock pin");
+        let (_, dry) = gate_with(
+            &fixture,
+            path_without_bend(&fixture.bin),
+            None,
+            &["--dry-run"],
+        );
+        assert!(
+            dry.contains("\n==> [crap] cargo crap --version && cargo crap --lcov "),
+            "{dry}"
+        );
+        assert!(dry.contains(&must), "{dry}");
+        assert!(cargo_log(&fixture).is_empty(), "a dry run ran cargo");
+        let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+        assert_eq!(out.status.code(), Some(0), "{text}");
+        assert!(text.contains(&must), "{text}");
+        let log = cargo_log(&fixture);
+        let crap: Vec<&str> = log
+            .lines()
+            .filter(|line| line.starts_with("crap "))
+            .collect();
+        assert_eq!(crap.len(), 2, "{log}");
+        assert_eq!(crap[0], "crap --version", "{log}");
+        assert!(crap[1].starts_with("crap --lcov "), "{log}");
+        assert!(
+            fixture.repo.join("target/rust-tops/crap.json").is_file(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn without_a_rust_tops_lock_the_crap_layer_asks_no_version() {
+    let fixture = fixture_with("crap-no-lock", &["coverage", "crap"]);
+    stub_crap_version(&fixture, "cargo-crap 0.5.0");
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(!text.contains("must print"), "{text}");
+    let log = cargo_log(&fixture);
+    assert!(!log.lines().any(|line| line == "crap --version"), "{log}");
+    assert!(
+        fixture.repo.join("target/rust-tops/crap.json").is_file(),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_pinned_cargo_crap_that_is_not_installed_is_missing_not_a_version_miss() {
+    let fixture = fixture_with("crap-pin-missing", &["coverage", "crap"]);
+    pin_crap(&fixture, "0.9.0");
+    fs::remove_file(fixture.bin.join("cargo-crap")).expect("remove stub");
+    let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("crap: `cargo-crap` not on PATH"), "{text}");
+    assert!(!text.contains("Failed [crap]"), "{text}");
+    let log = cargo_log(&fixture);
+    assert!(!log.lines().any(|line| line.starts_with("crap ")), "{log}");
+}
+
+#[test]
+fn a_rust_tops_lock_that_does_not_parse_stops_the_gate() {
+    let fixture = fixture_with("crap-pin-bad-lock", &["coverage", "crap"]);
+    fs::write(fixture.repo.join("rust-tops.lock"), "[tools\n").expect("write lock");
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("parse ") && text.contains("rust-tops.lock"),
+        "{text}"
+    );
+    assert!(!cargo_ran(&fixture, "crap"), "{}", cargo_log(&fixture));
+}
+
+#[test]
+fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
+    let fixture = fixture_with("tool-lock-honesty", &["static-lint", "laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    let honesty = |fixture: &Fixture| {
+        let (out, text) = gate(fixture, path_without_bend(&fixture.bin));
+        let entry = law(&cases_json(fixture), "lock_honesty").clone();
+        (out.status.code(), entry, text)
+    };
+    // No rust-tops.lock: `init` writes none, and that is no drift.
+    let (code, entry, text) = honesty(&fixture);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(entry["case"], "LockHonest", "{entry}");
+    assert_eq!(entry["read"], serde_json::json!(["Cargo.lock"]), "{entry}");
+
+    pin_crap(&fixture, "0.9.0");
+    let (code, entry, text) = honesty(&fixture);
+    assert_eq!(code, Some(1), "an untracked rust-tops.lock passed: {text}");
+    assert_eq!(entry["case"], "LockDrift", "{entry}");
+    assert_eq!(
+        entry["read"],
+        serde_json::json!(["Cargo.lock", "rust-tops.lock"]),
+        "{entry}"
+    );
+    assert!(text.contains("laws: bend refused lock_honesty"), "{text}");
+
+    git(&fixture, &fixture.repo, &["add", "rust-tops.lock"]);
+    git(
+        &fixture,
+        &fixture.repo,
+        &["commit", "-q", "-m", "pin tools"],
+    );
+    let (code, entry, text) = honesty(&fixture);
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(entry["case"], "LockHonest", "{entry}");
+
+    pin_crap(&fixture, "0.9.1");
+    let (code, entry, text) = honesty(&fixture);
+    assert_eq!(code, Some(1), "an edited rust-tops.lock passed: {text}");
+    assert_eq!(entry["case"], "LockDrift", "{entry}");
+}
+
 /// Real Bend 2.0.36 on `PATH`: a refusing repo fails, and a fresh init of
 /// every class with `laws` turned on passes.
 #[test]

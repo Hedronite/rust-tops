@@ -150,6 +150,7 @@ dependencies = [
  "anyhow",
  "clap",
  "regex",
+ "rustix",
  "serde",
  "serde-saphyr",
  "serde_json",
@@ -856,6 +857,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "rustix",
  "serde",
  "toml",
 ]

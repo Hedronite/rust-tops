@@ -254,15 +254,12 @@ fn dir_name(dir: &Path) -> Option<String> {
 ///
 /// A symlink at the file is refused, with or without `force`, and so is a
 /// dangling one: the write never follows a link. So is a link at any
-/// directory between `root` and the file; `root` itself may be one. `force`
-/// removes the old file and writes a new one with `create_new`, which fails
-/// rather than follow a link that appears in between.
+/// directory between `root` and the file. `force` removes the old file and
+/// writes a new one with `create_new`, which fails rather than follow a link
+/// that appears in between.
 ///
-/// Each directory between `root` and the file is made with `create_dir`
-/// before anything looks at it. `create_dir` fails on a name that is
-/// already there, link or not, so a link that appears after a look is
-/// refused, never followed: a name it could not make must be a real
-/// directory.
+/// [`Parent::open`] says how the directories are made and how far that
+/// holds against a link swapped in while init runs.
 pub(crate) fn write_file(
     root: &Path,
     rel: impl AsRef<Path>,
@@ -271,44 +268,157 @@ pub(crate) fn write_file(
 ) -> Result<bool> {
     let rel = rel.as_ref();
     let path = root.join(rel);
-    let mut dir = root.to_path_buf();
-    for part in rel.parent().map(Path::components).into_iter().flatten() {
-        dir.push(part);
-        if fs::create_dir(&dir).is_err()
-            && !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
-        {
-            return Err(anyhow!(
-                "refusing to write {}: {} is a symlink or not a directory, and init does not follow one",
-                path.display(),
-                dir.display()
-            ));
-        }
-    }
-    match fs::symlink_metadata(&path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
+    let name = rel
+        .file_name()
+        .ok_or_else(|| anyhow!("refusing to write {}: no file name", path.display()))?;
+    let parent = Parent::open(root, rel, &path)?;
+    match parent.entry(name) {
+        Entry::Symlink => {
             return Err(anyhow!(
                 "refusing to write {}: it is a symlink, and init does not follow one",
                 path.display()
             ));
         }
-        Ok(_) if !force => {
+        Entry::Other if !force => {
             println!("skip existing {}", path.display());
             return Ok(false);
         }
-        Ok(_) => fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?,
+        Entry::Other => parent
+            .remove(name)
+            .with_context(|| format!("remove {}", path.display()))?,
         // Nothing there, or nothing that can be read: `create_new` below
         // either makes the file or fails, and never follows a link.
-        Err(_) => {}
+        Entry::Absent => {}
     }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
+    let mut file = parent
+        .create_new(name)
         .with_context(|| format!("create {}", path.display()))?;
     std::io::Write::write_all(&mut file, contents.as_bytes())
         .with_context(|| format!("write {}", path.display()))?;
     println!("wrote {}", path.display());
     Ok(true)
+}
+
+/// What is at a name in a [`Parent`], without following a link there.
+enum Entry {
+    Absent,
+    Symlink,
+    Other,
+}
+
+fn refused(path: &Path, dir: &Path) -> anyhow::Error {
+    anyhow!(
+        "refusing to write {}: {} is a symlink or not a directory, and init does not follow one",
+        path.display(),
+        dir.display()
+    )
+}
+
+/// The directory a [`write_file`] writes into, held open on Unix.
+#[cfg(unix)]
+struct Parent(std::os::fd::OwnedFd);
+
+#[cfg(unix)]
+impl Parent {
+    /// Opens `root`, then each directory between it and `rel`'s file,
+    /// making the ones that are missing.
+    ///
+    /// `root` is opened by path, so a link at `root` itself is followed.
+    /// Below it nothing is looked up by path again: each directory is made
+    /// with `mkdirat` and opened with `O_NOFOLLOW` relative to the one
+    /// above, and the file is made relative to the last. A link at any of
+    /// those names, there before the walk or swapped in during it, fails
+    /// the open and the write is refused. So does a name that is gone again
+    /// by the time it is opened.
+    fn open(root: &Path, rel: &Path, path: &Path) -> Result<Self> {
+        use rustix::fs::{mkdirat, openat, Mode, OFlags, CWD};
+        use rustix::io::Errno;
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+        let mut fd = openat(CWD, root, flags, Mode::empty())
+            .with_context(|| format!("open {}", root.display()))?;
+        let mut dir = root.to_path_buf();
+        for part in rel.parent().map(Path::components).into_iter().flatten() {
+            let name = part.as_os_str();
+            dir.push(name);
+            match mkdirat(&fd, name, Mode::from_raw_mode(0o777)) {
+                Ok(()) | Err(Errno::EXIST) => {}
+                Err(err) => return Err(err).with_context(|| format!("create {}", dir.display())),
+            }
+            fd = match openat(&fd, name, flags | OFlags::NOFOLLOW, Mode::empty()) {
+                Ok(next) => next,
+                Err(Errno::LOOP | Errno::NOTDIR | Errno::NOENT) => return Err(refused(path, &dir)),
+                Err(err) => return Err(err).with_context(|| format!("open {}", dir.display())),
+            };
+        }
+        Ok(Self(fd))
+    }
+
+    fn entry(&self, name: &std::ffi::OsStr) -> Entry {
+        use rustix::fs::{statat, AtFlags, FileType};
+        match statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Symlink => {
+                Entry::Symlink
+            }
+            Ok(_) => Entry::Other,
+            Err(_) => Entry::Absent,
+        }
+    }
+
+    fn remove(&self, name: &std::ffi::OsStr) -> std::io::Result<()> {
+        rustix::fs::unlinkat(&self.0, name, rustix::fs::AtFlags::empty()).map_err(Into::into)
+    }
+
+    fn create_new(&self, name: &std::ffi::OsStr) -> std::io::Result<fs::File> {
+        use rustix::fs::{openat, Mode, OFlags};
+        let flags =
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let fd = openat(&self.0, name, flags, Mode::from_raw_mode(0o666))?;
+        Ok(fs::File::from(fd))
+    }
+}
+
+/// The directory a [`write_file`] writes into, as a path off Unix.
+#[cfg(not(unix))]
+struct Parent(PathBuf);
+
+#[cfg(not(unix))]
+impl Parent {
+    /// Each directory between `root` and the file is made with `create_dir`
+    /// before anything looks at it, and a name it could not make must be a
+    /// real directory. This walk goes by path, so the window is still open:
+    /// a directory removed and replaced by a link after it was checked and
+    /// before the file is created is followed.
+    fn open(root: &Path, rel: &Path, path: &Path) -> Result<Self> {
+        let mut dir = root.to_path_buf();
+        for part in rel.parent().map(Path::components).into_iter().flatten() {
+            dir.push(part);
+            if fs::create_dir(&dir).is_err()
+                && !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
+            {
+                return Err(refused(path, &dir));
+            }
+        }
+        Ok(Self(dir))
+    }
+
+    fn entry(&self, name: &std::ffi::OsStr) -> Entry {
+        match fs::symlink_metadata(self.0.join(name)) {
+            Ok(meta) if meta.file_type().is_symlink() => Entry::Symlink,
+            Ok(_) => Entry::Other,
+            Err(_) => Entry::Absent,
+        }
+    }
+
+    fn remove(&self, name: &std::ffi::OsStr) -> std::io::Result<()> {
+        fs::remove_file(self.0.join(name))
+    }
+
+    fn create_new(&self, name: &std::ffi::OsStr) -> std::io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.0.join(name))
+    }
 }
 
 #[cfg(unix)]
@@ -332,6 +442,8 @@ enum Plan {
 }
 
 fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<ExitCode> {
+    // A gate resolves `cargo metadata` afresh, once per project.
+    laws::begin_gate();
     let enabled: Vec<&config::Layer> = cfg
         .layers
         .iter()
@@ -399,6 +511,11 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
     let mut not_run: Vec<String> = Vec::new();
     let mut listed = 0;
     let tests = TestCommands::new(&enabled, &report);
+    let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
+        tool_pin(dir, "cargo-crap")?
+    } else {
+        None
+    };
     // Layers that add no command, each with the layer whose run it takes.
     let mut shared: Vec<(&str, &str)> = Vec::new();
     for layer in enabled.iter().filter(|l| l.id != "laws") {
@@ -438,12 +555,23 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
                 continue;
             }
         };
+        let pin = crap_pin.as_deref().filter(|_| layer.id == "crap");
         for chain in chains {
-            let shown: Vec<String> = chain.iter().map(Step::display).collect();
+            let mut shown: Vec<String> = pin.map(|_| CRAP_VERSION.join(" ")).into_iter().collect();
+            shown.extend(chain.iter().map(Step::display));
             println!("\n==> [{}] {}", layer.id, shown.join(" && "));
+            if let Some(pin) = pin {
+                println!(
+                    "    `{}` must print `cargo-crap {pin}`, the {TOOL_LOCK} pin",
+                    CRAP_VERSION.join(" ")
+                );
+            }
             listed += 1;
             if !dry_run {
-                runs.push(run_chain(dir, &layer.id, &chain)?);
+                runs.push(match pin {
+                    Some(pin) => run_pinned_crap(dir, &layer.id, &chain, pin)?,
+                    None => run_chain(dir, &layer.id, &chain)?,
+                });
             }
         }
     }
@@ -762,6 +890,67 @@ fn run_chain(dir: &Path, layer: &str, chain: &[Step]) -> Result<Run> {
         }
     }
     Ok(finish(layer, &ran, outcome))
+}
+
+/// The tool pins a repo keeps at its root, beside `rust-tops.yaml`. `init`
+/// does not write one. Adopters copy `config/rust-tops.lock.example`.
+pub(crate) const TOOL_LOCK: &str = "rust-tops.lock";
+
+/// The command whose first line must name the pinned cargo-crap.
+const CRAP_VERSION: [&str; 3] = ["cargo", "crap", "--version"];
+
+/// The `[tools]` version that `dir/rust-tops.lock` pins for `tool`. No lock,
+/// or no line for `tool`, is `None`. A lock that does not parse is an error.
+fn tool_pin(dir: &Path, tool: &str) -> Result<Option<String>> {
+    let path = dir.join(TOOL_LOCK);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    };
+    let lock: toml::Table =
+        toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    Ok(lock
+        .get("tools")
+        .and_then(|tools| tools.get(tool))
+        .and_then(toml::Value::as_str)
+        .map(str::to_string))
+}
+
+/// The crap chain, run only when `cargo crap --version` prints
+/// `cargo-crap <pin>`. It asks the binary that `cargo crap` runs, so another
+/// version earlier on `PATH` fails the layer before a report is written. A
+/// cargo-crap that is not there is left to the chain, which reports it
+/// missing.
+fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str) -> Result<Run> {
+    let version = CRAP_VERSION.join(" ");
+    let argv = CRAP_VERSION.map(String::from);
+    if steps::check_tool(&argv).is_err() {
+        return run_chain(dir, layer, chain);
+    }
+    let output = match Command::new(CRAP_VERSION[0])
+        .args(&CRAP_VERSION[1..])
+        .current_dir(dir)
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return run_chain(dir, layer, chain);
+        }
+        Err(err) => return Err(err).with_context(|| format!("spawn: {version}")),
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let printed = stdout.lines().next().unwrap_or_default().trim();
+    let want = format!("cargo-crap {pin}");
+    if !output.status.success() || printed != want {
+        println!(
+            "Failed [{layer}]: `{version}` printed `{printed}`, not `{want}` from {TOOL_LOCK}"
+        );
+        return Ok(finish(layer, &[version], Outcome::Failed));
+    }
+    let mut run = run_chain(dir, layer, chain)?;
+    run.cmd = format!("{version} && {}", run.cmd);
+    Ok(run)
 }
 
 /// `cargo-mutants` is looked up before the diff, so an empty diff cannot
@@ -1336,5 +1525,44 @@ mod tests {
         let yaml = "a: 1\nexemptions:\n  - layer: crap\n    expires: \"2027-01-01\"\nb: 2\n";
         assert_eq!(with_init_exemptions(yaml), "a: 1\nexemptions: []\nb: 2\n");
         assert_eq!(with_init_exemptions("a: 1\n"), "a: 1\nexemptions: []\n");
+    }
+
+    /// The directories are held open, so a directory swapped for a link
+    /// after the walk is not where the file goes: it lands in the real
+    /// directory, wherever that now is, and nothing goes behind the link.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_swapped_for_a_link_after_the_walk_is_not_followed() {
+        let root =
+            std::env::temp_dir().join(format!("cargo-tops-parent-swap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let outside = root.join("outside");
+        fs::create_dir_all(outside.join("workflows")).expect("mkdir outside");
+        fs::create_dir_all(&repo).expect("mkdir repo");
+        let rel = Path::new(".github/workflows/rust-tops.yml");
+        let parent = Parent::open(&repo, rel, &repo.join(rel)).expect("walk");
+        fs::rename(repo.join(".github"), repo.join("github-aside")).expect("move aside");
+        std::os::unix::fs::symlink(&outside, repo.join(".github")).expect("link");
+        let name = std::ffi::OsStr::new("rust-tops.yml");
+        assert!(matches!(parent.entry(name), Entry::Absent));
+        drop(parent.create_new(name).expect("create"));
+        assert!(repo.join("github-aside/workflows/rust-tops.yml").is_file());
+        assert_eq!(
+            fs::read_dir(outside.join("workflows"))
+                .expect("read outside")
+                .count(),
+            0
+        );
+        // A walk that starts now meets the link and refuses it.
+        let err = Parent::open(&repo, rel, &repo.join(rel))
+            .err()
+            .expect("refused");
+        assert!(
+            err.to_string()
+                .contains("is a symlink or not a directory, and init does not follow one"),
+            "{err}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }
