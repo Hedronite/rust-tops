@@ -2,12 +2,16 @@
 //! or not, or at a directory between `--path` and the destination, fails
 //! `init` with or without `--force`, and what it points at is left as it
 //! was. `--path` itself may be a link. A regular file is still skipped, or
-//! rewritten with `--force`.
+//! rewritten with `--force`. A link that appears at a directory while
+//! `init` runs is refused too, not followed.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 
 fn scratch(label: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("init-symlink-{label}"));
@@ -163,7 +167,7 @@ fn a_symlinked_directory_below_the_root_fails_init_with_or_without_force() {
         assert!(!ok, "{extra:?}: {text}");
         assert!(
             text.contains(&format!(
-                "refusing to write {}: {} is a symlink, and init does not follow one",
+                "refusing to write {}: {} is a symlink or not a directory, and init does not follow one",
                 repo.join(".github/workflows/rust-tops.yml").display(),
                 repo.join(".github").display()
             )),
@@ -182,7 +186,7 @@ fn a_symlinked_directory_below_the_root_fails_init_with_or_without_force() {
     assert!(!ok, "{text}");
     assert!(
         text.contains(&format!(
-            "{} is a symlink, and init does not follow one",
+            "{} is a symlink or not a directory, and init does not follow one",
             repo.join(".claude").display()
         )),
         "{text}"
@@ -211,4 +215,41 @@ fn a_root_that_is_a_link_is_written_through_as_the_path_named() {
         fs::read_to_string(real.join("AGENTS.md")).expect("read"),
         template("AGENTS.md")
     );
+}
+
+/// Makes a link at `at` to `to` and removes it, over and over, until `stop`.
+/// It never removes a real directory, so once one is made at `at` the link
+/// cannot come back.
+fn flicker(at: PathBuf, to: PathBuf, stop: Arc<AtomicBool>) -> JoinHandle<()> {
+    thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            let _ = symlink(&to, &at);
+            let _ = fs::remove_file(&at);
+        }
+    })
+}
+
+#[test]
+fn a_directory_link_that_appears_while_init_runs_is_never_followed() {
+    let root = scratch("flicker");
+    let outside = root.join("outside-github");
+    fs::create_dir_all(&outside).expect("mkdir");
+    for round in 0..40 {
+        let repo = root.join(format!("repo-{round}"));
+        fs::create_dir_all(&repo).expect("create repo");
+        let stop = Arc::new(AtomicBool::new(false));
+        let links = flicker(repo.join(".github"), outside.clone(), Arc::clone(&stop));
+        let (ok, text) = init(&repo, &[]);
+        stop.store(true, Ordering::Relaxed);
+        links.join().expect("flicker thread");
+        assert!(
+            ok || text.contains("is a symlink or not a directory, and init does not follow one"),
+            "round {round}: {text}"
+        );
+        assert_eq!(
+            fs::read_dir(&outside).expect("read outside").count(),
+            0,
+            "round {round}: init wrote through a link that appeared while it ran: {text}"
+        );
+    }
 }

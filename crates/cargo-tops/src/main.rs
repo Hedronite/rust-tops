@@ -257,6 +257,12 @@ fn dir_name(dir: &Path) -> Option<String> {
 /// directory between `root` and the file; `root` itself may be one. `force`
 /// removes the old file and writes a new one with `create_new`, which fails
 /// rather than follow a link that appears in between.
+///
+/// Each directory between `root` and the file is made with `create_dir`
+/// before anything looks at it. `create_dir` fails on a name that is
+/// already there, link or not, so a link that appears after a look is
+/// refused, never followed: a name it could not make must be a real
+/// directory.
 pub(crate) fn write_file(
     root: &Path,
     rel: impl AsRef<Path>,
@@ -268,9 +274,11 @@ pub(crate) fn write_file(
     let mut dir = root.to_path_buf();
     for part in rel.parent().map(Path::components).into_iter().flatten() {
         dir.push(part);
-        if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        if fs::create_dir(&dir).is_err()
+            && !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
+        {
             return Err(anyhow!(
-                "refusing to write {}: {} is a symlink, and init does not follow one",
+                "refusing to write {}: {} is a symlink or not a directory, and init does not follow one",
                 path.display(),
                 dir.display()
             ));
@@ -291,9 +299,6 @@ pub(crate) fn write_file(
         // Nothing there, or nothing that can be read: `create_new` below
         // either makes the file or fails, and never follows a link.
         Err(_) => {}
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
     }
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -357,9 +362,11 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
         None
     };
 
-    // Steps run with `dir` as the working directory, so the diff path must
-    // not be relative to the caller's.
-    let report = std::path::absolute(laws::report_dir(dir))
+    // The laws report, the mutation diff, the LCOV and the CRAP report share
+    // one directory, which a nonempty `CARGO_TARGET_DIR` moves. Steps run
+    // with `dir` as the working directory, so it must not be relative to the
+    // caller's.
+    let report = std::path::absolute(laws::artifact_dir(dir))
         .with_context(|| format!("resolve the report dir of {}", dir.display()))?;
     // Enabled layers above the range are not judged, so they cannot fail
     // the gate. Name them so the run says what it left out.
@@ -511,6 +518,7 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
                     .unwrap_or_default(),
                 max_tier,
                 runs: &runs,
+                artifacts: &report,
                 started,
                 workflows: facts::load_workflows(dir),
             };
@@ -846,6 +854,8 @@ fn tool(argv: &[&str]) -> Vec<Step> {
     vec![Step::tool(argv.iter().copied())]
 }
 
+/// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
+/// and the mutation diff are written there.
 fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
     let chains = match layer.id.as_str() {
         "static-lint" => vec![
@@ -878,20 +888,24 @@ fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
             "--workspace",
             "--all-features",
         ])],
-        "coverage" => vec![steps::coverage_steps()],
-        "crap" => vec![vec![
-            Step::tool([
-                "cargo",
-                "crap",
-                "--lcov",
-                "target/coverage/lcov.info",
-                "--format",
-                "json",
-                "--output",
-                "target/crap.json",
-            ]),
-            Step::artifact("target/crap.json"),
-        ]],
+        "coverage" => vec![steps::coverage_steps(report)],
+        "crap" => {
+            let lcov = report.join(steps::LCOV).display().to_string();
+            let crap = report.join(steps::CRAP).display().to_string();
+            vec![vec![
+                Step::tool([
+                    "cargo",
+                    "crap",
+                    "--lcov",
+                    lcov.as_str(),
+                    "--format",
+                    "json",
+                    "--output",
+                    crap.as_str(),
+                ]),
+                Step::artifact(crap),
+            ]]
+        }
         "mutation" => return Some(Plan::Mutation(MutationPlan::new(report))),
         "property" => vec![tool(&[
             "cargo",
@@ -1029,7 +1043,28 @@ mod tests {
         );
         assert_eq!(
             crap[0].last().and_then(Step::artifact_path),
-            Some(Path::new("target/crap.json"))
+            Some(Path::new("/r/crap.json"))
+        );
+    }
+
+    #[test]
+    fn coverage_and_crap_write_under_the_artifact_dir() {
+        let coverage: Vec<String> = chains("coverage")[0].iter().map(Step::display).collect();
+        assert_eq!(
+            coverage,
+            [
+                "mkdir -p /r",
+                "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path /r/lcov.info",
+                "test -s /r/lcov.info",
+            ]
+        );
+        let crap: Vec<String> = chains("crap")[0].iter().map(Step::display).collect();
+        assert_eq!(
+            crap,
+            [
+                "cargo crap --lcov /r/lcov.info --format json --output /r/crap.json",
+                "test -s /r/crap.json",
+            ]
         );
     }
 

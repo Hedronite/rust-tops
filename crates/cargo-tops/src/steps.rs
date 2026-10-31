@@ -19,6 +19,11 @@ use std::path::{Path, PathBuf};
 
 const DIFF_NAME: &str = "rust-tops.diff";
 
+/// The coverage layer's LCOV, under the gate's artifact directory.
+pub const LCOV: &str = "lcov.info";
+/// The crap layer's report, under the gate's artifact directory.
+pub const CRAP: &str = "crap.json";
+
 /// What a step is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -180,14 +185,17 @@ pub fn tool_binary(argv: &[String]) -> Option<String> {
     best_binary(&split_chain(&tokens))
 }
 
-/// Coverage is `mkdir`, then `cargo llvm-cov`, then `test -s`.
+/// Coverage is `mkdir`, then `cargo llvm-cov`, then `test -s`, with
+/// [`LCOV`] under `dir`, the gate's artifact directory.
 /// The tool step names `cargo-llvm-cov`, not `mkdir`. It runs the suite with
 /// the same `--workspace`, `--all-features` and `--profile ci` as `unit`, so
 /// its run can stand for `unit`, `integration` and `property`.
 #[must_use]
-pub fn coverage_steps() -> Vec<Step> {
+pub fn coverage_steps(dir: &Path) -> Vec<Step> {
+    let dir_shown = dir.display().to_string();
+    let lcov = dir.join(LCOV).display().to_string();
     vec![
-        Step::command(["mkdir", "-p", "target/coverage"]),
+        Step::command(["mkdir", "-p", dir_shown.as_str()]),
         Step::tool([
             "cargo",
             "llvm-cov",
@@ -198,9 +206,9 @@ pub fn coverage_steps() -> Vec<Step> {
             "ci",
             "--lcov",
             "--output-path",
-            "target/coverage/lcov.info",
+            lcov.as_str(),
         ]),
-        Step::artifact("target/coverage/lcov.info"),
+        Step::artifact(lcov),
     ]
 }
 

@@ -639,3 +639,60 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
     }
     assert_eq!(pairs.len(), 46);
 }
+
+/// A link at `config` that comes and goes while sync writes
+/// `config/AGENTS.md` is refused or never there: sync never writes through
+/// it. The flicker never removes a real directory, so once sync makes
+/// `config` the link cannot come back.
+#[cfg(unix)]
+#[test]
+fn a_directory_link_that_appears_while_sync_writes_is_never_followed() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("xtask-sync-flicker");
+    let _ = fs::remove_dir_all(&root);
+    let source = format!("{TEMPLATES}/AGENTS.md");
+    fs::create_dir_all(root.join(TEMPLATES)).expect("create templates");
+    fs::copy(workspace().join(&source), root.join(&source)).expect("copy source");
+    fs::write(
+        root.join("copies.toml"),
+        format!("[[copy]]\nfrom = \"{source}\"\nto = [\"config/AGENTS.md\"]\n"),
+    )
+    .expect("write list");
+    let outside = root.join("outside-config");
+    fs::create_dir_all(&outside).expect("mkdir");
+    let config = root.join("config");
+
+    for round in 0..25 {
+        let stop = Arc::new(AtomicBool::new(false));
+        let links = {
+            let (at, to, stop) = (config.clone(), outside.clone(), Arc::clone(&stop));
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = std::os::unix::fs::symlink(&to, &at);
+                    let _ = fs::remove_file(&at);
+                }
+            })
+        };
+        let (code, text) = sync(&root, false);
+        stop.store(true, Ordering::Relaxed);
+        links.join().expect("flicker thread");
+        assert!(
+            code == 0
+                || text.contains("config/AGENTS.md is under config, which is a symlink")
+                || text.contains("config/AGENTS.md: ")
+                    && text.contains(
+                        "config is a symlink or not a directory; sync does not follow it"
+                    ),
+            "round {round}: {text}"
+        );
+        assert_eq!(
+            fs::read_dir(&outside).expect("read outside").count(),
+            0,
+            "round {round}: sync wrote through a link that appeared while it ran: {text}"
+        );
+        let _ = fs::remove_file(&config);
+        let _ = fs::remove_dir_all(&config);
+    }
+}
