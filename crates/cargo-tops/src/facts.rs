@@ -1046,6 +1046,33 @@ mod tests {
     }
 
     #[test]
+    fn crap_is_wired_only_to_a_fresh_lcov_from_a_passed_coverage_run() {
+        let cfg = cfg();
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-crap-wired-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let wired = |coverage: Outcome| {
+            let runs = [
+                run("coverage", "cargo llvm-cov nextest", coverage),
+                run("crap", "cargo crap", Outcome::Passed),
+            ];
+            let ctx = Ctx {
+                artifacts: &dir,
+                ..ctx_with(&cfg, &runs)
+            };
+            matches!(crap_wires_coverage(&ctx), Choice::Fact { met: true, .. })
+        };
+        // The coverage run passed, but no LCOV is under the artifact dir.
+        assert!(!wired(Outcome::Passed));
+        fs::write(dir.join(steps::LCOV), "lcov\n").expect("write lcov");
+        assert!(wired(Outcome::Passed));
+        // A fresh LCOV beside a failed coverage run is not wired.
+        assert!(!wired(Outcome::Failed));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_missing_tool_beside_a_vacuous_run_is_still_read() {
         let cfg = cfg();
         let runs = [
