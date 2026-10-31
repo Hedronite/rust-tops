@@ -7,6 +7,7 @@
 //! `bend`'s exit status on that proof. When the proof fails, one more run
 //! of `main` alone prints every verdict. That run does not decide pass or fail.
 
+use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,14 +28,45 @@ pub const OUT_DIR: &str = "target/rust-tops";
 ///
 /// A nonempty `CARGO_TARGET_DIR` wins. Otherwise, when `Cargo.toml` exists
 /// and `cargo metadata` returns JSON, that `target_directory` wins. Otherwise
-/// the report is `<project>/target/rust-tops`.
+/// the report is `<project>/target/rust-tops`. `cargo metadata` runs at most
+/// once for a project; later calls in the same gate reuse that answer.
 pub fn report_dir(project: &Path) -> PathBuf {
+    artifact_dir(project)
+}
+
+/// Directory for `lcov.info` and `crap.json`.
+///
+/// This is the same path as [`report_dir`], so a nonempty `CARGO_TARGET_DIR`
+/// moves the laws report and both artifacts together.
+pub fn artifact_dir(project: &Path) -> PathBuf {
     let from_env = std::env::var("CARGO_TARGET_DIR").ok();
-    resolve_report_dir(
-        project,
-        from_env.as_deref(),
-        metadata_target(project).as_deref(),
-    )
+    let meta = if nonempty(from_env.as_deref()).is_some() {
+        None
+    } else {
+        metadata_target_once(project)
+    };
+    resolve_report_dir(project, from_env.as_deref(), meta.as_deref())
+}
+
+thread_local! {
+    static META_CACHE: RefCell<Option<(PathBuf, Option<String>)>> = const { RefCell::new(None) };
+    static META_SPAWNS: Cell<u32> = const { Cell::new(0) };
+}
+
+fn metadata_target_once(project: &Path) -> Option<String> {
+    let key = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    let cached = META_CACHE.with(|slot| match slot.borrow().as_ref() {
+        Some((cached_key, target)) if cached_key == &key => Some(target.clone()),
+        _ => None,
+    });
+    if let Some(target) = cached {
+        return target;
+    }
+    let target = metadata_target(project);
+    META_CACHE.with(|slot| *slot.borrow_mut() = Some((key, target.clone())));
+    target
 }
 
 /// Same rule as [`report_dir`], with the two lookups passed in.
@@ -75,6 +107,7 @@ fn metadata_target(project: &Path) -> Option<String> {
     if !manifest.is_file() {
         return None;
     }
+    META_SPAWNS.with(|count| count.set(count.get() + 1));
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -736,6 +769,57 @@ mod tests {
     }
 
     #[test]
+    fn report_dir_reuses_one_cargo_metadata_and_shares_the_artifact_dir() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-meta-once-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"meta-once\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
+        let _env = EnvGuard::remove("CARGO_TARGET_DIR");
+        META_CACHE.with(|slot| *slot.borrow_mut() = None);
+        let before = META_SPAWNS.with(|count| count.get());
+        let first = report_dir(&dir);
+        let second = report_dir(&dir);
+        let after = META_SPAWNS.with(|count| count.get());
+        assert_eq!(first, second);
+        assert_eq!(artifact_dir(&dir), first);
+        assert_eq!(after - before, 1, "cargo metadata ran more than once");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_nonempty_cargo_target_dir_skips_metadata_and_moves_artifacts() {
+        let project =
+            std::env::temp_dir().join(format!("cargo-tops-env-target-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&project);
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"env-target\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(project.join("src/lib.rs"), "// fixture\n").unwrap();
+        let outside =
+            std::env::temp_dir().join(format!("cargo-tops-outside-target-{}", std::process::id()));
+        let _env = EnvGuard::set("CARGO_TARGET_DIR", &outside.to_string_lossy());
+        let before = META_SPAWNS.with(|count| count.get());
+        let got = report_dir(&project);
+        let again = artifact_dir(&project);
+        let after = META_SPAWNS.with(|count| count.get());
+        assert_eq!(got, outside.join("rust-tops"));
+        assert_eq!(again, got);
+        assert_eq!(
+            after, before,
+            "a set CARGO_TARGET_DIR still spawned cargo metadata"
+        );
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
     fn report_dir_falls_back_to_the_project_target() {
         let project = Path::new("/proj");
         assert_eq!(
@@ -746,6 +830,34 @@ mod tests {
             resolve_report_dir(project, Some(""), Some("")),
             PathBuf::from("/proj/target/rust-tops")
         );
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
+
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
     }
 
     #[test]
