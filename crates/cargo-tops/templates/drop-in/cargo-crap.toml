@@ -2,6 +2,7 @@
 # Schema is cargo-crap's Config: threshold, exclude, fail-above, …
 # `fail = true` is not a field (harvest). Pass --lcov on the CLI.
 threshold = 6.0
+try-weight = 0.0
 exclude = [
   "src/generated/**",
   "tests/**",
