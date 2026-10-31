@@ -135,7 +135,7 @@ fn sync(root: &Path, check: bool) -> Result<bool> {
             State::Symlink => "is a symlink; copies are regular files, so remove the link",
             State::NotAFile => "is not a regular file",
             _ if !check => {
-                write(&dest, &source)?;
+                write(root, &pair.dest, &source)?;
                 println!("wrote {} from {}", pair.dest, pair.source);
                 wrote += 1;
                 continue;
@@ -280,14 +280,33 @@ fn state(dest: &Path, source: &Source) -> Result<State> {
     })
 }
 
-/// Write `dest` through a new file beside it, then rename. A rename replaces
-/// the name, so a link that appeared at `dest` since `state` is replaced,
-/// not followed.
-fn write(dest: &Path, source: &Source) -> Result<()> {
-    let dir = dest
+/// Write `root/rel` through a new file beside it, then rename. A rename
+/// replaces the name, so a link that appeared at the dest since `state` is
+/// replaced, not followed.
+///
+/// Each directory above the dest is made with `create_dir` before anything
+/// looks at it. `create_dir` fails on a name that is already there, link or
+/// not, so a name it could not make must be a real directory: a link that
+/// appeared since `linked_dir` looked is refused, never followed.
+fn write(root: &Path, rel: &str, source: &Source) -> Result<()> {
+    let dest = root.join(rel);
+    let mut dir = root.to_path_buf();
+    for part in Path::new(rel)
         .parent()
-        .ok_or_else(|| anyhow!("{} has no directory", dest.display()))?;
-    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        .map(Path::components)
+        .into_iter()
+        .flatten()
+    {
+        dir.push(part);
+        if fs::create_dir(&dir).is_err()
+            && !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir())
+        {
+            bail!(
+                "{rel}: {} is a symlink or not a directory; sync does not follow it",
+                dir.display()
+            );
+        }
+    }
     let name = dest.file_name().unwrap_or_default().to_string_lossy();
     let temp = dir.join(format!(".{name}.xtask-sync"));
     // A temp file left by an interrupted sync. If it cannot go, `create_new`
@@ -302,7 +321,7 @@ fn write(dest: &Path, source: &Source) -> Result<()> {
         .with_context(|| format!("write {}", temp.display()))?;
     drop(file);
     set_executable(&temp, source.executable)?;
-    fs::rename(&temp, dest).with_context(|| format!("rename to {}", dest.display()))
+    fs::rename(&temp, &dest).with_context(|| format!("rename to {}", dest.display()))
 }
 
 /// Git keeps one mode bit, so a copy keeps its source's. Off Unix there is

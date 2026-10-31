@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use crate::config::TopsConfig;
 use crate::profiles;
+use crate::steps;
 pub use crate::steps::Outcome;
 
 /// One chain of steps `gate` ran, or could not run, for a layer.
@@ -54,6 +55,9 @@ pub struct Ctx<'a> {
     pub yaml: Value,
     pub max_tier: u8,
     pub runs: &'a [Run],
+    /// Where this gate's coverage and crap layers write [`ARTIFACTS`]:
+    /// `laws::artifact_dir`, which a nonempty `CARGO_TARGET_DIR` moves.
+    pub artifacts: &'a Path,
     pub started: SystemTime,
     pub workflows: Workflows,
 }
@@ -797,10 +801,8 @@ fn baseline_green(ctx: &Ctx) -> Choice {
     fact(!argvs.iter().any(|argv| skips_baseline(argv)), read)
 }
 
-const ARTIFACTS: [(&str, &str); 2] = [
-    ("coverage", "target/coverage/lcov.info"),
-    ("crap", "target/crap.json"),
-];
+/// Each layer's artifact, under [`Ctx::artifacts`].
+const ARTIFACTS: [(&str, &str); 2] = [("coverage", steps::LCOV), ("crap", steps::CRAP)];
 
 /// H-35. Each artifact a coverage or crap run in this gate records is
 /// present and nonempty.
@@ -808,7 +810,7 @@ fn record_nonempty(ctx: &Ctx) -> Choice {
     let read: Vec<String> = ARTIFACTS
         .iter()
         .filter(|(layer, _)| layer_ran(ctx, layer))
-        .map(|(_, path)| path.to_string())
+        .map(|(_, name)| ctx.artifacts.join(name).display().to_string())
         .collect();
     if read.is_empty() {
         return not_evaluated_because("neither the coverage nor the crap layer ran in this gate");
@@ -835,13 +837,13 @@ fn crap_wires_coverage(ctx: &Ctx) -> Choice {
     if !layer_ran(ctx, "crap") {
         return not_evaluated_because("the crap layer did not run in this gate");
     }
-    let lcov = ARTIFACTS[0].1;
+    let lcov = ctx.artifacts.join(ARTIFACTS[0].1);
     // Two seconds of slack for filesystems that store whole-second mtimes.
     let since = ctx
         .started
         .checked_sub(Duration::from_secs(2))
         .unwrap_or(ctx.started);
-    let fresh = fs::metadata(ctx.dir.join(lcov))
+    let fresh = fs::metadata(ctx.dir.join(&lcov))
         .and_then(|meta| meta.modified())
         .is_ok_and(|modified| modified >= since);
     let covered = ctx
@@ -850,7 +852,7 @@ fn crap_wires_coverage(ctx: &Ctx) -> Choice {
         .any(|run| run.layer == "coverage" && run.outcome == Outcome::Passed);
     fact(
         covered && fresh,
-        vec![lcov.into(), "gate: coverage layer".into()],
+        vec![lcov.display().to_string(), "gate: coverage layer".into()],
     )
 }
 
@@ -1013,6 +1015,7 @@ mod tests {
             yaml: Value::Null,
             max_tier: 1,
             runs,
+            artifacts: Path::new("target/rust-tops"),
             started: SystemTime::now(),
             workflows: Workflows::Absent,
         }
@@ -1040,6 +1043,33 @@ mod tests {
         assert!(matches!(tool_present(&ctx), Choice::NotEvaluated { .. }));
         assert!(matches!(baseline_green(&ctx), Choice::NotEvaluated { .. }));
         assert!(!layer_ran(&ctx, "mutation"));
+    }
+
+    #[test]
+    fn crap_is_wired_only_to_a_fresh_lcov_from_a_passed_coverage_run() {
+        let cfg = cfg();
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-crap-wired-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let wired = |coverage: Outcome| {
+            let runs = [
+                run("coverage", "cargo llvm-cov nextest", coverage),
+                run("crap", "cargo crap", Outcome::Passed),
+            ];
+            let ctx = Ctx {
+                artifacts: &dir,
+                ..ctx_with(&cfg, &runs)
+            };
+            matches!(crap_wires_coverage(&ctx), Choice::Fact { met: true, .. })
+        };
+        // The coverage run passed, but no LCOV is under the artifact dir.
+        assert!(!wired(Outcome::Passed));
+        fs::write(dir.join(steps::LCOV), "lcov\n").expect("write lcov");
+        assert!(wired(Outcome::Passed));
+        // A fresh LCOV beside a failed coverage run is not wired.
+        assert!(!wired(Outcome::Failed));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

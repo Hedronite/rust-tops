@@ -438,7 +438,13 @@ fn set_tier(fixture: &Fixture, id: &str, tier: u8) {
 const TEST_LAYERS: [&str; 4] = ["unit", "integration", "coverage", "property"];
 /// What the cargo stub logs for each test command the gate runs.
 const UNIT_RUN: &str = "nextest run --workspace --all-features --profile ci";
-const COVERAGE_RUN: &str = "llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path target/coverage/lcov.info";
+/// The coverage run, with its LCOV under the default artifact directory.
+fn coverage_run(fixture: &Fixture) -> String {
+    format!(
+        "llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path {}",
+        fixture.repo.join("target/rust-tops/lcov.info").display()
+    )
+}
 const PROPERTY_RUN: &str =
     "nextest run --workspace --all-features --profile ci --no-tests=fail property";
 
@@ -594,6 +600,14 @@ fn run_gate(mut cmd: Command) -> (Output, String) {
     (out, text)
 }
 
+/// How many times the gate ran `cargo metadata`.
+fn metadata_runs(fixture: &Fixture) -> usize {
+    cargo_log(fixture)
+        .lines()
+        .filter(|line| line.starts_with("metadata "))
+        .count()
+}
+
 fn cases_json(fixture: &Fixture) -> serde_json::Value {
     let raw =
         fs::read_to_string(fixture.repo.join("target/rust-tops/cases.json")).expect("cases.json");
@@ -639,7 +653,7 @@ fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
     assert_eq!(ran, of, "{class}: {text}");
     assert!(!text.contains("none ran for"), "{class}: {text}");
     // Coverage is in range, so its run is the one test run.
-    assert_eq!(nextest_runs(fixture), [COVERAGE_RUN], "{class}");
+    assert_eq!(nextest_runs(fixture), [coverage_run(fixture)], "{class}");
     assert!(
         text.contains("; unit, integration, property took the coverage run\n"),
         "{class}: {text}"
@@ -1075,7 +1089,7 @@ fn coverage_in_range_is_the_one_test_run_of_unit_integration_and_property() {
     let fixture = fixture_with("one-run", &TEST_LAYERS);
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(nextest_runs(&fixture), [COVERAGE_RUN], "{text}");
+    assert_eq!(nextest_runs(&fixture), [coverage_run(&fixture)], "{text}");
     for layer in ["unit", "integration", "property"] {
         assert!(
             text.contains(&format!(
@@ -1144,7 +1158,7 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
     stub_cargo_failing(&failed, "llvm-cov*", 1);
     let (out, text) = gate(&failed, path_with_only_stubs(&failed.bin));
     assert_eq!(out.status.code(), Some(1), "{text}");
-    assert_eq!(nextest_runs(&failed), [COVERAGE_RUN], "{text}");
+    assert_eq!(nextest_runs(&failed), [coverage_run(&failed)], "{text}");
     assert!(
         text.contains("\n  - coverage: `cargo llvm-cov nextest"),
         "{text}"
@@ -1406,6 +1420,83 @@ fn laws_report_follows_cargo_target_dir() {
     let parsed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(cases).expect("read")).expect("json");
     assert_eq!(parsed["passed"], true);
+}
+
+#[test]
+fn a_custom_cargo_target_dir_holds_lcov_crap_and_the_laws_report() {
+    let fixture = fixture_with("artifact-dir", &["static-lint", "coverage", "crap", "laws"]);
+    stub_bend(&fixture);
+    let custom = fixture.root.join("custom-target");
+    let (out, text) = gate_at(&fixture, path_without_bend(&fixture.bin), Some(&custom));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let report = custom.join("rust-tops");
+    for name in ["lcov.info", "crap.json", "cases.bend", "cases.json"] {
+        assert!(
+            report.join(name).is_file(),
+            "{name} is not under CARGO_TARGET_DIR: {text}"
+        );
+    }
+    assert!(
+        !fixture.repo.join("target").exists(),
+        "the project target/ got an artifact while CARGO_TARGET_DIR was set: {text}"
+    );
+    let lcov = report.join("lcov.info");
+    let log = cargo_log(&fixture);
+    for run in [
+        format!(
+            "llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path {}",
+            lcov.display()
+        ),
+        format!(
+            "crap --lcov {} --format json --output {}",
+            lcov.display(),
+            report.join("crap.json").display()
+        ),
+    ] {
+        assert!(log.lines().any(|line| line == run), "{run}: {log}");
+    }
+    assert_eq!(metadata_runs(&fixture), 0, "CARGO_TARGET_DIR is set: {log}");
+    // H-35 and H-43 read the artifacts where this gate wrote them.
+    let cases: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(report.join("cases.json")).expect("read"))
+            .expect("json");
+    for name in ["record_only_artifacts_are_nonempty", "crap_wires_coverage"] {
+        let entry = law(&cases, name);
+        assert_eq!(entry["status"], "checked", "{name}: {entry}");
+        assert!(
+            matches!(entry["verdict"].as_str(), Some("Allow" | "Ack")),
+            "{name}: {entry}"
+        );
+    }
+}
+
+#[test]
+fn one_gate_runs_cargo_metadata_once() {
+    let fixture = fixture_with(
+        "metadata-once",
+        &["static-lint", "coverage", "crap", "laws"],
+    );
+    stub_bend(&fixture);
+    // `cargo metadata` runs only for a project with a manifest. The stub
+    // answers nothing, so the report falls back to `<project>/target`.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write Cargo.toml");
+    for args in [&[][..], &["--dry-run"]] {
+        let _ = fs::remove_file(fixture.root.join("cargo.log"));
+        let (_, text) = gate_with(&fixture, path_without_bend(&fixture.bin), None, args);
+        assert!(text.contains("\n==> [laws] bend "), "{args:?}: {text}");
+        assert_eq!(
+            metadata_runs(&fixture),
+            1,
+            "{args:?}: {}",
+            cargo_log(&fixture)
+        );
+    }
+    assert!(fixture.repo.join("target/rust-tops/lcov.info").is_file());
+    assert!(fixture.repo.join("target/rust-tops/crap.json").is_file());
 }
 
 #[test]
