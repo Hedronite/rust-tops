@@ -199,6 +199,26 @@ fn a_symlinked_directory_below_the_root_fails_init_with_or_without_force() {
 }
 
 #[test]
+fn a_regular_file_where_init_needs_a_directory_fails_init_with_or_without_force() {
+    let root = scratch("file-dir");
+    let repo = root.join("repo");
+    fs::write(repo.join(".github"), "keep\n").expect("write .github");
+    let want = format!(
+        "{} is a symlink or not a directory, and init does not follow one",
+        repo.join(".github").display()
+    );
+    for extra in [&[][..], &["--force"][..]] {
+        let (ok, text) = init(&repo, extra);
+        assert!(!ok, "{text}");
+        assert!(text.contains(&want), "{text}");
+    }
+    assert_eq!(
+        fs::read_to_string(repo.join(".github")).expect("read"),
+        "keep\n"
+    );
+}
+
+#[test]
 fn a_root_that_is_a_link_is_written_through_as_the_path_named() {
     let root = scratch("linked-root");
     let real = root.join("repo");

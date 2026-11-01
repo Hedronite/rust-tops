@@ -592,7 +592,10 @@ fn git(dir: &Path, args: &[&str]) -> Option<(i32, String)> {
 }
 
 /// H-23. The nearest `Cargo.lock` is tracked and still equals `HEAD` after
-/// this gate's Cargo commands, which rewrite a stale lock.
+/// this gate's Cargo commands, which rewrite a stale lock. When the project
+/// has a `rust-tops.lock`, whose pins the crap layer holds the tool to, it
+/// is tracked and equals `HEAD` too. No `rust-tops.lock` is no drift:
+/// `init` does not write one.
 fn lock_honesty(ctx: &Ctx) -> Choice {
     let Some((0, top)) = git(ctx.dir, &["rev-parse", "--show-toplevel"]) else {
         return not_evaluated_because("not a git work tree");
@@ -607,22 +610,30 @@ fn lock_honesty(ctx: &Ctx) -> Choice {
     let Some(lock) = lock else {
         return fact(false, vec!["Cargo.lock (absent)".into()]);
     };
-    let rel = lock
-        .strip_prefix(&top)
-        .unwrap_or(&lock)
-        .to_string_lossy()
-        .into_owned();
-    let read = vec![rel.clone()];
-    match git(&top, &["ls-files", "--error-unmatch", "--", &rel]) {
-        Some((0, _)) => {}
-        Some(_) => return fact(false, read),
-        None => return not_evaluated_because("git did not run"),
+    let tools = dir.join(crate::TOOL_LOCK);
+    let read: Vec<String> = [Some(lock), tools.is_file().then_some(tools)]
+        .into_iter()
+        .flatten()
+        .map(|path| {
+            path.strip_prefix(&top)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    for rel in read.clone() {
+        match git(&top, &["ls-files", "--error-unmatch", "--", &rel]) {
+            Some((0, _)) => {}
+            Some(_) => return fact(false, read),
+            None => return not_evaluated_because("git did not run"),
+        }
+        match git(&top, &["diff", "--quiet", "HEAD", "--", &rel]) {
+            Some((0, _)) => {}
+            Some((1, _)) => return fact(false, read),
+            _ => return not_evaluated_because("git diff HEAD did not answer (no commit yet?)"),
+        }
     }
-    match git(&top, &["diff", "--quiet", "HEAD", "--", &rel]) {
-        Some((0, _)) => fact(true, read),
-        Some((1, _)) => fact(false, read),
-        _ => not_evaluated_because("git diff HEAD did not answer (no commit yet?)"),
-    }
+    fact(true, read)
 }
 
 /// H-24. Some workflow job is an MSRV job.

@@ -7,7 +7,10 @@
 //! `bend`'s exit status on that proof. When the proof fails, one more run
 //! of `main` alone prints every verdict. That run does not decide pass or fail.
 
-use std::cell::{Cell, RefCell};
+#[cfg(test)]
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,9 +32,16 @@ pub const OUT_DIR: &str = "target/rust-tops";
 /// A nonempty `CARGO_TARGET_DIR` wins. Otherwise, when `Cargo.toml` exists
 /// and `cargo metadata` returns JSON, that `target_directory` wins. Otherwise
 /// the report is `<project>/target/rust-tops`. `cargo metadata` runs at most
-/// once for a project; later calls in the same gate reuse that answer.
+/// once per project inside one gate. [`begin_gate`] clears that cache, so the
+/// next gate resolves the same project again.
 pub fn report_dir(project: &Path) -> PathBuf {
     artifact_dir(project)
+}
+
+/// Drop the metadata cache. `gate` calls this once before any [`report_dir`].
+#[allow(dead_code, reason = "main.rs calls this once at the start of gate")]
+pub fn begin_gate() {
+    META_CACHE.with(|slot| slot.borrow_mut().clear());
 }
 
 /// Directory for `lcov.info` and `crap.json`.
@@ -49,7 +59,8 @@ pub fn artifact_dir(project: &Path) -> PathBuf {
 }
 
 thread_local! {
-    static META_CACHE: RefCell<Option<(PathBuf, Option<String>)>> = const { RefCell::new(None) };
+    static META_CACHE: RefCell<HashMap<PathBuf, Option<String>>> = RefCell::new(HashMap::new());
+    #[cfg(test)]
     static META_SPAWNS: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -57,15 +68,14 @@ fn metadata_target_once(project: &Path) -> Option<String> {
     let key = project
         .canonicalize()
         .unwrap_or_else(|_| project.to_path_buf());
-    let cached = META_CACHE.with(|slot| match slot.borrow().as_ref() {
-        Some((cached_key, target)) if cached_key == &key => Some(target.clone()),
-        _ => None,
-    });
+    let cached = META_CACHE.with(|slot| slot.borrow().get(&key).cloned());
     if let Some(target) = cached {
         return target;
     }
     let target = metadata_target(project);
-    META_CACHE.with(|slot| *slot.borrow_mut() = Some((key, target.clone())));
+    META_CACHE.with(|slot| {
+        slot.borrow_mut().insert(key, target.clone());
+    });
     target
 }
 
@@ -107,6 +117,7 @@ fn metadata_target(project: &Path) -> Option<String> {
     if !manifest.is_file() {
         return None;
     }
+    #[cfg(test)]
     META_SPAWNS.with(|count| count.set(count.get() + 1));
     let output = Command::new("cargo")
         .args([
@@ -770,6 +781,7 @@ mod tests {
 
     #[test]
     fn report_dir_reuses_one_cargo_metadata_and_shares_the_artifact_dir() {
+        let _lock = lock_target_env();
         let dir = std::env::temp_dir().join(format!("cargo-tops-meta-once-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
@@ -780,7 +792,7 @@ mod tests {
         .unwrap();
         fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
         let _env = EnvGuard::remove("CARGO_TARGET_DIR");
-        META_CACHE.with(|slot| *slot.borrow_mut() = None);
+        begin_gate();
         let before = META_SPAWNS.with(|count| count.get());
         let first = report_dir(&dir);
         let second = report_dir(&dir);
@@ -793,6 +805,7 @@ mod tests {
 
     #[test]
     fn a_second_project_on_the_same_thread_spawns_its_own_metadata() {
+        let _lock = lock_target_env();
         let root =
             std::env::temp_dir().join(format!("cargo-tops-two-projects-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -808,7 +821,7 @@ mod tests {
             fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
         }
         let _env = EnvGuard::remove("CARGO_TARGET_DIR");
-        META_CACHE.with(|slot| *slot.borrow_mut() = None);
+        begin_gate();
         let before = META_SPAWNS.with(|count| count.get());
         let first = report_dir(&alpha);
         let after_first = META_SPAWNS.with(|count| count.get());
@@ -827,11 +840,52 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.ends_with("alpha/target/rust-tops"), "{first:?}");
         assert!(second.ends_with("beta/target/rust-tops"), "{second:?}");
+        let again = report_dir(&alpha);
+        let after_again = META_SPAWNS.with(|count| count.get());
+        assert_eq!(again, first);
+        assert_eq!(
+            after_again, after_second,
+            "the first project spawned again inside the same gate"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
+    fn a_second_gate_on_the_same_project_resolves_metadata_again() {
+        let _lock = lock_target_env();
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-second-gate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"second-gate\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
+        let _env = EnvGuard::remove("CARGO_TARGET_DIR");
+        begin_gate();
+        let before = META_SPAWNS.with(|count| count.get());
+        let first = report_dir(&dir);
+        let second = report_dir(&dir);
+        let after_gate = META_SPAWNS.with(|count| count.get());
+        assert_eq!(first, second);
+        assert_eq!(after_gate - before, 1, "one gate spawned metadata twice");
+        begin_gate();
+        let third = report_dir(&dir);
+        let after_next = META_SPAWNS.with(|count| count.get());
+        assert_eq!(third, first);
+        assert_eq!(
+            after_next - after_gate,
+            1,
+            "the next gate reused the previous metadata"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_nonempty_cargo_target_dir_skips_metadata_and_moves_artifacts() {
+        let _lock = lock_target_env();
         let project =
             std::env::temp_dir().join(format!("cargo-tops-env-target-{}", std::process::id()));
         let _ = fs::remove_dir_all(&project);
@@ -870,6 +924,12 @@ mod tests {
             PathBuf::from("/proj/target/rust-tops")
         );
     }
+
+    fn lock_target_env() -> std::sync::MutexGuard<'static, ()> {
+        TARGET_ENV.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    static TARGET_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct EnvGuard {
         key: &'static str,
