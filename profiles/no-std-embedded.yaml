@@ -18,3 +18,6 @@ callgrind: size-and-cycle
 panic: abort
 alloc: opt-in
 unsafe_policy: required-kernel
+strict:
+  library_only: true
+  avoid_breaking_exported_api: true

@@ -124,6 +124,7 @@ fn apply_profile(
         ("coverage", "/gates/coverage"),
         ("crap", "/gates/crap"),
         ("mutation", "/gates/mutation"),
+        ("strict", "/gates/lint"),
     ] {
         if let Some(src) = profile.get(key) {
             overlay(doc, pointer, src, class)?;
@@ -360,4 +361,19 @@ fn plain_key(key: &str) -> String {
 
 fn pad(out: &mut String, indent: usize) {
     out.push_str(&" ".repeat(indent));
+}
+
+#[cfg(test)]
+mod strict_profile {
+    use super::merge_profile;
+
+    #[test]
+    fn library_classes_keep_lib_lints_and_binaries_do_not() {
+        let lib = merge_profile("library-util", "demo").unwrap();
+        assert!(lib.contains("library_only: true"));
+        assert!(lib.contains("avoid_breaking_exported_api: true"));
+        let bin = merge_profile("binary-cli", "demo").unwrap();
+        assert!(bin.contains("library_only: false"));
+        assert!(bin.contains("avoid_breaking_exported_api: false"));
+    }
 }

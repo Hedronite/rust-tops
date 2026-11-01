@@ -16,3 +16,6 @@ fuzz: optional
 miri: if-unsafe
 kani: kernels
 callgrind: hot-paths
+strict:
+  library_only: true
+  avoid_breaking_exported_api: true
