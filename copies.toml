@@ -126,3 +126,7 @@ to = ["docs/REVIEW.md"]
 [[copy]]
 from = "schema/rust-tops.schema.json"
 to = ["crates/cargo-tops/templates/rust-tops.schema.json"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/lints/tops-strict.toml"
+to = ["config/lints/tops-strict.toml"]

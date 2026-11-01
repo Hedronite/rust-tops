@@ -1,0 +1,7 @@
+BeautifulRust
+
+The file crates/cargo-tops/templates/lints/tops-strict.toml is copied from
+BeautifulRust lints/lints.toml at tag v1.5.0
+(40db61c6fee84bd121cf288755f0e2f22a50e995).
+That copy stays MIT. The rest of this repository is MIT OR Apache-2.0.
+https://github.com/morganlinton/BeautifulRust
