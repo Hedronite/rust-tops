@@ -18,10 +18,10 @@ use serde_json::Value;
 use crate::config::TopsConfig;
 use crate::profiles;
 use crate::steps;
-pub use crate::steps::Outcome;
+pub(crate) use crate::steps::Outcome;
 
 /// One chain of steps `gate` ran, or could not run, for a layer.
-pub struct Run {
+pub(crate) struct Run {
     pub layer: String,
     /// The steps that ran, joined with `&&`. A step the chain never reached
     /// is not here.
@@ -37,19 +37,19 @@ fn counted(run: &Run) -> bool {
     run.outcome.counts_for_a_law()
 }
 
-pub struct Workflow {
+pub(crate) struct Workflow {
     pub rel: String,
     pub doc: Value,
 }
 
 /// `.github/workflows/*.yml` in the adopter repo.
-pub enum Workflows {
+pub(crate) enum Workflows {
     Absent,
     Parsed(Vec<Workflow>),
     Broken(String),
 }
 
-pub struct Ctx<'a> {
+pub(crate) struct Ctx<'a> {
     pub dir: &'a Path,
     pub cfg: &'a TopsConfig,
     /// `rust-tops.yaml` as a tree, for keys `TopsConfig` does not type.
@@ -64,18 +64,18 @@ pub struct Ctx<'a> {
 }
 
 /// `cases.json` `reason_code` for a law this release cannot read.
-pub const NO_FACT_READER: &str = "no_fact_reader";
+pub(crate) const NO_FACT_READER: &str = "no_fact_reader";
 
 /// `cases.json` `reason_code` for a law whose reader had nothing to read
 /// on this run (a layer did not run, a file was absent, a tier had no match).
-pub const RUN_DEPENDENT: &str = "run_dependent";
+pub(crate) const RUN_DEPENDENT: &str = "run_dependent";
 
-pub enum Choice {
+pub(crate) enum Choice {
     Fact { met: bool, read: Vec<String> },
     NotEvaluated { reason: String, code: &'static str },
 }
 
-pub struct LawFact {
+pub(crate) struct LawFact {
     pub law: &'static str,
     pub fun: &'static str,
     pub met: &'static str,
@@ -84,7 +84,11 @@ pub struct LawFact {
 }
 
 impl LawFact {
-    pub fn ctor(&self, met: bool) -> &'static str {
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    pub(crate) fn ctor(&self, met: bool) -> &'static str {
         if met {
             self.met
         } else {
@@ -94,7 +98,7 @@ impl LawFact {
 }
 
 /// Every law this slice can read a fact for, in `LAWS.bend` order.
-pub const FACTS: &[LawFact] = &[
+pub(crate) const FACTS: &[LawFact] = &[
     LawFact {
         law: "ci_matrix_matches_class",
         fun: "class_job_verdict",
@@ -202,13 +206,13 @@ pub const FACTS: &[LawFact] = &[
     },
 ];
 
-pub fn find(law: &str) -> Option<&'static LawFact> {
+pub(crate) fn find(law: &str) -> Option<&'static LawFact> {
     FACTS.iter().find(|fact| fact.law == law)
 }
 
 /// Laws a pack declares: its `law <name>:` lines, read the way the `laws`
 /// layer reads them. The denominator of `laws evaluated: N/<count>`.
-pub fn pack_law_count(pack: &str) -> usize {
+pub(crate) fn pack_law_count(pack: &str) -> usize {
     pack.lines()
         .filter(|line| {
             line.strip_prefix("law ")
@@ -219,7 +223,7 @@ pub fn pack_law_count(pack: &str) -> usize {
 }
 
 /// Why a law with no [`LawFact`] is `not-evaluated`.
-pub fn not_evaluated(law: &str) -> &'static str {
+pub(crate) fn not_evaluated(law: &str) -> &'static str {
     match law {
         "evidence_not_self_served" => {
             "intent is not readable: no file shows that a test was taken from the implementation"
@@ -256,6 +260,10 @@ pub fn not_evaluated(law: &str) -> &'static str {
     }
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 fn fact(met: bool, read: Vec<String>) -> Choice {
     Choice::Fact { met, read }
 }
@@ -280,7 +288,7 @@ fn with_workflows(ctx: &Ctx, body: impl FnOnce(&[Workflow], Vec<String>) -> Choi
     }
 }
 
-pub fn parse_yaml(raw: &str) -> Result<Value, String> {
+pub(crate) fn parse_yaml(raw: &str) -> Result<Value, String> {
     serde_saphyr::from_str_with_options(
         raw,
         serde_saphyr::options! {
@@ -290,7 +298,7 @@ pub fn parse_yaml(raw: &str) -> Result<Value, String> {
     .map_err(|err| err.to_string())
 }
 
-pub fn load_workflows(dir: &Path) -> Workflows {
+pub(crate) fn load_workflows(dir: &Path) -> Workflows {
     let Ok(entries) = fs::read_dir(dir.join(".github/workflows")) else {
         return Workflows::Absent;
     };
@@ -372,7 +380,7 @@ fn wf_segments(wfs: &[Workflow]) -> Vec<Vec<String>> {
 
 /// Shell commands in a `run:` block: comment lines dropped, backslash
 /// continuations joined, then split on `&&`, `||`, `;` and `|`.
-pub fn segments(run: &str) -> Vec<Vec<String>> {
+pub(crate) fn segments(run: &str) -> Vec<Vec<String>> {
     let mut logical = Vec::new();
     let mut current = String::new();
     for line in run.lines() {
@@ -489,6 +497,10 @@ fn manifest_lint(manifest: &toml::Table, tool: &str, names: &[&str], levels: &[&
 
 /// Every `rustflags` value in a Cargo config, as flag tokens.
 fn rustflags_tokens(table: &toml::Table) -> Vec<String> {
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     fn walk(value: &toml::Value, under_rustflags: bool, out: &mut Vec<String>) {
         match value {
             toml::Value::String(s) if under_rustflags => out.extend(flag_tokens(s)),
@@ -527,7 +539,7 @@ fn layer_ran(ctx: &Ctx, layer: &str) -> bool {
 /// H-06. Jobs a class must show, from §4 ("required" in the fuzz, Miri,
 /// Kani and Callgrind columns; loom for concurrency-runtime) on top of the
 /// §17 jobs every PR runs.
-pub fn class_keywords(class: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn class_keywords(class: &str) -> Option<&'static [&'static str]> {
     Some(match class {
         "library-core" | "library-util" | "binary-cli" | "binary-service" | "proc-macro"
         | "workspace-root" => &["clippy", "nextest", "coverage"],
@@ -770,10 +782,19 @@ fn no_pedantic_group(ctx: &Ctx) -> Choice {
 }
 
 fn skips_baseline(tokens: &[String]) -> bool {
-    tokens
-        .windows(2)
-        .any(|pair| pair[0] == "--baseline" && pair[1] == "skip")
-        || tokens.iter().any(|token| token == "--baseline=skip")
+    tokens.windows(2).any(|pair| {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let left = &pair[0];
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let right = &pair[1];
+        *left == "--baseline" && *right == "skip"
+    }) || tokens.iter().any(|token| token == "--baseline=skip")
 }
 
 /// H-30. No `cargo mutants` argv this gate ran or a workflow runs skips the
@@ -928,10 +949,18 @@ fn perf_runner(ctx: &Ctx) -> Choice {
 fn artifact_own_step(ctx: &Ctx) -> Choice {
     with_workflows(ctx, |wfs, read| {
         let segs = wf_segments(wfs);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let is_check = |pair: &[String]| pair[0] == "test" && pair[1] == "-s";
         let folded = segs
             .iter()
             .any(|seg| cargo_sub(seg).is_some() && seg.windows(2).any(is_check));
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let own = segs.iter().any(|seg| seg.len() >= 2 && is_check(&seg[..2]));
         if !folded && !own {
             return not_evaluated_because("no test -s artifact check in a workflow");
@@ -941,7 +970,7 @@ fn artifact_own_step(ctx: &Ctx) -> Choice {
 }
 
 /// The job ids of the drop-in workflow `cargo tops init` writes.
-pub fn floor_jobs() -> Vec<String> {
+pub(crate) fn floor_jobs() -> Vec<String> {
     parse_yaml(profiles::WORKFLOW_YML)
         .ok()
         .and_then(|doc| {
@@ -1062,6 +1091,10 @@ mod tests {
         let cfg = cfg();
         let dir =
             std::env::temp_dir().join(format!("cargo-tops-crap-wired-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("mkdir");
         let wired = |coverage: Outcome| {
@@ -1081,6 +1114,10 @@ mod tests {
         assert!(wired(Outcome::Passed));
         // A fresh LCOV beside a failed coverage run is not wired.
         assert!(!wired(Outcome::Failed));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1187,7 +1224,19 @@ mod tests {
             })
             .collect();
         assert!(
-            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            positions.windows(2).all(|pair| {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "already in this crate when the strict table was turned on"
+                )]
+                let left = &pair[0];
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "already in this crate when the strict table was turned on"
+                )]
+                let right = &pair[1];
+                left < right
+            }),
             "FACTS out of LAWS.bend order"
         );
     }
@@ -1217,10 +1266,25 @@ mod tests {
     fn a_continued_test_s_is_cargo_argv() {
         let segs = segments("cargo llvm-cov --lcov --output-path x \\\n  test -s x");
         assert_eq!(segs.len(), 1);
-        assert_eq!(cargo_sub(&segs[0]), Some("llvm-cov"));
-        assert!(segs[0]
-            .windows(2)
-            .any(|pair| pair[0] == "test" && pair[1] == "-s"));
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1265_31 = &segs[0];
+        assert_eq!(cargo_sub(tops_idx_1265_31), Some("llvm-cov"));
+        assert!(tops_idx_1265_31.windows(2).any(|pair| {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let left = &pair[0];
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let right = &pair[1];
+            *left == "test" && *right == "-s"
+        }));
     }
 
     #[test]
@@ -1354,6 +1418,8 @@ mod tests {
     fn baseline_skip_spellings() {
         assert!(skips_baseline(&seg("cargo mutants --baseline skip")));
         assert!(skips_baseline(&seg("cargo mutants --baseline=skip")));
+        assert!(!skips_baseline(&seg("cargo mutants --baseline keep")));
+        assert!(!skips_baseline(&seg("cargo mutants skip")));
         assert!(!skips_baseline(&seg("cargo mutants --in-diff d")));
     }
 

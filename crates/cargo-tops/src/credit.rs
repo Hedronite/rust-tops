@@ -6,22 +6,21 @@
 //! lacks `--workspace`, `--all-features`, or the nextest profile grants no
 //! credit, and `unit`, `integration`, and `property` run themselves.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
-
 #![allow(dead_code, reason = "main.rs calls the credit decision")]
 
 /// Nextest profile a coverage command must pass for credit.
-pub const NEXTEST_PROFILE: &str = "ci";
+pub(crate) const NEXTEST_PROFILE: &str = "ci";
 
 /// What the gate recorded for a layer it already ran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     Passed,
     Failed,
     ToolMissing,
 }
 
 /// Inputs for one layer. Argv is the command that layer would run.
-pub struct Query<'a> {
+pub(crate) struct Query<'a> {
     pub layer: &'a str,
     pub coverage_in_range: bool,
     pub coverage_argv: &'a [String],
@@ -36,7 +35,7 @@ pub struct Query<'a> {
 /// Coverage may stand in for unit, integration, and property only when its
 /// command carries the workspace, all-features, and nextest-profile flags.
 #[must_use]
-pub fn coverage_grants_credit(argv: &[String]) -> bool {
+pub(crate) fn coverage_grants_credit(argv: &[String]) -> bool {
     let tokens = tokens(argv);
     has(&tokens, "--workspace")
         && has(&tokens, "--all-features")
@@ -45,7 +44,7 @@ pub fn coverage_grants_credit(argv: &[String]) -> bool {
 
 /// `true` when `layer` adds its own command.
 #[must_use]
-pub fn runs_itself(query: &Query<'_>) -> bool {
+pub(crate) fn runs_itself(query: &Query<'_>) -> bool {
     !takes_coverage(query) && !takes_unit(query)
 }
 
@@ -54,7 +53,7 @@ pub fn runs_itself(query: &Query<'_>) -> bool {
 /// A missing source is [`Outcome::Failed`], never [`Outcome::Passed`].
 /// [`None`] when the layer runs itself.
 #[must_use]
-pub fn recorded_outcome(query: &Query<'_>) -> Option<Outcome> {
+pub(crate) fn recorded_outcome(query: &Query<'_>) -> Option<Outcome> {
     if takes_coverage(query) {
         return Some(query.coverage_outcome.unwrap_or(Outcome::Failed));
     }
@@ -89,6 +88,10 @@ fn has(tokens: &[&str], flag: &str) -> bool {
 }
 
 fn has_profile(tokens: &[&str], profile: &str) -> bool {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let paired = tokens
         .windows(2)
         .any(|pair| pair[0] == "--profile" && pair[1] == profile);
@@ -139,6 +142,10 @@ mod tests {
         argv
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     fn query<'a>(
         layer: &'a str,
         coverage: &'a [String],

@@ -1,3 +1,8 @@
+#![expect(missing_docs, reason = "this crate already violates the strict table")]
+#![expect(
+    clippy::expect_used,
+    reason = "this crate already violates the strict table"
+)]
 use parser_codec::{
     decode_frame, decode_varint, encode_frame, encode_varint, FrameError, VarIntError,
 };

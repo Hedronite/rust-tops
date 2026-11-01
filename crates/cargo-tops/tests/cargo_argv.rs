@@ -39,6 +39,7 @@ fn cargo_tops(args: &[&str], dir: Option<&std::path::Path>) -> std::process::Out
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn cargo_tops_help_and_check_use_the_built_binary() {
     let help = cargo_tops(&["--help"], None);
     let help_text = format!(
@@ -55,6 +56,10 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
     );
 
     let root = std::env::temp_dir().join(format!("cargo-tops-argv-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
@@ -108,5 +113,9 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
     );
     assert!(direct.status.success(), "{direct_text}");
     assert!(direct_text.contains("ok:"), "{direct_text}");
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
 }

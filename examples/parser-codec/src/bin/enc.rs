@@ -1,3 +1,4 @@
+#![expect(missing_docs, reason = "this crate already violates the strict table")]
 use parser_codec::{decode_varint, encode_varint};
 use std::io::{self, Read, Write};
 

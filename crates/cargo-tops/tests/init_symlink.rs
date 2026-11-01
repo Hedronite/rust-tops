@@ -15,6 +15,10 @@ use std::thread::{self, JoinHandle};
 
 fn scratch(label: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("init-symlink-{label}"));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("repo")).expect("create repo");
     root
@@ -243,7 +247,15 @@ fn a_root_that_is_a_link_is_written_through_as_the_path_named() {
 fn flicker(at: PathBuf, to: PathBuf, stop: Arc<AtomicBool>) -> JoinHandle<()> {
     thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             let _ = symlink(&to, &at);
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             let _ = fs::remove_file(&at);
         }
     })

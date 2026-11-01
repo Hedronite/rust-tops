@@ -1,22 +1,35 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
-pub const AGENTS_MD: &str = include_str!("../templates/AGENTS.md");
-pub const CLIPPY_TOML: &str = include_str!("../templates/drop-in/clippy.toml");
-pub const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest.toml");
-pub const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml");
-pub const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
-pub const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
-pub const WORKFLOW_YML: &str = include_str!("../templates/drop-in/rust-tops.yml");
+pub(crate) const AGENTS_MD: &str = include_str!("../templates/AGENTS.md");
+pub(crate) const CLIPPY_TOML: &str = include_str!("../templates/drop-in/clippy.toml");
+
+/// `clippy.toml` for `class`. Binaries set `avoid-breaking-exported-api` to
+/// false because that is the file clippy reads. Libraries keep clippy's default.
+pub(crate) fn clippy_toml(class: &str) -> Result<String, crate::profile_data::ProfileError> {
+    let mut text = CLIPPY_TOML.to_string();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if !crate::profile_data::avoid_breaking_exported_api(class)? {
+        text.push_str("avoid-breaking-exported-api = false\n");
+    }
+    Ok(text)
+}
+pub(crate) const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest.toml");
+pub(crate) const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml");
+pub(crate) const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
+pub(crate) const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
+pub(crate) const WORKFLOW_YML: &str = include_str!("../templates/drop-in/rust-tops.yml");
 const JOB_FUZZ: &str = include_str!("../templates/drop-in/jobs/fuzz.yml");
 const JOB_MIRI: &str = include_str!("../templates/drop-in/jobs/miri.yml");
 const JOB_KANI: &str = include_str!("../templates/drop-in/jobs/kani.yml");
 const JOB_CALLGRIND: &str = include_str!("../templates/drop-in/jobs/callgrind.yml");
-pub const LAWS_BEND: &str = include_str!("../templates/LAWS.bend");
-pub const BEND_LOCK: &str = include_str!("../templates/bend.lock");
-pub const FETCH_BEND_SH: &str = include_str!("../templates/fetch-bend.sh");
+pub(crate) const LAWS_BEND: &str = include_str!("../templates/LAWS.bend");
+pub(crate) const BEND_LOCK: &str = include_str!("../templates/bend.lock");
+pub(crate) const FETCH_BEND_SH: &str = include_str!("../templates/fetch-bend.sh");
 
 /// Byte copy of `schema/rust-tops.schema.json`; `cargo tops check` validates
 /// against it (`cargo package` ships `templates/`, not the workspace `schema/`).
-pub const SCHEMA_JSON: &str = include_str!("../templates/rust-tops.schema.json");
+pub(crate) const SCHEMA_JSON: &str = include_str!("../templates/rust-tops.schema.json");
 
 /// Class jobs `init` appends to the drop-in floor, keyed by the job keyword
 /// `facts::class_keywords` asks the workflow to show.
@@ -28,7 +41,7 @@ const CLASS_JOBS: [(&str, &str); 4] = [
 ];
 
 /// The drop-in workflow plus one job per keyword this class requires (§4).
-pub fn workflow_yml(class: &str) -> String {
+pub(crate) fn workflow_yml(class: &str) -> String {
     let keywords = crate::facts::class_keywords(class).unwrap_or(&[]);
     let mut yaml = WORKFLOW_YML.to_string();
     for (keyword, job) in CLASS_JOBS {
@@ -40,7 +53,7 @@ pub fn workflow_yml(class: &str) -> String {
 }
 
 /// `rust-toolchain.toml` pinned to the instance's `crate.msrv`.
-pub fn rust_toolchain_toml(msrv: &str) -> String {
+pub(crate) fn rust_toolchain_toml(msrv: &str) -> String {
     format!(
         "# Written by `cargo tops init` from rust-tops.yaml crate.msrv. Local builds\n\
          # and every CI job that is not nightly-only use this channel\n\
@@ -53,7 +66,7 @@ pub fn rust_toolchain_toml(msrv: &str) -> String {
 
 /// `rust-tops.yaml` for `class`: the class profile merged onto the template
 /// as data. A class with no profile is an error, never library-core.
-pub fn profile_yaml(
+pub(crate) fn profile_yaml(
     class: &str,
     crate_name: &str,
 ) -> Result<String, crate::profile_data::ProfileError> {
@@ -65,6 +78,23 @@ mod tests {
     use std::path::Path;
 
     use super::{BEND_LOCK, FETCH_BEND_SH, LAWS_BEND, SCHEMA_JSON};
+
+    #[test]
+    fn binary_clippy_toml_sets_avoid_breaking_exported_api_false() {
+        let bin = super::clippy_toml("binary-cli").unwrap();
+        assert!(
+            bin.lines()
+                .any(|line| line == "avoid-breaking-exported-api = false"),
+            "{bin}"
+        );
+        let lib = super::clippy_toml("library-core").unwrap();
+        assert!(
+            lib.lines()
+                .all(|line| !line.starts_with("avoid-breaking-exported-api")),
+            "{lib}"
+        );
+        assert_eq!(lib, super::CLIPPY_TOML);
+    }
 
     /// The template must be a byte copy of the workspace file it vendors.
     fn expect_vendored(template: &str, workspace_rel: &str, template_name: &str) {
@@ -104,6 +134,10 @@ mod tests {
         for class in INIT_CLASSES {
             let doc = crate::facts::parse_yaml(&super::workflow_yml(class))
                 .unwrap_or_else(|err| panic!("{class} workflow: {err}"));
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             let jobs = doc["jobs"].as_object().expect("jobs");
             let keywords = crate::facts::class_keywords(class).expect("init class has a §4 row");
             for keyword in keywords {
@@ -141,12 +175,37 @@ mod tests {
         let read = r#"echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT""#;
         let doc = crate::facts::parse_yaml(&super::workflow_yml("unsafe-kernel")).expect("yaml");
         let mut pinned_jobs = 0;
-        for (id, job) in doc["jobs"].as_object().expect("jobs") {
-            let steps = job["steps"].as_array().expect("steps");
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let jobs = doc["jobs"].as_object().expect("jobs").clone();
+        for (id, job) in jobs {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let steps_val = job["steps"].clone();
+            let steps = steps_val.as_array().expect("steps");
             for (i, step) in steps.iter().enumerate() {
-                if step["with"]["toolchain"] == "${{ steps.toolchain.outputs.channel }}" {
-                    assert_eq!(steps[i - 1]["id"], "toolchain", "{id}");
-                    assert_eq!(steps[i - 1]["run"], read, "{id}");
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "already in this crate when the strict table was turned on"
+                )]
+                let toolchain = step["with"]["toolchain"].clone();
+                if toolchain == "${{ steps.toolchain.outputs.channel }}" {
+                    #[expect(
+                        clippy::indexing_slicing,
+                        reason = "already in this crate when the strict table was turned on"
+                    )]
+                    let prev_id = steps[i - 1]["id"].clone();
+                    assert_eq!(prev_id, "toolchain", "{id}");
+                    #[expect(
+                        clippy::indexing_slicing,
+                        reason = "already in this crate when the strict table was turned on"
+                    )]
+                    let prev_run = steps[i - 1]["run"].clone();
+                    assert_eq!(prev_run, read, "{id}");
                     pinned_jobs += 1;
                 }
             }
@@ -160,7 +219,12 @@ mod tests {
     fn rust_toolchain_toml_pins_the_msrv() {
         let text = super::rust_toolchain_toml("1.88");
         let table: toml::Table = text.parse().expect("toml");
-        assert_eq!(table["toolchain"]["channel"].as_str(), Some("1.88"));
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_217_20 = table["toolchain"]["channel"].clone();
+        assert_eq!(tops_idx_217_20.as_str(), Some("1.88"));
     }
 
     #[test]

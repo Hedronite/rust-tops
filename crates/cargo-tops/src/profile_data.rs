@@ -60,7 +60,7 @@ const MUTATION_FLOORS: &[&str] = &["kill_rate_min_pct"];
 
 /// Why [`merge_profile`] produced no document.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ProfileError {
+pub(crate) enum ProfileError {
     /// No embedded profile for this class. Library-core is not a fallback.
     UnknownClass { class: String },
     /// The profile or the template could not be merged.
@@ -78,6 +78,24 @@ impl std::fmt::Display for ProfileError {
 
 impl std::error::Error for ProfileError {}
 
+/// Whether clippy should lint changes that break this class's exported API.
+///
+/// Binary classes say false. Clippy reads that from `clippy.toml`, not from
+/// the `gates.lint` copy in `rust-tops.yaml`.
+pub(crate) fn avoid_breaking_exported_api(class: &str) -> Result<bool, ProfileError> {
+    let source = profile_source(class).ok_or_else(|| ProfileError::UnknownClass {
+        class: class.to_string(),
+    })?;
+    let profile = parse_yaml(source).map_err(|detail| ProfileError::Invalid {
+        class: class.to_string(),
+        detail,
+    })?;
+    profile
+        .pointer("/strict/avoid_breaking_exported_api")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| invalid(class, "strict.avoid_breaking_exported_api is not a bool"))
+}
+
 /// `rust-tops.yaml` for `class`, with `crate.name` set to `crate_name`.
 ///
 /// Coverage, CRAP, and mutation numbers come from the profile file and land
@@ -86,7 +104,7 @@ impl std::error::Error for ProfileError {}
 /// Call this from `init` and `check`. Do not fall back when it returns
 /// [`ProfileError::UnknownClass`].
 #[must_use = "an unknown class is an error and must not be written as library-core"]
-pub fn merge_profile(class: &str, crate_name: &str) -> Result<String, ProfileError> {
+pub(crate) fn merge_profile(class: &str, crate_name: &str) -> Result<String, ProfileError> {
     let source = profile_source(class).ok_or_else(|| ProfileError::UnknownClass {
         class: class.to_string(),
     })?;
@@ -321,6 +339,10 @@ fn emit_number(number: &Number) -> String {
     }
     if let Some(value) = number.as_f64() {
         if value.is_finite() && value.fract() == 0.0 && value.abs() < i64::MAX as f64 {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             return (value as i64).to_string();
         }
         return value.to_string();

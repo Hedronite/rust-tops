@@ -1,3 +1,18 @@
+#![cfg_attr(
+    test,
+    expect(
+        clippy::needless_pass_by_value,
+        reason = "this crate already violates the strict table"
+    )
+)]
+#![cfg_attr(
+    test,
+    expect(clippy::panic, reason = "this crate already violates the strict table")
+)]
+#![expect(
+    elided_lifetimes_in_paths,
+    reason = "this crate already violates the strict table"
+)]
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use std::fmt::Write as _;
@@ -15,6 +30,7 @@ mod profiles;
 mod schema;
 mod skills;
 mod steps;
+mod strict_lints;
 
 #[cfg(test)]
 mod parse_oracle;
@@ -189,6 +205,11 @@ fn check(cfg: &TopsConfig) -> Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) -> Result<()> {
     let crate_name = name
         .map(str::to_string)
@@ -196,6 +217,10 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
         .unwrap_or_else(|| "unnamed".to_string());
     // An unknown class fails here, before any directory or file is written.
     let yaml = with_init_exemptions(&profiles::profile_yaml(class, &crate_name)?);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let msrv = facts::parse_yaml(&yaml)
         .ok()
         .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
@@ -212,7 +237,7 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
         force,
     )?;
     write_file(dir, "AGENTS.md", profiles::AGENTS_MD, force)?;
-    write_file(dir, "clippy.toml", profiles::CLIPPY_TOML, force)?;
+    write_file(dir, "clippy.toml", &profiles::clippy_toml(class)?, force)?;
     write_file(dir, ".config/nextest.toml", profiles::NEXTEST_TOML, force)?;
     write_file(dir, ".cargo/mutants.toml", profiles::MUTANTS_TOML, force)?;
     write_file(dir, ".cargo-crap.toml", profiles::CARGO_CRAP_TOML, force)?;
@@ -259,6 +284,10 @@ fn dir_name(dir: &Path) -> Option<String> {
 /// that appears in between.
 ///
 /// [`Parent::open`] says how the directories are made and how far that
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// holds against a link swapped in while init runs.
 pub(crate) fn write_file(
     root: &Path,
@@ -389,10 +418,10 @@ impl Parent {
 type Parent = PathParent;
 
 /// The path walk. It is built on Unix too, so its tests run there.
-#[cfg_attr(all(unix, not(test)), allow(dead_code, reason = "the walk off Unix"))]
+#[cfg_attr(all(unix, not(test)), expect(dead_code, reason = "the walk off Unix"))]
 struct PathParent(PathBuf);
 
-#[cfg_attr(all(unix, not(test)), allow(dead_code, reason = "the walk off Unix"))]
+#[cfg_attr(all(unix, not(test)), expect(dead_code, reason = "the walk off Unix"))]
 impl PathParent {
     /// Each directory between `root` and the file is made with `create_dir`
     /// before anything looks at it, and a name it could not make must be a
@@ -452,6 +481,11 @@ enum Plan {
     Mutation(MutationPlan),
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<ExitCode> {
     // A gate resolves `cargo metadata` afresh, once per project.
     laws::begin_gate();
@@ -711,6 +745,10 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
 }
 
 /// Commands that ran: each run whose tool was found, and `bend` once when it
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// judged the laws layer. A layer that took another layer's run ran none.
 fn ran_commands(runs: &[Run], bend_ran: bool, shared: &[(&str, &str)]) -> usize {
     runs.iter()
@@ -813,6 +851,10 @@ impl TestCommands {
 /// The `count:` line, and whether it is short: an enabled layer in range
 /// ran no command (NotRun, a missing tool, or a dry run). Every run belongs
 /// to one enabled layer, so fewer commands than layers is always short. A
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// short count fails the gate.
 fn command_count(
     ran: usize,
@@ -846,6 +888,10 @@ fn command_count(
             .map(|(layer, _)| *layer)
             .collect();
         if !took.is_empty() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             let _ = write!(line, "; {} took the {from} run", took.join(", "));
         }
     }
@@ -861,6 +907,10 @@ fn command_count(
 fn laws_evaluated(cases: &Path) -> Option<(usize, usize)> {
     let raw = fs::read_to_string(cases).ok()?;
     let report: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let laws = report["laws"].as_array()?;
     let checked = laws.iter().filter(|law| law["status"] == "checked").count();
     Some((checked, laws.len()))
@@ -1050,6 +1100,7 @@ fn tool(argv: &[&str]) -> Vec<Step> {
 
 /// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
 /// and the mutation diff are written there.
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
     let chains = match layer.id.as_str() {
         "static-lint" => vec![
@@ -1122,6 +1173,7 @@ fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
 /// The profile YAML with its `exemptions:` block replaced by
 /// [`steps::init_exemptions`], which is empty. An exemption is a dated choice
 /// the adopter makes, never one `init` makes for them.
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn with_init_exemptions(yaml: &str) -> String {
     let mut block = String::new();
     match steps::init_exemptions() {
@@ -1129,6 +1181,10 @@ fn with_init_exemptions(yaml: &str) -> String {
         entries => {
             block.push_str("exemptions:\n");
             for entry in entries {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "already in this crate when the strict table was turned on"
+                )]
                 let _ = writeln!(
                     block,
                     "  - {{ layer: {}, expires: \"{}\" }}",
@@ -1222,27 +1278,51 @@ mod tests {
     fn coverage_and_crap_check_their_own_binary() {
         let coverage = chains("coverage");
         assert_eq!(coverage.len(), 1);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1285_44 = coverage[0].clone();
         assert_eq!(
-            steps::tool_binary(&tool_step(&coverage[0]).argv).as_deref(),
+            steps::tool_binary(&tool_step(&tops_idx_1285_44).argv).as_deref(),
             Some("cargo-llvm-cov")
         );
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1293_13 = coverage[0].clone();
         assert_eq!(
-            coverage[0].last().map(|step| step.kind),
+            tops_idx_1293_13.last().map(|step| step.kind),
             Some(Kind::Artifact)
         );
         let crap = chains("crap");
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1302_44 = crap[0].clone();
         assert_eq!(
-            steps::tool_binary(&tool_step(&crap[0]).argv).as_deref(),
+            steps::tool_binary(&tool_step(&tops_idx_1302_44).argv).as_deref(),
             Some("cargo-crap")
         );
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1310_13 = crap[0].clone();
         assert_eq!(
-            crap[0].last().and_then(Step::artifact_path),
+            tops_idx_1310_13.last().and_then(Step::artifact_path),
             Some(Path::new("/r/crap.json"))
         );
     }
 
     #[test]
     fn coverage_and_crap_write_under_the_artifact_dir() {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let coverage: Vec<String> = chains("coverage")[0].iter().map(Step::display).collect();
         assert_eq!(
             coverage,
@@ -1252,6 +1332,10 @@ mod tests {
                 "test -s /r/lcov.info",
             ]
         );
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let crap: Vec<String> = chains("crap")[0].iter().map(Step::display).collect();
         assert_eq!(
             crap,
@@ -1269,6 +1353,10 @@ mod tests {
     const COVERAGE: &str = "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov";
     const UNIT: &str = "cargo nextest run --workspace --all-features --profile ci";
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     fn tests_with(in_range: bool, coverage: &str, integration: &str) -> TestCommands {
         TestCommands {
             coverage_in_range: in_range,
@@ -1390,6 +1478,10 @@ mod tests {
             line,
             "count: 1 command(s) ran; 2 of 3 enabled layer(s) at tier <= 1 ran one; unit took the coverage run; none ran for: doc"
         );
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let (line, short) =
             command_count(2, &enabled[..2], &runs, false, 1, &[("unit", "coverage")]);
         assert!(!short);
@@ -1397,6 +1489,10 @@ mod tests {
             line.ends_with("ran one; unit took the coverage run"),
             "{line}"
         );
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let (line, _) = command_count(2, &enabled[..2], &runs, false, 1, &[("unit", "unit")]);
         assert!(line.ends_with("ran one; unit took the unit run"), "{line}");
     }
@@ -1467,6 +1563,10 @@ mod tests {
     fn formal_kani_runs_cargo_kani() {
         let kani = chains("formal-kani");
         assert_eq!(kani.len(), 1);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let step = tool_step(&kani[0]);
         assert_eq!(step.argv, ["cargo", "kani", "--workspace"]);
         assert_eq!(
@@ -1481,15 +1581,34 @@ mod tests {
             let yaml = init_yaml(class);
             let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
             let layer = |id: &str| {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "already in this crate when the strict table was turned on"
+                )]
                 doc["layers"]
                     .as_array()
                     .and_then(|layers| layers.iter().find(|l| l["id"] == id))
                     .cloned()
                     .unwrap_or_else(|| panic!("{class}: no {id} layer"))
             };
-            assert_eq!(layer("acceptance")["enabled"], false, "{class}");
-            assert_eq!(layer("formal-kani")["tier"], 4, "{class}");
-            assert_eq!(layer("laws")["enabled"], false, "{class}");
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let tops_idx_1593_24 = layer("acceptance")["enabled"].clone();
+            assert_eq!(tops_idx_1593_24, false, "{class}");
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let tops_idx_1598_24 = layer("formal-kani")["tier"].clone();
+            assert_eq!(tops_idx_1598_24, 4, "{class}");
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let tops_idx_1603_24 = layer("laws")["enabled"].clone();
+            assert_eq!(tops_idx_1603_24, false, "{class}");
         }
     }
 
@@ -1509,6 +1628,10 @@ mod tests {
             steps::judge_diff(true, &dir.join("absent")),
             Outcome::Failed
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         assert!(!Outcome::Vacuous.fails_the_gate());
         assert!(!Outcome::Vacuous.counts_for_a_law());
@@ -1519,9 +1642,19 @@ mod tests {
         for class in PROFILE_CLASSES {
             let yaml = init_yaml(class);
             let doc = facts::parse_yaml(&yaml).expect("init yaml parses");
-            assert_eq!(doc["exemptions"], serde_json::json!([]), "{class}");
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let tops_idx_1641_24 = doc["exemptions"].clone();
+            assert_eq!(tops_idx_1641_24, serde_json::json!([]), "{class}");
             assert!(!yaml.contains("generated protobuf"), "{class}");
-            assert!(doc["layers"].as_array().is_some_and(|l| !l.is_empty()));
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let tops_idx_1647_21 = doc["layers"].clone();
+            assert!(tops_idx_1647_21.as_array().is_some_and(|l| !l.is_empty()));
         }
     }
 
@@ -1540,6 +1673,10 @@ mod tests {
     fn a_directory_swapped_for_a_link_after_the_walk_is_not_followed() {
         let root =
             std::env::temp_dir().join(format!("cargo-tops-parent-swap-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let repo = root.join("repo");
         let outside = root.join("outside");
@@ -1568,6 +1705,10 @@ mod tests {
                 .contains("is a symlink or not a directory, and init does not follow one"),
             "{err}"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1603,6 +1744,10 @@ mod tests {
     fn create_new_refuses_a_name_that_is_taken_on_either_walk() {
         let root =
             std::env::temp_dir().join(format!("cargo-tops-create-new-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("mkdir");
         let outside = root.join("outside.md");
@@ -1620,6 +1765,10 @@ mod tests {
                 taken_names_fail(&dir, &outside, |name| parent.create_new(name));
             }
         }
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1630,6 +1779,10 @@ mod tests {
     fn a_link_or_a_file_where_a_directory_should_be_is_refused_by_either_walk() {
         let root =
             std::env::temp_dir().join(format!("cargo-tops-walk-refuse-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let repo = root.join("repo");
         let outside = root.join("outside");
@@ -1658,6 +1811,10 @@ mod tests {
             fs::read_to_string(repo.join("file")).expect("read"),
             "keep\n"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1669,6 +1826,10 @@ mod tests {
     fn the_path_walk_makes_directories_and_reads_what_is_at_a_name() {
         let root =
             std::env::temp_dir().join(format!("cargo-tops-path-walk-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let repo = root.join("repo");
         fs::create_dir_all(&repo).expect("mkdir repo");
@@ -1688,6 +1849,10 @@ mod tests {
             parent.entry(std::ffi::OsStr::new("l.md")),
             Entry::Symlink
         ));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 }
