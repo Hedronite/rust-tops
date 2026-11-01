@@ -34,6 +34,11 @@ pedantic = { level = "warn", priority = -1 }
 unwrap_used = "warn"                     # use ?, or expect("why this cannot fail")
 expect_used = "deny"                     # library code uses #[expect(clippy::expect_used, reason = "...")]; binaries may expect in main and setup
 panic_in_result_fn = "warn"              # a fn returning Result shouldn't also panic
+
+indexing_slicing = "warn"                # a panicking index is an error path
+let_underscore_must_use = "warn"         # do not drop a Result or other must-use value
+needless_collect = "warn"                # do not collect only to iterate
+panic = "warn"                           # panic! is not an error type
 missing_panics_doc = "warn"              # [lib] document reachable panics under # Panics
 missing_errors_doc = "warn"              # [lib] document failures under # Errors
 missing_assert_message = "warn"          # assert! says what went wrong (quiet inside #[test])
