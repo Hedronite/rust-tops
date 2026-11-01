@@ -76,7 +76,6 @@ print_stdout = "warn"                    # [lib] libraries log, they don't print
 print_stderr = "warn"                    # [lib] libraries log, they don't print
 
 # Casts that silently lose information.
-as_conversions = "warn"                  # prefer From / TryFrom
 cast_possible_truncation = "warn"
 cast_sign_loss = "warn"
 
