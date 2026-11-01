@@ -28,8 +28,12 @@ rust_2018_idioms = { level = "warn", priority = -1 } # 2018-edition idioms, e.g.
 [lints.clippy]
 # Groups first, at lower priority so the individual settings below win.
 all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
 
+
+# Named pedantic lints. The pedantic group is not enabled.
+needless_pass_by_value = "warn"        # take a reference instead of an owned value the callee does not need
+implicit_clone = "warn"                # clone a String or path with an explicit clone, not to_string
+missing_errors_doc = "warn"            # [lib] document failures under # Errors
 # Panics: return errors, and give every intentional panic a reason.
 unwrap_used = "warn"                     # use ?, or expect("why this cannot fail")
 expect_used = "deny"                     # library code uses #[expect(clippy::expect_used, reason = "...")]; binaries may expect in main and setup
