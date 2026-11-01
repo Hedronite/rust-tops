@@ -32,7 +32,7 @@ pedantic = { level = "warn", priority = -1 }
 
 # Panics: return errors, and give every intentional panic a reason.
 unwrap_used = "warn"                     # use ?, or expect("why this cannot fail")
-expect_used = "allow"                    # expect with a reason is the sanctioned form
+expect_used = "deny"                     # library code uses #[expect(clippy::expect_used, reason = "...")]; binaries may expect in main and setup
 panic_in_result_fn = "warn"              # a fn returning Result shouldn't also panic
 missing_panics_doc = "warn"              # [lib] document reachable panics under # Panics
 missing_errors_doc = "warn"              # [lib] document failures under # Errors
