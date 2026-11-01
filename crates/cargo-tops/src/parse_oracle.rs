@@ -8,6 +8,7 @@
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 use std::fs;
 use std::path::PathBuf;
 

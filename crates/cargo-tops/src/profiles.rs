@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 pub const AGENTS_MD: &str = include_str!("../templates/AGENTS.md");
 pub const CLIPPY_TOML: &str = include_str!("../templates/drop-in/clippy.toml");
 pub const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest.toml");

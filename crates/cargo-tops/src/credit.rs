@@ -5,6 +5,7 @@
 //! A missing or failed coverage run is not a pass. A coverage command that
 //! lacks `--workspace`, `--all-features`, or the nextest profile grants no
 //! credit, and `unit`, `integration`, and `property` run themselves.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 #![allow(dead_code, reason = "main.rs calls the credit decision")]
 

@@ -4,6 +4,7 @@
 //! others. A keyword it does not know is a test failure
 //! (`the_schema_uses_only_keywords_the_validator_knows`), never a silent pass.
 //! `format` is an annotation, as JSON Schema 2020-12 treats it by default.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use serde_json::Value;
 

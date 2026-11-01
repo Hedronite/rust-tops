@@ -6,6 +6,7 @@
 //! verdicts themselves come from `LAWS.bend`, and the pass or fail is
 //! `bend`'s exit status on that proof. When the proof fails, one more run
 //! of `main` alone prints every verdict. That run does not decide pass or fail.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 #[cfg(test)]
 use std::cell::Cell;

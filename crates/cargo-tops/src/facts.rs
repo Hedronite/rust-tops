@@ -6,6 +6,7 @@
 //! this gate run and returns that fact, or `NotEvaluated` when there is
 //! nothing to read. Which constructor `LAWS.bend` refuses is `bend`'s answer;
 //! nothing in this module knows it.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use std::fs;
 use std::path::{Path, PathBuf};

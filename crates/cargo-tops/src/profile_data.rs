@@ -6,6 +6,7 @@
 //! text. An unknown class is an error, not a library-core document.
 //!
 //! `profiles.rs` is the caller. This allow holds until that call lands.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #![allow(dead_code, reason = "profiles.rs calls merge_profile")]
 
 use serde_json::{Map, Number, Value};

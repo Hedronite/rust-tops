@@ -11,6 +11,7 @@
 //!
 //! `main.rs` is the caller. This allow holds until that wiring references
 //! the items.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #![allow(dead_code, reason = "main.rs wires these items")]
 
 use std::fmt;

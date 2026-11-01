@@ -5,6 +5,7 @@
 //! written as ordinary files.
 //! A symlink is not enough: Windows and some packaging drop it. The drift
 //! test compares every copy. `CLAUDE.md` is one line that imports `AGENTS.md`.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use std::path::Path;
 
