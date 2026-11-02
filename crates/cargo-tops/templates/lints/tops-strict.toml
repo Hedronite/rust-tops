@@ -1,7 +1,6 @@
 # MIT
-# Copied from BeautifulRust lints/lints.toml at v1.5.0
-# (40db61c6fee84bd121cf288755f0e2f22a50e995).
-# The bytes after this header are that file.
+# Adapted from BeautifulRust v1.5.0 (40db61c6), modified.
+# Copyright (c) 2026 Morgan Linton. The MIT permission text is LICENSES/BeautifulRust-MIT.txt.
 
 # BeautifulRust drop-in lints
 #
