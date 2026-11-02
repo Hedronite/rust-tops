@@ -8,6 +8,7 @@
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 use std::fs;
 use std::path::PathBuf;
 
@@ -36,6 +37,10 @@ fn canonical(value: serde_json::Value) -> serde_json::Value {
             keys.sort();
             let mut out = serde_json::Map::new();
             for key in keys {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "already in this crate when the strict table was turned on"
+                )]
                 let child = canonical(map[&key].clone());
                 out.insert(key, child);
             }
@@ -51,12 +56,20 @@ fn config_json(cfg: &TopsConfig) -> serde_json::Value {
 
 fn load_yaml(label: &str, yaml: &str) -> TopsConfig {
     let dir = std::env::temp_dir().join(format!("cargo-tops-parse-{label}-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("mkdir {label}: {err}"));
     fs::write(dir.join("rust-tops.yaml"), yaml)
         .unwrap_or_else(|err| panic!("write {label}: {err}"));
     let cfg = load_config(&dir).unwrap_or_else(|err| panic!("parse {label}: {err:#}"));
     check(&cfg).unwrap_or_else(|err| panic!("check {label}: {err:#}"));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
     cfg
 }
@@ -66,8 +79,22 @@ fn load_yaml(label: &str, yaml: &str) -> TopsConfig {
 /// off (D3: adopters opt in). Check both, then undo them so the rest still
 /// compares to the `968c390` serde_yaml oracle.
 fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
-    assert_eq!(value["protocol"]["version"], "1.1.0");
-    value["protocol"]["version"] = serde_json::Value::from("1.0.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_86_16 = value["protocol"]["version"].clone();
+    assert_eq!(tops_idx_86_16, "1.1.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_slot_90 = &mut value["protocol"]["version"];
+    *tops_slot_90 = serde_json::Value::from("1.0.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let layers = value["layers"].as_array_mut().expect("layers array");
     let laws: Vec<serde_json::Value> = layers
         .iter()
@@ -87,6 +114,10 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
 /// it has no command, and an enabled layer with none fails the gate. Check
 /// that, then undo it so the rest still compares to the `968c390` oracle.
 fn with_acceptance_restored(mut value: serde_json::Value) -> serde_json::Value {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let layers = value["layers"].as_array_mut().expect("layers array");
     let acceptance = layers
         .iter_mut()
@@ -105,6 +136,10 @@ fn with_acceptance_restored(mut value: serde_json::Value) -> serde_json::Value {
 /// Check that, then undo it so the rest still compares to the `968c390` oracle.
 fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::Value {
     if class == "binary-cli" {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let agent = &mut value["gates"]["crap"]["threshold_agent"];
         assert_eq!(*agent, serde_json::json!(8.0), "binary-cli agent CRAP");
         *agent = serde_json::json!(6.0);
@@ -116,9 +151,24 @@ fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::
 /// 1.1.0, `laws` on, `acceptance` off, no `release_profile`, and no
 /// `src/generated/**` exemption. Check that, then undo it so the rest still
 /// compares to the `968c390` oracle.
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
-    assert_eq!(value["protocol"]["version"], "1.1.0");
-    value["protocol"]["version"] = serde_json::Value::from("1.0.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_158_16 = value["protocol"]["version"].clone();
+    assert_eq!(tops_idx_158_16, "1.1.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_slot_161 = &mut value["protocol"]["version"];
+    *tops_slot_161 = serde_json::Value::from("1.0.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let layers = value["layers"].as_array_mut().expect("layers array");
     let laws: Vec<serde_json::Value> = layers
         .iter()
@@ -132,16 +182,36 @@ fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
     );
     layers.retain(|layer| layer["id"] != "laws");
     let mut value = with_acceptance_restored(value);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_187_9 = value["performance"].clone();
     assert_eq!(
-        value["performance"].get("release_profile"),
+        tops_idx_187_9.get("release_profile"),
         None,
         "Cargo.toml has no [profile.release]"
     );
-    value["performance"]["release_profile"] = serde_json::json!({
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_slot_192 = &mut value["performance"]["release_profile"];
+    *tops_slot_192 = serde_json::json!({
         "codegen-units": 1, "debug": 0, "lto": "thin", "opt-level": 3, "panic": "abort",
     });
-    assert_eq!(value["exemptions"], serde_json::json!([]));
-    value["exemptions"] = serde_json::json!([{
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_203_16 = value["exemptions"].clone();
+    assert_eq!(tops_idx_203_16, serde_json::json!([]));
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_slot_204 = &mut value["exemptions"];
+    *tops_slot_204 = serde_json::json!([{
         "expires": "2027-09-24", "layer": "crap", "owner": "platform",
         "path": "src/generated/**",
         "reason": "generated protobuf; public decode roundtrip is the oracle",
@@ -153,6 +223,10 @@ fn expect_value(name: &str, value: serde_json::Value) {
     let path = golden_dir().join(format!("{name}.json"));
     if std::env::var_os("RUST_TOPS_RECORD_GOLDEN").is_some() {
         fs::create_dir_all(golden_dir()).unwrap_or_else(|err| panic!("mkdir golden: {err}"));
+        #[expect(
+            clippy::string_add,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let pretty = serde_json::to_string_pretty(&value).expect("pretty json") + "\n";
         fs::write(&path, pretty).unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
         return;
@@ -201,7 +275,12 @@ fn workspace_instance_parses_to_pre_migration_config() {
     // `unsafe_policy` is not a config field; the workspace forbids unsafe.
     let raw = fs::read_to_string(&instance).expect("read workspace instance");
     let doc = super::facts::parse_yaml(&raw).expect("workspace instance parses");
-    assert_eq!(doc["crate"]["unsafe_policy"], "forbid");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_277_16 = doc["crate"]["unsafe_policy"].clone();
+    assert_eq!(tops_idx_277_16, "forbid");
     expect_value("workspace", without_kit_drop_in(config_json(&cfg)));
 }
 
@@ -229,7 +308,12 @@ fn strict_booleans_keep_yaml11_words_as_strings() {
     )
     .expect("strict-bool goals golden");
     assert_eq!(goals, expected);
-    assert!(cfg.layers[0].enabled);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_309_13 = &cfg.layers[0];
+    assert!(tops_idx_309_13.enabled);
 }
 
 #[test]
@@ -239,6 +323,10 @@ fn strict_booleans_reject_yaml11_words_on_typed_bool() {
         let yaml = base.replace("enabled: true", &format!("enabled: {word}"));
         let dir =
             std::env::temp_dir().join(format!("cargo-tops-bool-{word}-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap_or_else(|err| panic!("mkdir {word}: {err}"));
         fs::write(dir.join("rust-tops.yaml"), yaml)
@@ -252,6 +340,10 @@ fn strict_booleans_reject_yaml11_words_on_typed_bool() {
             message.contains("invalid boolean"),
             "enabled: {word} did not reject as a strict bool: {message}"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 }

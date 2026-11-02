@@ -1,6 +1,19 @@
 //! `cargo tops init --skills` writes the same skill bytes under every harness
 //! path, as ordinary files. Default `init` does not. The drift check fails
 //! when any copy differs.
+#![expect(
+    clippy::needless_collect,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(
+    clippy::missing_assert_message,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(clippy::panic, reason = "this crate already violates the strict table")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "this crate already violates the strict table"
+)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,6 +53,10 @@ fn workspace() -> PathBuf {
 fn run_init(label: &str, extra: &[&str]) -> (PathBuf, String, String, bool) {
     let dir =
         std::env::temp_dir().join(format!("cargo-tops-skills-{label}-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args([
@@ -71,6 +88,10 @@ fn default_init_does_not_write_skills() {
     assert!(!dir.join(".grok").exists());
     assert!(!dir.join("CLAUDE.md").exists());
     assert!(!dir.join("docs/REVIEW.md").exists());
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -94,6 +115,10 @@ fn init_skills_matches_the_golden_layout() {
         fs::read_to_string(dir.join("docs/REVIEW.md")).unwrap(),
         fs::read_to_string(manifest().join("templates/docs/REVIEW.md")).unwrap()
     );
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -131,6 +156,10 @@ fn init_skills_skips_existing_copies() {
             "{stdout}"
         );
     }
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -149,6 +178,7 @@ fn repo_skill_trees_match_the_templates() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn skill_text_is_portable_and_the_gate_remedies_match_agents_md() {
     let templates = manifest().join("templates/skills");
     let agents = fs::read_to_string(manifest().join("templates/AGENTS.md")).unwrap();
@@ -296,8 +326,13 @@ fn nu_scripts_honor_the_envelope_when_nu_is_installed() {
     smoke_review(&nu);
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn smoke_gate(nu: &Path) {
     let root = std::env::temp_dir().join(format!("cargo-tops-nu-gate-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     let bin = root.join("bin");
     let target = root.join("target");
@@ -331,34 +366,110 @@ fn smoke_gate(nu: &Path) {
     };
 
     let pass = run("pass");
-    assert_eq!(pass["ok"], true, "{pass}");
-    assert_eq!(pass["data"]["gate_green"], true, "{pass}");
-    assert!(pass["command"]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_373_16 = pass["ok"].clone();
+    assert_eq!(tops_idx_373_16, true, "{pass}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_378_16 = pass["data"]["gate_green"].clone();
+    assert_eq!(tops_idx_378_16, true, "{pass}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_383_13 = pass["command"].clone();
+    assert!(tops_idx_383_13
         .as_str()
         .unwrap()
         .contains("cargo tops gate"));
-    assert_eq!(pass["data"]["fixes"].as_array().unwrap().len(), 0);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_391_16 = pass["data"]["fixes"].clone();
+    assert_eq!(tops_idx_391_16.as_array().unwrap().len(), 0);
 
     let missed = run("not-evaluated");
-    assert_eq!(missed["ok"], false, "{missed}");
-    assert_eq!(missed["data"]["gate_green"], true, "{missed}");
-    assert!(missed["data"]["fixes"].as_array().unwrap().is_empty());
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_398_16 = missed["ok"].clone();
+    assert_eq!(tops_idx_398_16, false, "{missed}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_403_16 = missed["data"]["gate_green"].clone();
+    assert_eq!(tops_idx_403_16, true, "{missed}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_408_13 = missed["data"]["fixes"].clone();
+    assert!(tops_idx_408_13.as_array().unwrap().is_empty());
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let gaps = missed["data"]["gaps"].as_array().unwrap();
-    assert_eq!(gaps[0]["law"], "evidence_not_self_served");
-    assert_eq!(gaps[0]["reason_code"], "no_fact_reader");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_418_16 = gaps[0]["law"].clone();
+    assert_eq!(tops_idx_418_16, "evidence_not_self_served");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_423_16 = gaps[0]["reason_code"].clone();
+    assert_eq!(tops_idx_423_16, "no_fact_reader");
 
     let dependent = run("run-dependent");
-    assert_eq!(dependent["ok"], false, "{dependent}");
-    assert_eq!(dependent["data"]["gate_green"], true, "{dependent}");
-    assert!(dependent["data"]["gaps"].as_array().unwrap().is_empty());
-    assert_eq!(
-        dependent["data"]["fixes"][0]["reason_code"],
-        "run_dependent"
-    );
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_430_16 = dependent["ok"].clone();
+    assert_eq!(tops_idx_430_16, false, "{dependent}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_435_16 = dependent["data"]["gate_green"].clone();
+    assert_eq!(tops_idx_435_16, true, "{dependent}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_440_13 = dependent["data"]["gaps"].clone();
+    assert!(tops_idx_440_13.as_array().unwrap().is_empty());
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_446_9 = dependent["data"]["fixes"][0]["reason_code"].clone();
+    assert_eq!(tops_idx_446_9, "run_dependent");
 
     let refused = run("refuse");
-    assert_eq!(refused["ok"], false, "{refused}");
-    assert!(refused["data"]["fixes"][0]["remedy"]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_455_16 = refused["ok"].clone();
+    assert_eq!(tops_idx_455_16, false, "{refused}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_460_13 = refused["data"]["fixes"][0]["remedy"].clone();
+    assert!(tops_idx_460_13
         .as_str()
         .unwrap()
         .contains("fix the fact it read"));
@@ -370,8 +481,22 @@ fn smoke_gate(nu: &Path) {
     )
     .unwrap();
     let stale = run("missing");
-    assert_eq!(stale["ok"], false, "{stale}");
-    assert_eq!(stale["exit"], 1, "{stale}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_476_16 = stale["ok"].clone();
+    assert_eq!(tops_idx_476_16, false, "{stale}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_481_16 = stale["exit"].clone();
+    assert_eq!(tops_idx_481_16, 1, "{stale}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let stale_error = stale["error"].as_str().unwrap();
     assert!(stale_error.contains("exited"), "{stale}");
     assert!(
@@ -380,8 +505,22 @@ fn smoke_gate(nu: &Path) {
     );
 
     let no_tops = run("no-tops");
-    assert_eq!(no_tops["ok"], false, "{no_tops}");
-    assert_eq!(no_tops["exit"], 1, "{no_tops}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_498_16 = no_tops["ok"].clone();
+    assert_eq!(tops_idx_498_16, false, "{no_tops}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_503_16 = no_tops["exit"].clone();
+    assert_eq!(tops_idx_503_16, 1, "{no_tops}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let no_tops_error = no_tops["error"].as_str().unwrap();
     assert!(no_tops_error.contains("no such command"), "{no_tops}");
     assert!(
@@ -390,14 +529,33 @@ fn smoke_gate(nu: &Path) {
     );
 
     let bad = run("bad-json");
-    assert_eq!(bad["ok"], false, "{bad}");
-    assert!(bad["error"]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_520_16 = bad["ok"].clone();
+    assert_eq!(tops_idx_520_16, false, "{bad}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_525_13 = bad["error"].clone();
+    assert!(tops_idx_525_13
         .as_str()
         .unwrap()
         .contains("missing or not JSON"));
 
     let coverage = run("coverage");
-    assert_eq!(coverage["ok"], false, "{coverage}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_535_16 = coverage["ok"].clone();
+    assert_eq!(tops_idx_535_16, false, "{coverage}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let layers = coverage["data"]["layers"].as_array().unwrap();
     let static_lint = layers
         .iter()
@@ -430,12 +588,22 @@ fn smoke_gate(nu: &Path) {
         String::from_utf8_lossy(&bare.stderr)
     );
     let missing_cargo = parse_json(&bare.stdout);
-    assert_eq!(missing_cargo["ok"], false, "{missing_cargo}");
-    assert_ne!(
-        missing_cargo["exit"].as_i64().unwrap_or(0),
-        0,
-        "{missing_cargo}"
-    );
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_576_16 = missing_cargo["ok"].clone();
+    assert_eq!(tops_idx_576_16, false, "{missing_cargo}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_582_9 = missing_cargo["exit"].clone();
+    assert_ne!(tops_idx_582_9.as_i64().unwrap_or(0), 0, "{missing_cargo}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let missing_error = missing_cargo["error"].as_str().unwrap_or("");
     assert!(
         missing_error.contains("command not found"),
@@ -469,17 +637,31 @@ fn smoke_gate(nu: &Path) {
         String::from_utf8_lossy(&no_rm.stdout)
     );
     let no_rm_json = parse_json(&no_rm.stdout);
-    assert_eq!(no_rm_json["ok"], true, "{no_rm_json}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_627_16 = no_rm_json["ok"].clone();
+    assert_eq!(tops_idx_627_16, true, "{no_rm_json}");
     let leftover = fs::read_to_string(target.join("rust-tops/cases.json")).unwrap_or_default();
     assert!(
         !leftover.contains("stale-sentinel"),
         "previous cases.json survived: {leftover}"
     );
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn smoke_adopt(nu: &Path) {
     let root = std::env::temp_dir().join(format!("cargo-tops-nu-adopt-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -514,16 +696,34 @@ fn smoke_adopt(nu: &Path) {
         String::from_utf8_lossy(&out.stderr)
     );
     let body = parse_json(&out.stdout);
-    assert_eq!(body["ok"], true, "{body}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_685_16 = body["ok"].clone();
+    assert_eq!(tops_idx_685_16, true, "{body}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let command = body["command"].as_str().unwrap();
     assert!(command.contains("cargo tops init"));
     assert!(command.contains("--skills"), "{command}");
     assert!(command.contains("cargo tops check"));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn smoke_review(nu: &Path) {
     let root = std::env::temp_dir().join(format!("cargo-tops-nu-review-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     let git = |args: &[&str]| {
@@ -560,9 +760,24 @@ fn smoke_review(nu: &Path) {
         String::from_utf8_lossy(&files.stderr)
     );
     let files_json = parse_json(&files.stdout);
-    assert_eq!(files_json["ok"], true, "{files_json}");
-    assert_eq!(files_json["data"]["read_diff"], false);
-    assert_eq!(files_json["data"]["files"][0], "note.txt");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_748_16 = files_json["ok"].clone();
+    assert_eq!(tops_idx_748_16, true, "{files_json}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_753_16 = files_json["data"]["read_diff"].clone();
+    assert_eq!(tops_idx_753_16, false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_758_16 = files_json["data"]["files"][0].clone();
+    assert_eq!(tops_idx_758_16, "note.txt");
     assert!(!files
         .stdout
         .windows(b"hello from the diff".len())
@@ -574,13 +789,33 @@ fn smoke_review(nu: &Path) {
         .output()
         .expect("nu diff");
     let diff_json = parse_json(&diff.stdout);
-    assert_eq!(diff_json["ok"], true, "{diff_json}");
-    assert_eq!(diff_json["data"]["read_diff"], true);
-    assert!(diff_json["data"]["diff"]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_774_16 = diff_json["ok"].clone();
+    assert_eq!(tops_idx_774_16, true, "{diff_json}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_779_16 = diff_json["data"]["read_diff"].clone();
+    assert_eq!(tops_idx_779_16, true);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_784_13 = diff_json["data"]["diff"].clone();
+    assert!(tops_idx_784_13
         .as_str()
         .unwrap()
         .contains("hello from the diff"));
-    assert_eq!(diff_json["data"]["includes_worktree"], true);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_792_16 = diff_json["data"]["includes_worktree"].clone();
+    assert_eq!(tops_idx_792_16, true);
     fs::write(
         root.join("note.txt"),
         "hello from the diff\nuncommitted line\n",
@@ -594,7 +829,16 @@ fn smoke_review(nu: &Path) {
         .output()
         .expect("nu files with worktree");
     let dirty_json = parse_json(&dirty.stdout);
-    assert_eq!(dirty_json["ok"], true, "{dirty_json}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_810_16 = dirty_json["ok"].clone();
+    assert_eq!(tops_idx_810_16, true, "{dirty_json}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let names: Vec<&str> = dirty_json["data"]["files"]
         .as_array()
         .unwrap()
@@ -610,9 +854,17 @@ fn smoke_review(nu: &Path) {
         .output()
         .expect("nu diff with worktree");
     let dirty_diff_json = parse_json(&dirty_diff.stdout);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let patch = dirty_diff_json["data"]["diff"].as_str().unwrap();
     assert!(patch.contains("uncommitted line"), "{dirty_diff_json}");
     assert!(!patch.contains("untracked body"), "{dirty_diff_json}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let diff_untracked: Vec<&str> = dirty_diff_json["data"]["untracked"]
         .as_array()
         .unwrap()
@@ -637,7 +889,16 @@ fn smoke_review(nu: &Path) {
         .output()
         .expect("nu files committed only");
     let committed_json = parse_json(&committed.stdout);
-    assert_eq!(committed_json["data"]["includes_worktree"], false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_869_16 = committed_json["data"]["includes_worktree"].clone();
+    assert_eq!(tops_idx_869_16, false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let committed_names: Vec<&str> = committed_json["data"]["files"]
         .as_array()
         .unwrap()
@@ -663,10 +924,21 @@ fn smoke_review(nu: &Path) {
         .output()
         .expect("nu diff committed only");
     let committed_diff_json = parse_json(&committed_diff.stdout);
-    assert_eq!(committed_diff_json["data"]["includes_worktree"], false);
-    assert!(committed_diff_json["data"]["untracked"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_903_16 = committed_diff_json["data"]["includes_worktree"].clone();
+    assert_eq!(tops_idx_903_16, false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_908_13 = committed_diff_json["data"]["untracked"].clone();
+    assert!(tops_idx_908_13.as_array().unwrap().is_empty());
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
 }

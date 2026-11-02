@@ -41,6 +41,10 @@ fn xtask(args: &[&str]) -> (i32, String) {
     (out.status.code().expect("exit code"), text)
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 fn sync(root: &Path, check: bool) -> (i32, String) {
     let root = root.to_str().expect("utf-8 root");
     if check {
@@ -55,6 +59,10 @@ fn sync(root: &Path, check: bool) -> (i32, String) {
 fn pairs(root: &Path) -> Vec<(String, String)> {
     let raw = fs::read_to_string(root.join("copies.toml")).expect("read copies.toml");
     let table: toml::Table = raw.parse().expect("parse copies.toml");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     table["copy"]
         .as_array()
         .expect("[[copy]]")
@@ -75,6 +83,10 @@ fn pairs(root: &Path) -> Vec<(String, String)> {
 /// from the committed tree with their modes.
 fn fixture(label: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("xtask-sync-{label}"));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create fixture");
     fs::copy(workspace().join("copies.toml"), root.join("copies.toml")).expect("copy list");
@@ -133,6 +145,7 @@ fn one_byte_off_fails_the_check_until_the_byte_is_restored() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn sync_rewrites_every_drifted_copy_from_its_source() {
     let root = fixture("every-copy");
     let pairs = pairs(&root);
@@ -301,6 +314,7 @@ fn a_temp_file_left_by_an_interrupted_sync_does_not_stop_the_next() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_symlinked_copy_fails_and_sync_does_not_follow_it() {
     let root = fixture("symlink");
     let total = pairs(&root).len();
@@ -365,6 +379,7 @@ fn a_symlinked_copy_fails_and_sync_does_not_follow_it() {
 
 #[cfg(unix)]
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_symlinked_directory_above_a_copy_fails_and_sync_does_not_write_through_it() {
     let root = fixture("linked-dir");
     let total = pairs(&root).len();
@@ -428,12 +443,17 @@ fn a_symlinked_directory_above_a_copy_fails_and_sync_does_not_write_through_it()
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_list_that_writes_a_source_or_a_non_copy_is_refused() {
     let root = fixture("bad-list");
     let pair =
         |source: &str, dest: &str| format!("[[copy]]\nfrom = \"{source}\"\nto = [\"{dest}\"]\n");
     let drop_in = format!("{TEMPLATES}/drop-in/rust-tops.yml");
     let golden = "crates/cargo-tops/tests/golden/init/binary-cli/.github/workflows/rust-tops.yml";
+    #[expect(
+        clippy::string_add,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let cases = [
         (
             pair(
@@ -456,7 +476,7 @@ fn a_list_that_writes_a_source_or_a_non_copy_is_refused() {
         (
             pair("config/drop-in/clippy.toml", "clippy.toml"),
             "clippy.toml",
-            "a source is under crates/cargo-tops/templates/ or is schema/rust-tops.schema.json",
+            "a source is under crates/cargo-tops/templates/, is schema/rust-tops.schema.json, or is LICENSES/BeautifulRust-MIT.txt",
         ),
         (
             pair(&format!("{TEMPLATES}/AGENTS.md"), "../AGENTS.md"),
@@ -618,6 +638,7 @@ fn bad_arguments_exit_2_and_name_the_usage() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn the_list_names_the_hand_copies_and_nothing_else() {
     let pairs = pairs(&workspace());
     let has = |source: &str, dest: &str| pairs.iter().any(|(s, d)| s == source && d == dest);
@@ -645,17 +666,28 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         "schema/rust-tops.schema.json",
         &format!("{TEMPLATES}/rust-tops.schema.json")
     ));
+    assert!(has(
+        &format!("{TEMPLATES}/lints/tops-strict.toml"),
+        "config/lints/tops-strict.toml"
+    ));
+    assert!(has(
+        "LICENSES/BeautifulRust-MIT.txt",
+        "crates/cargo-tops/LICENSES/BeautifulRust-MIT.txt"
+    ));
     for (_, dest) in &pairs {
         assert!(
             !dest.starts_with("crates/cargo-tops/tests/golden/"),
             "{dest}"
         );
         assert!(!dest.starts_with(".github/"), "{dest}");
-        assert!(!dest.contains("LICENSE"), "{dest}");
+        assert!(
+            !dest.contains("LICENSE") || dest == "crates/cargo-tops/LICENSES/BeautifulRust-MIT.txt",
+            "{dest}"
+        );
         assert_ne!(dest, "deny.toml");
         assert_ne!(dest, "rust-toolchain.toml");
     }
-    assert_eq!(pairs.len(), 46);
+    assert_eq!(pairs.len(), 48);
 }
 
 /// A link at `config` that comes and goes while sync writes
@@ -664,11 +696,16 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
 /// `config` the link cannot come back.
 #[cfg(unix)]
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_directory_link_that_appears_while_sync_writes_is_never_followed() {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("xtask-sync-flicker");
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     let source = format!("{TEMPLATES}/AGENTS.md");
     fs::create_dir_all(root.join(TEMPLATES)).expect("create templates");
@@ -688,7 +725,15 @@ fn a_directory_link_that_appears_while_sync_writes_is_never_followed() {
             let (at, to, stop) = (config.clone(), outside.clone(), Arc::clone(&stop));
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "already in this crate when the strict table was turned on"
+                    )]
                     let _ = std::os::unix::fs::symlink(&to, &at);
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "already in this crate when the strict table was turned on"
+                    )]
                     let _ = fs::remove_file(&at);
                 }
             })
@@ -710,7 +755,24 @@ fn a_directory_link_that_appears_while_sync_writes_is_never_followed() {
             0,
             "round {round}: sync wrote through a link that appeared while it ran: {text}"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_file(&config);
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&config);
     }
+}
+
+#[test]
+fn upstream_diff_reports_no_change_at_the_beautifulrust_pin() {
+    let (code, text) = xtask(&["upstream-diff", "beautifulrust"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("no change"), "{text}");
+    let (code, text) = xtask(&["upstream-diff", "other"]);
+    assert_eq!(code, 2, "{text}");
 }

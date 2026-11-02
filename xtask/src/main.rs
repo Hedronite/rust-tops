@@ -3,7 +3,8 @@
 //! `copies.toml` at the repo root has one `[[copy]]` table per source: `from`
 //! is the file read, and `to` lists the hand copies written from it. Sources
 //! are under `crates/cargo-tops/templates/`, except
-//! `schema/rust-tops.schema.json`, which the template vendors.
+//! `schema/rust-tops.schema.json`, which the template vendors, and
+//! `LICENSES/BeautifulRust-MIT.txt`, which the crate package ships.
 //!
 //! - `sync` rewrites every dest that is missing or differs from its source.
 //! - `sync --check` writes nothing. It exits 1 when a dest is missing, is not
@@ -26,8 +27,10 @@ use std::process::ExitCode;
 
 const LIST: &str = "copies.toml";
 const TEMPLATES: &str = "crates/cargo-tops/templates/";
-/// The one source outside `templates/`. The template is its copy.
+/// The one schema source outside `templates/`. The template is its copy.
 const SCHEMA: &str = "schema/rust-tops.schema.json";
+/// The BeautifulRust MIT text. The crate package ships a byte copy.
+const BEAUTIFULRUST_MIT: &str = "LICENSES/BeautifulRust-MIT.txt";
 /// `schema/` is a source. The kit workflow and the init goldens are not
 /// hand copies: init and the golden test own those bytes.
 const NEVER_WRITTEN: [&str; 3] = ["schema/", ".github/", "crates/cargo-tops/tests/golden/"];
@@ -74,7 +77,59 @@ enum State {
     NotAFile,
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
+fn upstream_diff(name: Option<&str>) -> ExitCode {
+    if name != Some("beautifulrust") {
+        eprintln!("error: upstream-diff needs beautifulrust");
+        return ExitCode::from(2);
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let lock = match fs::read_to_string(root.join("rust-tops.lock")) {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(2);
+        }
+    };
+    let Some(line) = lock
+        .lines()
+        .find(|line| line.starts_with("beautifulrust = "))
+    else {
+        eprintln!("error: rust-tops.lock has no beautifulrust pin");
+        return ExitCode::from(2);
+    };
+    let pin = line.split('"').nth(1).unwrap_or("");
+    let Some(sha) = pin.split_whitespace().nth(1) else {
+        eprintln!("error: beautifulrust pin has no commit");
+        return ExitCode::from(2);
+    };
+    let listed = std::process::Command::new("git")
+        .args([
+            "ls-remote",
+            "https://github.com/morganlinton/BeautifulRust.git",
+            "refs/tags/v1.5.0",
+        ])
+        .output();
+    let Ok(listed) = listed else {
+        eprintln!("error: git ls-remote failed to start");
+        return ExitCode::from(2);
+    };
+    let text = String::from_utf8_lossy(&listed.stdout);
+    let remote = text.split_whitespace().next().unwrap_or("");
+    if remote.starts_with(sha) {
+        println!("beautifulrust {pin} no change");
+        ExitCode::SUCCESS
+    } else {
+        println!("beautifulrust {pin} changed {remote}");
+        ExitCode::SUCCESS
+    }
+}
+
 fn main() -> ExitCode {
+    let mut raw = std::env::args().skip(1);
+    if raw.next().as_deref() == Some("upstream-diff") {
+        return upstream_diff(raw.next().as_deref());
+    }
     let args = match parse_args(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(err) => {
@@ -115,8 +170,13 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
     Ok(parsed)
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// Check or write every pair. Returns whether every dest matches its source
 /// when sync is done.
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn sync(root: &Path, check: bool) -> Result<bool> {
     let pairs = read_list(root)?;
     let mut problems = Vec::new();
@@ -200,9 +260,12 @@ fn validate(pairs: &[Pair]) -> Result<()> {
     for pair in pairs {
         inside(&pair.source)?;
         inside(&pair.dest)?;
-        if pair.source != SCHEMA && !pair.source.starts_with(TEMPLATES) {
+        if pair.source != SCHEMA
+            && pair.source != BEAUTIFULRUST_MIT
+            && !pair.source.starts_with(TEMPLATES)
+        {
             bail!(
-                "source {}: a source is under {TEMPLATES} or is {SCHEMA}",
+                "source {}: a source is under {TEMPLATES}, is {SCHEMA}, or is {BEAUTIFULRUST_MIT}",
                 pair.source
             );
         }
@@ -295,6 +358,10 @@ fn write(root: &Path, rel: &str, source: &Source) -> Result<()> {
     let parent = Parent::open(root, rel)?;
     let temp_path = parent.dir.join(&temp);
     // A temp file left by an interrupted sync. If it cannot go, `create_new`
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     // below fails and names it.
     let _ = parent.remove(temp.as_ref());
     let mut file = parent
@@ -328,7 +395,7 @@ struct Parent {
 type Parent = PathParent;
 
 /// The path walk. It is built on Unix too, so its tests run there.
-#[cfg_attr(all(unix, not(test)), allow(dead_code, reason = "the walk off Unix"))]
+#[cfg_attr(all(unix, not(test)), expect(dead_code, reason = "the walk off Unix"))]
 struct PathParent {
     dir: PathBuf,
 }
@@ -393,7 +460,7 @@ impl Parent {
     }
 }
 
-#[cfg_attr(all(unix, not(test)), allow(dead_code, reason = "the walk off Unix"))]
+#[cfg_attr(all(unix, not(test)), expect(dead_code, reason = "the walk off Unix"))]
 impl PathParent {
     /// Each directory above the dest is made with `create_dir` before
     /// anything looks at it, and a name it could not make must be a real
@@ -445,6 +512,10 @@ fn executable(meta: &fs::Metadata) -> bool {
     }
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// Sets the mode through the open file, so it is the temp file's own.
 fn set_executable(file: &fs::File, path: &Path, executable: bool) -> Result<()> {
     #[cfg(unix)]
@@ -472,6 +543,10 @@ mod tests {
     #[test]
     fn a_directory_swapped_for_a_link_after_the_walk_is_not_followed() {
         let root = std::env::temp_dir().join(format!("xtask-parent-swap-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let repo = root.join("repo");
         let outside = root.join("outside");
@@ -503,6 +578,10 @@ mod tests {
                 .contains("is a symlink or not a directory; sync does not follow it"),
             "{err}"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -535,6 +614,10 @@ mod tests {
     #[test]
     fn create_new_refuses_a_name_that_is_taken_on_either_walk() {
         let root = std::env::temp_dir().join(format!("xtask-create-new-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("mkdir");
         let outside = root.join("outside.md");
@@ -551,6 +634,10 @@ mod tests {
                 taken_names_fail(&dir, &outside, |name| parent.create_new(name));
             }
         }
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -559,6 +646,10 @@ mod tests {
     #[test]
     fn a_link_or_a_file_where_a_directory_should_be_is_refused_by_either_walk() {
         let root = std::env::temp_dir().join(format!("xtask-walk-refuse-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let repo = root.join("repo");
         let outside = root.join("outside");
@@ -583,6 +674,10 @@ mod tests {
             fs::read_to_string(repo.join("file")).expect("read"),
             "keep\n"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -592,6 +687,10 @@ mod tests {
     #[test]
     fn the_path_walk_makes_directories_and_writes_renames_and_removes_in_them() {
         let root = std::env::temp_dir().join(format!("xtask-path-walk-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let repo = root.join("repo");
         fs::create_dir_all(&repo).expect("mkdir repo");
@@ -611,6 +710,10 @@ mod tests {
         assert!(!repo.join("a/b/.f.md.xtask-sync").exists());
         parent.remove(OsStr::new("f.md")).expect("remove");
         assert!(!repo.join("a/b/f.md").exists());
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 }

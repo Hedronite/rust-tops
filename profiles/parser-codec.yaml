@@ -15,3 +15,6 @@ fuzz: required
 miri: if-unsafe
 kani: framing-kernels
 callgrind: decode-hot-path
+strict:
+  library_only: true
+  avoid_breaking_exported_api: true

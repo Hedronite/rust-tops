@@ -4,6 +4,7 @@
 //! others. A keyword it does not know is a test failure
 //! (`the_schema_uses_only_keywords_the_validator_knows`), never a silent pass.
 //! `format` is an annotation, as JSON Schema 2020-12 treats it by default.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use serde_json::Value;
 
@@ -29,12 +30,13 @@ const CHECKED: &[&str] = &[
 const ANNOTATIONS: &[&str] = &["$schema", "$id", "title", "description", "format"];
 
 /// Every violation of `schema` in `value`, each prefixed with its JSON pointer.
-pub fn validate(schema: &Value, value: &Value) -> Vec<String> {
+pub(crate) fn validate(schema: &Value, value: &Value) -> Vec<String> {
     let mut errors = Vec::new();
     check(schema, value, "", &mut errors);
     errors
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn check(schema: &Value, value: &Value, at: &str, errors: &mut Vec<String>) {
     let Some(rules) = schema.as_object() else {
         return;

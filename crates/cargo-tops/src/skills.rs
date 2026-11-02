@@ -5,6 +5,7 @@
 //! written as ordinary files.
 //! A symlink is not enough: Windows and some packaging drop it. The drift
 //! test compares every copy. `CLAUDE.md` is one line that imports `AGENTS.md`.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use std::path::Path;
 
@@ -20,8 +21,8 @@ const SKILL_ROOTS: &[&str] = &[
     ".grok/skills",
 ];
 
-pub const CLAUDE_MD: &str = include_str!("../templates/CLAUDE.md");
-pub const REVIEW_MD: &str = include_str!("../templates/docs/REVIEW.md");
+pub(crate) const CLAUDE_MD: &str = include_str!("../templates/CLAUDE.md");
+pub(crate) const REVIEW_MD: &str = include_str!("../templates/docs/REVIEW.md");
 
 struct Skill {
     name: &'static str,
@@ -47,7 +48,11 @@ const SKILLS: &[Skill] = &[
     },
 ];
 
-pub fn emit(dir: &Path, force: bool) -> Result<()> {
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
+pub(crate) fn emit(dir: &Path, force: bool) -> Result<()> {
     for skill in SKILLS {
         write_skill(dir, skill, force)?;
     }
@@ -56,6 +61,10 @@ pub fn emit(dir: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 fn write_skill(dir: &Path, skill: &Skill, force: bool) -> Result<()> {
     let script = format!("{}.nu", skill.name);
     for root in SKILL_ROOTS {

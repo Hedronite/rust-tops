@@ -14,6 +14,8 @@ The `laws` layer is optional. A 1.0.0 instance with no `laws` layer still valida
 3. Implement in the smallest production shape that satisfies it.
 4. `cargo tops check`, then `cargo tops gate`. Stop when the gate is green.
 
+BeautifulRust is the style companion. Install its skills `rust-best-practices`, `rust-review`, and `rust-port` at v1.5.0 (40db61c6fee84bd121cf288755f0e2f22a50e995) next to the rust-tops skills. Do not copy those skill texts into this repo. `rust-review` is an optional style pass. The gate review stays this protocol.
+
 `cargo tops init --class <class>` adopts the kit. It writes `rust-toolchain.toml` with `channel` set from `crate.msrv`, plus `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. Those three are pinned. Do not edit them to get a green gate. `cargo tops init --skills` also writes the agent skills, a one-line `CLAUDE.md` that imports this file, and [`docs/REVIEW.md`](docs/REVIEW.md).
 
 `cargo tops gate` runs the mapped layers, then `laws` when that layer is enabled. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. `bend` stops at the first refusal; later laws are `unreported`, which is not a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when set, otherwise `cargo metadata`'s `target_directory`). Ignore a file from an earlier run.

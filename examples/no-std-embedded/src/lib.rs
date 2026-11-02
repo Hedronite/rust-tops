@@ -8,7 +8,19 @@
 //! - Length never exceeds capacity.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-
+#![expect(
+    clippy::exhaustive_enums,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(
+    clippy::missing_assert_message,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(missing_docs, reason = "this crate already violates the strict table")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overflow {
     Full,
@@ -48,18 +60,32 @@ impl<T, const N: usize> Ring<T, N> {
         self.len == N
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     pub fn push(&mut self, item: T, overwrite: bool) -> Result<(), Overflow> {
         if self.len == N {
             if !overwrite {
                 return Err(Overflow::Full);
             }
             let idx = self.head;
-            self.buf[idx] = Some(item);
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            let tops_slot_76 = &mut self.buf[idx];
+            *tops_slot_76 = Some(item);
             self.head = (self.head + 1) & (N - 1);
             return Ok(());
         }
         let idx = (self.head + self.len) & (N - 1);
-        self.buf[idx] = Some(item);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_slot_85 = &mut self.buf[idx];
+        *tops_slot_85 = Some(item);
         self.len += 1;
         Ok(())
     }
@@ -71,6 +97,10 @@ impl<T, const N: usize> Ring<T, N> {
         let idx = self.head;
         self.head = (self.head + 1) & (N - 1);
         self.len -= 1;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         self.buf[idx].take()
     }
 }

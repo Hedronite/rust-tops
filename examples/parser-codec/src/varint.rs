@@ -37,6 +37,10 @@ pub fn decode_varint(input: &[u8]) -> Result<(u64, &[u8]), VarIntError> {
             if byte == 0 && i > 0 {
                 return Err(VarIntError::NonCanonical);
             }
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             return Ok((value, &input[i + 1..]));
         }
         shift += 7;

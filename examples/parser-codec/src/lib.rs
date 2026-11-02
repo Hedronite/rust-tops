@@ -6,6 +6,15 @@
 //! - Payload is opaque bytes; the codec does not interpret it.
 //! - `decode` returns the payload and any remaining unparsed input.
 
+#![expect(
+    clippy::exhaustive_enums,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(missing_docs, reason = "this crate already violates the strict table")]
 mod varint;
 
 pub use varint::{decode_varint, encode_varint, VarIntError};
@@ -40,6 +49,10 @@ pub fn encode_frame(out: &mut Vec<u8>, payload: &[u8]) -> Result<(), FrameError>
     if payload.is_empty() || payload.len() > 255 {
         return Err(FrameError::Empty);
     }
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     out.push(payload.len() as u8);
     out.extend_from_slice(payload);
     Ok(())

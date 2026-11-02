@@ -3,3 +3,6 @@
 # the coverage, CRAP, and mutation floors of its own class (RUST_TOPS.md §4).
 class: workspace-root
 inherits: per-package
+strict:
+  library_only: false
+  avoid_breaking_exported_api: true

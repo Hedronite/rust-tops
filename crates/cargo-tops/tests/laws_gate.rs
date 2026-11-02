@@ -11,6 +11,11 @@
 //! where a case needs one. The
 //! `#[ignore]` test at the end
 //! swaps the stub for the real pinned Bend; CI runs it in `bend-gate-matrix`.
+#![expect(
+    clippy::missing_assert_message,
+    reason = "this crate already violates the strict table"
+)]
+#![expect(clippy::panic, reason = "this crate already violates the strict table")]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,6 +86,7 @@ fn refused_constructors(pack: &str) -> Vec<String> {
     refused
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn bend_stub(pack: &str) -> String {
     let refused = refused_constructors(pack);
     let list = refused.join(" ");
@@ -151,6 +157,10 @@ struct Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&self.root);
     }
 }
@@ -170,6 +180,10 @@ fn stub(bin: &Path, name: &str, body: &str) {
 /// stubs on the fixture's `bin`.
 fn init_fixture(name: &str, class: &str) -> Fixture {
     let root = std::env::temp_dir().join(format!("cargo-tops-laws-{name}-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&root);
     let fixture = Fixture {
         repo: root.join("repo"),
@@ -226,6 +240,10 @@ fn edit_yaml(fixture: &Fixture, edit: impl FnOnce(&mut serde_json::Value)) {
     let mut doc: serde_json::Value = serde_saphyr::from_str(&raw).expect("rust-tops.yaml parses");
     edit(&mut doc);
     let json = serde_json::to_string_pretty(&doc).expect("json");
+    #[expect(
+        clippy::string_add,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     fs::write(&path, json + "\n").expect("write rust-tops.yaml");
 }
 
@@ -247,6 +265,10 @@ fn yaml_doc(fixture: &Fixture) -> serde_json::Value {
 
 /// The line the gate prints for the layers the yaml turns off, in yaml order.
 fn disabled_line(fixture: &Fixture) -> String {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let off: Vec<String> = yaml_doc(fixture)["layers"]
         .as_array()
         .expect("layers")
@@ -692,8 +714,13 @@ fn expect_fresh_init_passes(class: &str) {
     );
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// A fresh init repo for `class` with `laws` turned on before the one
 /// commit passes `gate`, and the self-fail laws chose their passing facts.
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn expect_fresh_init_with_laws_passes(
     class: &str,
     path: impl Fn(&Path) -> OsString,
@@ -709,7 +736,16 @@ fn expect_fresh_init_with_laws_passes(
     assert_eq!(out.status.code(), Some(0), "{class}: {text}");
     expect_fresh_init_outcomes(class, &fixture, &text);
     let cases = cases_json(&fixture);
-    assert_eq!(cases["passed"], true, "{class}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_743_16 = cases["passed"].clone();
+    assert_eq!(tops_idx_743_16, true, "{class}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let checked = cases["laws"]
         .as_array()
         .expect("laws")
@@ -746,13 +782,28 @@ fn expect_fresh_init_with_laws_passes(
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
     let fixture = fixture("init");
     let fresh = init_fixture("init-fresh", "library-core");
     let doc = yaml_doc(&fresh);
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&fresh.root);
-    assert_eq!(doc["protocol"]["version"], "1.1.0");
-    assert_eq!(doc["crate"]["msrv"], "1.88");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_798_16 = doc["protocol"]["version"].clone();
+    assert_eq!(tops_idx_798_16, "1.1.0");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_803_16 = doc["crate"]["msrv"].clone();
+    assert_eq!(tops_idx_803_16, "1.88");
     let laws = layer(&doc, "laws");
     assert_eq!(
         (&laws["enabled"], &laws["tier"], &laws["runner"]),
@@ -774,8 +825,13 @@ fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
         (&serde_json::json!(4), &serde_json::json!("cargo-kani")),
         "formal-kani left tier 4"
     );
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_830_9 = doc["exemptions"].clone();
     assert_eq!(
-        doc["exemptions"],
+        tops_idx_830_9,
         serde_json::json!([]),
         "init wrote an exemption"
     );
@@ -786,7 +842,12 @@ fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
         .expect("rust-toolchain.toml")
         .parse()
         .expect("toml");
-    assert_eq!(toolchain["toolchain"]["channel"].as_str(), Some("1.88"));
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_845_16 = toolchain["toolchain"]["channel"].clone();
+    assert_eq!(tops_idx_845_16.as_str(), Some("1.88"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -915,13 +976,19 @@ fn a_refusing_case_fails_the_gate() {
         fs::read_to_string(fixture.repo.join("target/rust-tops/cases.bend")).expect("cases.bend");
     assert!(program.contains("Laws.clippy_pin_verdict(Laws.ClippyUnpinned{})"));
     let cases = cases_json(&fixture);
-    assert_eq!(cases["passed"], false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_978_16 = cases["passed"].clone();
+    assert_eq!(tops_idx_978_16, false);
     assert_eq!(law(&cases, "clippy_toolchain_pinned")["verdict"], "Refuse");
     assert_eq!(law(&cases, "single_deny_site")["verdict"], "Allow");
     assert_eq!(bend_runs(&fixture), ["cases.bend", "main.bend"]);
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_failed_proof_prints_every_refusal() {
     // Two facts refuse: the toolchain is unpinned (clippy_toolchain_pinned)
     // and static-lint is off (fmt_is_tier0). The proof stops at the first;
@@ -933,7 +1000,16 @@ fn a_failed_proof_prints_every_refusal() {
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert_eq!(bend_runs(&fixture), ["cases.bend", "main.bend"]);
     let cases = cases_json(&fixture);
-    assert_eq!(cases["passed"], false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_1001_16 = cases["passed"].clone();
+    assert_eq!(tops_idx_1001_16, false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let checked: Vec<&serde_json::Value> = cases["laws"]
         .as_array()
         .expect("laws")
@@ -989,7 +1065,12 @@ fn the_proof_run_decides_pass_or_fail() {
         text.contains("laws: bend refused clippy_toolchain_pinned"),
         "{text}"
     );
-    assert_eq!(cases_json(&fixture)["passed"], false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_1065_16 = cases_json(&fixture)["passed"].clone();
+    assert_eq!(tops_idx_1065_16, false);
 }
 
 #[test]
@@ -1024,7 +1105,12 @@ fn a_passing_proof_that_prints_too_few_verdicts_fails() {
         text.contains("laws: bend printed 1 verdict(s) for "),
         "{text}"
     );
-    assert_eq!(cases_json(&fixture)["passed"], false);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_1104_16 = cases_json(&fixture)["passed"].clone();
+    assert_eq!(tops_idx_1104_16, false);
 }
 
 #[test]
@@ -1040,6 +1126,7 @@ fn a_failed_proof_with_no_checked_law_runs_bend_once() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_non_refusing_case_passes_and_lists_not_evaluated_laws() {
     let fixture = fixture("allow");
     stub_bend(&fixture);
@@ -1048,7 +1135,12 @@ fn a_non_refusing_case_passes_and_lists_not_evaluated_laws() {
     // A passing proof is the only run: no main.bend.
     assert_eq!(bend_runs(&fixture), ["cases.bend"]);
     let cases = cases_json(&fixture);
-    assert_eq!(cases["passed"], true);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_1132_16 = cases["passed"].clone();
+    assert_eq!(tops_idx_1132_16, true);
     assert_eq!(
         law(&cases, "clippy_toolchain_pinned")["case"],
         "ClippyPinned"
@@ -1085,6 +1177,7 @@ fn a_non_refusing_case_passes_and_lists_not_evaluated_laws() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn coverage_in_range_is_the_one_test_run_of_unit_integration_and_property() {
     let fixture = fixture_with("one-run", &TEST_LAYERS);
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
@@ -1132,6 +1225,7 @@ fn coverage_in_range_is_the_one_test_run_of_unit_integration_and_property() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
     // Missing: no cargo-llvm-cov, so nothing runs the suite.
     let missing = fixture_with("one-run-missing", &TEST_LAYERS);
@@ -1184,6 +1278,7 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself() {
     // Coverage above --max-tier, then coverage off: no coverage run either way.
     for (name, edit) in [("above", true), ("off", false)] {
@@ -1419,10 +1514,16 @@ fn laws_report_follows_cargo_target_dir() {
     assert!(!fixture.repo.join("target/rust-tops").exists());
     let parsed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(cases).expect("read")).expect("json");
-    assert_eq!(parsed["passed"], true);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_1510_16 = parsed["passed"].clone();
+    assert_eq!(tops_idx_1510_16, true);
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn a_custom_cargo_target_dir_holds_lcov_crap_and_the_laws_report() {
     let fixture = fixture_with("artifact-dir", &["static-lint", "coverage", "crap", "laws"]);
     stub_bend(&fixture);
@@ -1485,6 +1586,10 @@ fn one_gate_runs_cargo_metadata_once() {
     )
     .expect("write Cargo.toml");
     for args in [&[][..], &["--dry-run"]] {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_file(fixture.root.join("cargo.log"));
         let (_, text) = gate_with(&fixture, path_without_bend(&fixture.bin), None, args);
         assert!(text.contains("\n==> [laws] bend "), "{args:?}: {text}");
@@ -1673,7 +1778,12 @@ fn an_enabled_unmapped_layer_in_range_is_not_run_and_fails() {
     assert!(text.contains("none ran for: acceptance"), "{text}");
     let yaml = fs::read_to_string(fixture.repo.join("rust-tops.yaml")).expect("yaml");
     let doc: serde_json::Value = serde_saphyr::from_str(&yaml).expect("yaml parses");
-    assert_eq!(doc["exemptions"], serde_json::json!([]));
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_1773_16 = doc["exemptions"].clone();
+    assert_eq!(tops_idx_1773_16, serde_json::json!([]));
 
     // A dry run lists it and exits 1 too.
     let (out, text) = gate_with(
@@ -1829,6 +1939,7 @@ fn a_cargo_crap_that_is_not_the_lock_pin_fails_the_crap_layer() {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 #[test]
 fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
     for pin in ["0.9.0", "1.2.3"] {
@@ -1858,8 +1969,18 @@ fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
             .filter(|line| line.starts_with("crap "))
             .collect();
         assert_eq!(crap.len(), 2, "{log}");
-        assert_eq!(crap[0], "crap --version", "{log}");
-        assert!(crap[1].starts_with("crap --lcov "), "{log}");
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1962_20 = crap[0];
+        assert_eq!(tops_idx_1962_20, "crap --version", "{log}");
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1967_17 = crap[1];
+        assert!(tops_idx_1967_17.starts_with("crap --lcov "), "{log}");
         assert!(
             fixture.repo.join("target/rust-tops/crap.json").is_file(),
             "{text}"
@@ -1925,7 +2046,7 @@ fn without_the_crap_layer_the_gate_does_not_read_the_pin() {
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(!text.contains("rust-tops.lock"), "{text}");
 }
-
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 #[test]
 fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
     let fixture = fixture_with("tool-lock-honesty", &["static-lint", "laws"]);
@@ -1939,15 +2060,39 @@ fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
     // No rust-tops.lock: `init` writes none, and that is no drift.
     let (code, entry, text) = honesty(&fixture);
     assert_eq!(code, Some(0), "{text}");
-    assert_eq!(entry["case"], "LockHonest", "{entry}");
-    assert_eq!(entry["read"], serde_json::json!(["Cargo.lock"]), "{entry}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_2051_16 = entry["case"].clone();
+    assert_eq!(tops_idx_2051_16, "LockHonest", "{entry}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_2056_16 = entry["read"].clone();
+    assert_eq!(
+        tops_idx_2056_16,
+        serde_json::json!(["Cargo.lock"]),
+        "{entry}"
+    );
 
     pin_crap(&fixture, "0.9.0");
     let (code, entry, text) = honesty(&fixture);
     assert_eq!(code, Some(1), "an untracked rust-tops.lock passed: {text}");
-    assert_eq!(entry["case"], "LockDrift", "{entry}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_2065_16 = entry["case"].clone();
+    assert_eq!(tops_idx_2065_16, "LockDrift", "{entry}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_2071_9 = entry["read"].clone();
     assert_eq!(
-        entry["read"],
+        tops_idx_2071_9,
         serde_json::json!(["Cargo.lock", "rust-tops.lock"]),
         "{entry}"
     );
@@ -1961,12 +2106,22 @@ fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
     );
     let (code, entry, text) = honesty(&fixture);
     assert_eq!(code, Some(0), "{text}");
-    assert_eq!(entry["case"], "LockHonest", "{entry}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_2089_16 = entry["case"].clone();
+    assert_eq!(tops_idx_2089_16, "LockHonest", "{entry}");
 
     pin_crap(&fixture, "0.9.1");
     let (code, entry, text) = honesty(&fixture);
     assert_eq!(code, Some(1), "an edited rust-tops.lock passed: {text}");
-    assert_eq!(entry["case"], "LockDrift", "{entry}");
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
+    let tops_idx_2098_16 = entry["case"].clone();
+    assert_eq!(tops_idx_2098_16, "LockDrift", "{entry}");
 }
 
 /// Real Bend 2.0.36 on `PATH`: a refusing repo fails, and a fresh init of
@@ -1994,6 +2149,10 @@ fn the_pinned_bend_judges_the_case_file() {
     assert!(text.contains("SOME PROOFS FAIL"), "{text}");
     // The main.bend run gave every checked law a verdict.
     let cases = cases_json(&refused);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let laws = cases["laws"].as_array().expect("laws");
     assert!(
         laws.iter()

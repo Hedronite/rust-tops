@@ -1,0 +1,6 @@
+BeautifulRust
+
+The lint table crates/cargo-tops/templates/lints/tops-strict.toml is adapted from BeautifulRust v1.5.0 (40db61c6), modified.
+The MIT text is LICENSES/BeautifulRust-MIT.txt and includes Copyright (c) 2026 Morgan Linton.
+The rest of this repository is MIT OR Apache-2.0.
+https://github.com/morganlinton/BeautifulRust

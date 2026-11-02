@@ -23,3 +23,5 @@ callgrind-runner = "gungraun-runner"
 [notes]
 schema = "1.1.0"
 installed_with = "cargo install --locked <tool>"
+[upstream]
+beautifulrust = "v1.5.0 40db61c6fee84bd121cf288755f0e2f22a50e995"

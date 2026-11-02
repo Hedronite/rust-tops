@@ -15,3 +15,6 @@ fuzz: required-on-inbound-bytes
 miri: required
 kani: optional
 callgrind: optional
+strict:
+  library_only: true
+  avoid_breaking_exported_api: true

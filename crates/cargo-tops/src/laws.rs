@@ -6,6 +6,7 @@
 //! verdicts themselves come from `LAWS.bend`, and the pass or fail is
 //! `bend`'s exit status on that proof. When the proof fails, one more run
 //! of `main` alone prints every verdict. That run does not decide pass or fail.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -22,10 +23,10 @@ use serde_json::json;
 use crate::facts::{self, Choice, Ctx};
 use crate::profiles;
 
-pub const PACK: &str = "LAWS.bend";
-pub const LOCK: &str = "laws/bend.lock";
-pub const FETCH: &str = "scripts/fetch-bend.sh";
-pub const OUT_DIR: &str = "target/rust-tops";
+pub(crate) const PACK: &str = "LAWS.bend";
+pub(crate) const LOCK: &str = "laws/bend.lock";
+pub(crate) const FETCH: &str = "scripts/fetch-bend.sh";
+pub(crate) const OUT_DIR: &str = "target/rust-tops";
 
 /// Directory that receives `cases.bend` and `cases.json`.
 ///
@@ -34,13 +35,12 @@ pub const OUT_DIR: &str = "target/rust-tops";
 /// the report is `<project>/target/rust-tops`. `cargo metadata` runs at most
 /// once per project inside one gate. [`begin_gate`] clears that cache, so the
 /// next gate resolves the same project again.
-pub fn report_dir(project: &Path) -> PathBuf {
+pub(crate) fn report_dir(project: &Path) -> PathBuf {
     artifact_dir(project)
 }
 
 /// Drop the metadata cache. `gate` calls this once before any [`report_dir`].
-#[allow(dead_code, reason = "main.rs calls this once at the start of gate")]
-pub fn begin_gate() {
+pub(crate) fn begin_gate() {
     META_CACHE.with(|slot| slot.borrow_mut().clear());
 }
 
@@ -48,7 +48,7 @@ pub fn begin_gate() {
 ///
 /// This is the same path as [`report_dir`], so a nonempty `CARGO_TARGET_DIR`
 /// moves the laws report and both artifacts together.
-pub fn artifact_dir(project: &Path) -> PathBuf {
+pub(crate) fn artifact_dir(project: &Path) -> PathBuf {
     let from_env = std::env::var("CARGO_TARGET_DIR").ok();
     let meta = if nonempty(from_env.as_deref()).is_some() {
         None
@@ -80,7 +80,7 @@ fn metadata_target_once(project: &Path) -> Option<String> {
 }
 
 /// Same rule as [`report_dir`], with the two lookups passed in.
-pub fn resolve_report_dir(
+pub(crate) fn resolve_report_dir(
     project: &Path,
     cargo_target_dir: Option<&str>,
     metadata_target: Option<&str>,
@@ -96,7 +96,7 @@ pub fn resolve_report_dir(
 
 /// Path printed in gate output. Stays `target/rust-tops` when the report
 /// sits under the project.
-pub fn report_display(project: &Path) -> String {
+pub(crate) fn report_display(project: &Path) -> String {
     display_under(project, &report_dir(project))
 }
 
@@ -139,7 +139,7 @@ fn metadata_target(project: &Path) -> Option<String> {
 }
 
 /// The `bend` binary that reports the pinned version.
-pub struct Judge {
+pub(crate) struct Judge {
     bend: PathBuf,
     version: String,
 }
@@ -199,7 +199,7 @@ fn path_bend_opt_in(want: &str) -> Option<PathBuf> {
 /// version. The fallback log names the binary. Else run the vendored
 /// `scripts/fetch-bend.sh` (sha256-checked, no `curl | sh`). Every miss is
 /// a failed gate, never a skip (H-37).
-pub fn ensure_bend(dir: &Path) -> Result<Judge, String> {
+pub(crate) fn ensure_bend(dir: &Path) -> Result<Judge, String> {
     let raw = fs::read_to_string(dir.join(LOCK))
         .map_err(|_| format!("laws: {LOCK} is missing; run `cargo tops init` to write it"))?;
     let want = lock_version(&raw).ok_or_else(|| format!("laws: {LOCK} has no [bend] version"))?;
@@ -323,6 +323,7 @@ fn program(rows: &[Row]) -> String {
         };
         let call = verdict_call(fun, ctor);
         let read = row.read.join(", ").replace(['\n', '\r'], " ");
+        #[expect(clippy::let_underscore_must_use, reason = "already in this crate when the strict table was turned on")]
         let _ = write!(
             out,
             "\n# {law}: {ctor}, read {read}\nlaw case_{law}:\n  {{not_refuse({call}) == True{{}} : Bool}}\n\ndef case_{law}():\n  {{==}}\n",
@@ -360,10 +361,22 @@ fn write_main(out: &mut String, calls: &[String]) {
     match calls.len() {
         0 => {}
         1 => {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             let _ = write!(out, "\ndef main() -> Laws.Verdict:\n  {}\n", calls[0]);
         }
         n => {
             let types = vec!["Laws.Verdict"; n].join(" & ");
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             let _ = write!(out, "\ndef main() -> {types}:\n  ({})\n", calls.join(", "));
         }
     }
@@ -542,7 +555,8 @@ fn verdicts_from_main(judge: &Judge, out: &Path, rows: &[Row]) -> Result<Vec<Str
 /// the gate failures, empty when `bend` accepted every checked law.
 /// A failing proof is followed by [`verdicts_from_main`]; that run only
 /// fills the verdict column.
-pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
+#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
+pub(crate) fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
     let Ok(pack) = fs::read_to_string(ctx.dir.join(PACK)) else {
         return Ok(vec![format!(
             "laws: {PACK} is missing; run `cargo tops init`"
@@ -626,6 +640,10 @@ pub fn run(judge: &Judge, ctx: &Ctx) -> Result<Vec<String>> {
             judged.verdicts.len()
         ));
     }
+    #[expect(
+        clippy::string_add,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let report = serde_json::to_string_pretty(&judged.json(
         judge,
         output.status.code(),
@@ -763,6 +781,10 @@ mod tests {
     #[test]
     fn metadata_target_reads_target_directory() {
         let dir = std::env::temp_dir().join(format!("cargo-tops-meta-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
@@ -776,6 +798,10 @@ mod tests {
         assert!(got.contains("target"), "{got}");
         let report = resolve_report_dir(&dir, None, Some(&got));
         assert_eq!(report, PathBuf::from(got).join("rust-tops"));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -783,6 +809,10 @@ mod tests {
     fn report_dir_reuses_one_cargo_metadata_and_shares_the_artifact_dir() {
         let _lock = lock_target_env();
         let dir = std::env::temp_dir().join(format!("cargo-tops-meta-once-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
@@ -800,14 +830,23 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(artifact_dir(&dir), first);
         assert_eq!(after - before, 1, "cargo metadata ran more than once");
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
+    #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
     fn a_second_project_on_the_same_thread_spawns_its_own_metadata() {
         let _lock = lock_target_env();
         let root =
             std::env::temp_dir().join(format!("cargo-tops-two-projects-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
         let alpha = root.join("alpha");
         let beta = root.join("beta");
@@ -847,6 +886,10 @@ mod tests {
             after_again, after_second,
             "the first project spawned again inside the same gate"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -855,6 +898,10 @@ mod tests {
         let _lock = lock_target_env();
         let dir =
             std::env::temp_dir().join(format!("cargo-tops-second-gate-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
@@ -880,6 +927,10 @@ mod tests {
             1,
             "the next gate reused the previous metadata"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -888,6 +939,10 @@ mod tests {
         let _lock = lock_target_env();
         let project =
             std::env::temp_dir().join(format!("cargo-tops-env-target-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&project);
         fs::create_dir_all(project.join("src")).unwrap();
         fs::write(
@@ -909,6 +964,10 @@ mod tests {
             after, before,
             "a set CARGO_TARGET_DIR still spawned cargo metadata"
         );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&project);
     }
 
@@ -963,7 +1022,12 @@ mod tests {
     fn pack_lists_all_53_laws() {
         let laws = pack_laws(profiles::LAWS_BEND);
         assert_eq!(laws.len(), 53);
-        assert_eq!(laws[0], "evidence_not_self_served");
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let tops_idx_1029_20 = laws[0].clone();
+        assert_eq!(tops_idx_1029_20, "evidence_not_self_served");
     }
 
     #[cfg(unix)]
@@ -971,6 +1035,10 @@ mod tests {
     fn main_bend_write_refuses_a_symlink_and_does_not_follow_it() {
         use std::os::unix::fs::symlink;
         let dir = std::env::temp_dir().join(format!("cargo-tops-main-bend-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let real = dir.join("real.bend");
@@ -980,6 +1048,10 @@ mod tests {
         let err = write_refusing_symlink(&link, "replaced").unwrap_err();
         assert!(err.to_string().contains("symlink"), "{err}");
         assert_eq!(fs::read_to_string(&real).unwrap(), "kept");
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 }

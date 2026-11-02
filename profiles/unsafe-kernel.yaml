@@ -16,3 +16,6 @@ miri: required
 kani: required
 callgrind: required
 unsafe_policy: required-kernel
+strict:
+  library_only: true
+  avoid_breaking_exported_api: true

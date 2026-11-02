@@ -16,3 +16,6 @@ miri: false
 kani: false
 callgrind: false
 acceptance: required-on-binary
+strict:
+  library_only: false
+  avoid_breaking_exported_api: false

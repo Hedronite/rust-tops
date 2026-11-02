@@ -8,6 +8,7 @@
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
+#![expect(clippy::panic, reason = "this crate already violates the strict table")]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -27,12 +28,12 @@ const CLASSES: &[&str] = &[
 const PER_CLASS: &[&str] = &[
     "rust-tops.yaml",
     "rust-toolchain.toml",
+    "clippy.toml",
     ".github/workflows/rust-tops.yml",
 ];
 
 const SHARED: &[&str] = &[
     "AGENTS.md",
-    "clippy.toml",
     ".config/nextest.toml",
     ".cargo/mutants.toml",
     ".cargo-crap.toml",
@@ -52,6 +53,10 @@ fn recording() -> bool {
 
 fn run_init(class: &str) -> (PathBuf, String) {
     let dir = std::env::temp_dir().join(format!("cargo-tops-init-{class}-{}", std::process::id()));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     let _ = fs::remove_dir_all(&dir);
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args(["init", "--class", class, "--name", "golden-crate", "--path"])
@@ -125,6 +130,10 @@ fn init_output_matches_main_bytes() {
                 fs::read(dir.join(rel)).unwrap_or_else(|err| panic!("read {class} {rel}: {err}"));
             expect_bytes(&golden_root().join("shared").join(rel), &bytes);
         }
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let _ = fs::remove_dir_all(&dir);
     }
 }

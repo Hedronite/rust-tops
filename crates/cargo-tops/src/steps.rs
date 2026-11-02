@@ -11,6 +11,7 @@
 //!
 //! `main.rs` is the caller. This allow holds until that wiring references
 //! the items.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #![allow(dead_code, reason = "main.rs wires these items")]
 
 use std::fmt;
@@ -20,13 +21,13 @@ use std::path::{Path, PathBuf};
 const DIFF_NAME: &str = "rust-tops.diff";
 
 /// The coverage layer's LCOV, under the gate's artifact directory.
-pub const LCOV: &str = "lcov.info";
+pub(crate) const LCOV: &str = "lcov.info";
 /// The crap layer's report, under the gate's artifact directory.
-pub const CRAP: &str = "crap.json";
+pub(crate) const CRAP: &str = "crap.json";
 
 /// What a step is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     /// [`tool_binary`] must be on `PATH`. A miss does not pass the layer.
     Tool,
     /// Run `argv`. A non-zero status is [`Outcome::Failed`].
@@ -37,14 +38,14 @@ pub enum Kind {
 
 /// One argv invocation in a layer.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Step {
+pub(crate) struct Step {
     pub argv: Vec<String>,
     pub kind: Kind,
 }
 
 impl Step {
     #[must_use]
-    pub fn new(kind: Kind, argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub(crate) fn new(kind: Kind, argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             kind,
             argv: argv.into_iter().map(Into::into).collect(),
@@ -52,32 +53,32 @@ impl Step {
     }
 
     #[must_use]
-    pub fn tool(argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub(crate) fn tool(argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self::new(Kind::Tool, argv)
     }
 
     #[must_use]
-    pub fn command(argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub(crate) fn command(argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self::new(Kind::Command, argv)
     }
 
     /// `test -s <path>`.
     #[must_use]
-    pub fn artifact(path: impl Into<String>) -> Self {
+    pub(crate) fn artifact(path: impl Into<String>) -> Self {
         let path = path.into();
         Self::new(Kind::Artifact, ["test", "-s", path.as_str()])
     }
 
     /// Program and its arguments. Empty argv is `None`.
     #[must_use]
-    pub fn program(&self) -> Option<(&str, &[String])> {
+    pub(crate) fn program(&self) -> Option<(&str, &[String])> {
         let (program, args) = self.argv.split_first()?;
         Some((program.as_str(), args))
     }
 
     /// Path a [`Kind::Artifact`] step checks.
     #[must_use]
-    pub fn artifact_path(&self) -> Option<&Path> {
+    pub(crate) fn artifact_path(&self) -> Option<&Path> {
         if self.kind != Kind::Artifact {
             return None;
         }
@@ -90,7 +91,7 @@ impl Step {
     }
 
     #[must_use]
-    pub fn display(&self) -> String {
+    pub(crate) fn display(&self) -> String {
         self.argv.join(" ")
     }
 }
@@ -100,7 +101,7 @@ impl Step {
 /// [`Failed`](Self::Failed) and [`Vacuous`](Self::Vacuous) are different.
 /// Vacuous counts for no law.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     Passed,
     Failed,
     ToolMissing,
@@ -111,7 +112,7 @@ pub enum Outcome {
 impl Outcome {
     /// `Some(true)` pass, `Some(false)` fail, `None` when no law may count it.
     #[must_use]
-    pub fn law_verdict(self) -> Option<bool> {
+    pub(crate) fn law_verdict(self) -> Option<bool> {
         match self {
             Self::Passed => Some(true),
             Self::Failed | Self::ToolMissing => Some(false),
@@ -121,13 +122,13 @@ impl Outcome {
 
     /// Vacuous is not a pass and not a fail, so no law counts it.
     #[must_use]
-    pub fn counts_for_a_law(self) -> bool {
+    pub(crate) fn counts_for_a_law(self) -> bool {
         self.law_verdict().is_some()
     }
 
     /// Gate failure. Vacuous does not fail the gate.
     #[must_use]
-    pub fn fails_the_gate(self) -> bool {
+    pub(crate) fn fails_the_gate(self) -> bool {
         matches!(self, Self::Failed | Self::ToolMissing)
     }
 }
@@ -145,7 +146,7 @@ impl fmt::Display for Outcome {
 
 /// The binary a tool step names was not on `PATH`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MissingTool {
+pub(crate) struct MissingTool {
     pub binary: String,
 }
 
@@ -165,7 +166,7 @@ impl std::error::Error for MissingTool {}
 ///
 /// Call this for [`Kind::Tool`]. The name is the binary the command runs,
 /// not the first word of a shell string.
-pub fn check_tool(argv: &[String]) -> Result<(), MissingTool> {
+pub(crate) fn check_tool(argv: &[String]) -> Result<(), MissingTool> {
     let binary = tool_binary(argv).unwrap_or_else(|| "command".to_string());
     if binary_present(&binary) {
         Ok(())
@@ -180,7 +181,7 @@ pub fn check_tool(argv: &[String]) -> Result<(), MissingTool> {
 /// `sh` is not the result when a later segment runs `cargo llvm-cov` or
 /// `cargo mutants`.
 #[must_use]
-pub fn tool_binary(argv: &[String]) -> Option<String> {
+pub(crate) fn tool_binary(argv: &[String]) -> Option<String> {
     let tokens = tokens_from_argv(argv);
     best_binary(&split_chain(&tokens))
 }
@@ -191,7 +192,7 @@ pub fn tool_binary(argv: &[String]) -> Option<String> {
 /// the same `--workspace`, `--all-features` and `--profile ci` as `unit`, so
 /// its run can stand for `unit`, `integration` and `property`.
 #[must_use]
-pub fn coverage_steps(dir: &Path) -> Vec<Step> {
+pub(crate) fn coverage_steps(dir: &Path) -> Vec<Step> {
     let dir_shown = dir.display().to_string();
     let lcov = dir.join(LCOV).display().to_string();
     vec![
@@ -215,7 +216,7 @@ pub fn coverage_steps(dir: &Path) -> Vec<Step> {
 /// `test -s` is true when the path exists and its size is greater than zero.
 /// An empty artifact is [`Outcome::Failed`], not [`Outcome::Vacuous`].
 #[must_use]
-pub fn artifact_outcome(path: &Path) -> Outcome {
+pub(crate) fn artifact_outcome(path: &Path) -> Outcome {
     let present = fs::metadata(path).is_ok_and(|meta| meta.len() > 0);
     if present {
         Outcome::Passed
@@ -226,7 +227,7 @@ pub fn artifact_outcome(path: &Path) -> Outcome {
 
 /// A failed or vacuous outcome stops the `&&` chain. Only a pass continues.
 #[must_use]
-pub fn chain_continues(outcome: Outcome) -> bool {
+pub(crate) fn chain_continues(outcome: Outcome) -> bool {
     outcome == Outcome::Passed
 }
 
@@ -234,14 +235,14 @@ pub fn chain_continues(outcome: Outcome) -> bool {
 ///
 /// Not a list of layers. [`init_exemptions`] is what `init` writes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Exemption {
+pub(crate) struct Exemption {
     pub layer: String,
     pub expires: String,
 }
 
 /// Why [`Exemption::new`] refused a value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExemptionError {
+pub(crate) enum ExemptionError {
     /// Missing layer id, or more than one.
     Layer,
     /// Expiry is not a real `YYYY-MM-DD` date.
@@ -261,7 +262,10 @@ impl std::error::Error for ExemptionError {}
 
 impl Exemption {
     /// `layer` is one id such as `mutation`. `expires` is `YYYY-MM-DD`.
-    pub fn new(layer: impl AsRef<str>, expires: impl AsRef<str>) -> Result<Self, ExemptionError> {
+    pub(crate) fn new(
+        layer: impl AsRef<str>,
+        expires: impl AsRef<str>,
+    ) -> Result<Self, ExemptionError> {
         let layer = layer.as_ref();
         if !one_layer(layer) {
             return Err(ExemptionError::Layer);
@@ -279,15 +283,19 @@ impl Exemption {
 
 /// Exemptions `init` writes. Always none.
 #[must_use]
-pub fn init_exemptions() -> &'static [Exemption] {
+pub(crate) fn init_exemptions() -> &'static [Exemption] {
     &[]
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// Classify a mutation diff. A failed command is [`Outcome::Failed`] even
 /// when the diff is empty. There is no waiver parameter and no config key
 /// is read. A successful empty diff is [`Outcome::Vacuous`].
 #[must_use]
-pub fn diff_outcome(command_ok: bool, empty: bool) -> Outcome {
+pub(crate) fn diff_outcome(command_ok: bool, empty: bool) -> Outcome {
     if !command_ok {
         return Outcome::Failed;
     }
@@ -298,12 +306,16 @@ pub fn diff_outcome(command_ok: bool, empty: bool) -> Outcome {
     }
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "already in this crate when the strict table was turned on"
+)]
 /// Read the diff file only after the command succeeded.
 ///
 /// A failed command is [`Outcome::Failed`] even if a stale diff is sitting
 /// at `diff_path`. A successful empty file is [`Outcome::Vacuous`].
 #[must_use]
-pub fn judge_diff(command_ok: bool, diff_path: &Path) -> Outcome {
+pub(crate) fn judge_diff(command_ok: bool, diff_path: &Path) -> Outcome {
     if !command_ok {
         return diff_outcome(false, false);
     }
@@ -322,7 +334,7 @@ pub fn judge_diff(command_ok: bool, diff_path: &Path) -> Outcome {
 /// non-empty diff; a failed diff is not waived, and an empty diff is not
 /// handed to `cargo mutants`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MutationPlan {
+pub(crate) struct MutationPlan {
     pub diff: Step,
     pub diff_path: PathBuf,
     pub mutants: Step,
@@ -330,7 +342,7 @@ pub struct MutationPlan {
 
 impl MutationPlan {
     #[must_use]
-    pub fn new(report_dir: &Path) -> Self {
+    pub(crate) fn new(report_dir: &Path) -> Self {
         let diff_path = report_dir.join(DIFF_NAME);
         let diff_arg = diff_path.display().to_string();
         let script = mutation_diff_script(report_dir, &diff_path);
@@ -352,7 +364,7 @@ impl MutationPlan {
 
     /// Mutants runs only when the diff passed. Failed and Vacuous stop.
     #[must_use]
-    pub fn after_diff(&self, outcome: Outcome) -> Option<&Step> {
+    pub(crate) fn after_diff(&self, outcome: Outcome) -> Option<&Step> {
         chain_continues(outcome).then_some(&self.mutants)
     }
 }
@@ -389,6 +401,10 @@ fn one_layer(layer: &str) -> bool {
 
 fn valid_expiry(text: &str) -> bool {
     let bytes = text.as_bytes();
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
         return false;
     }
@@ -456,7 +472,15 @@ fn is_executable(path: &Path) -> bool {
 }
 
 fn tokens_from_argv(argv: &[String]) -> Vec<String> {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "already in this crate when the strict table was turned on"
+    )]
     if argv.len() >= 3 && argv[0] == "sh" && argv[1] == "-c" {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let mut tokens = tokenize(&argv[2]);
         tokens.extend(argv.iter().skip(3).cloned());
         return unwrap_all(tokens);
@@ -492,14 +516,26 @@ fn unwrap_once(tokens: &[String]) -> (Vec<String>, bool) {
     let mut changed = false;
     let mut index = 0;
     while index < tokens.len() {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "already in this crate when the strict table was turned on"
+        )]
         let is_shell = tokens[index] == "sh"
             && tokens.get(index + 1).map(String::as_str) == Some("-c")
             && index + 2 < tokens.len();
         if is_shell {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             out.extend(tokenize(&tokens[index + 2]));
             index += 3;
             changed = true;
         } else {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "already in this crate when the strict table was turned on"
+            )]
             out.push(tokens[index].clone());
             index += 1;
         }
@@ -659,4 +695,17 @@ fn is_env_assign(token: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+#[cfg(test)]
+mod expiry {
+    use super::Exemption;
+
+    #[test]
+    fn a_real_date_is_accepted_and_a_fake_one_is_not() {
+        assert!(Exemption::new("mutation", "2024-02-29").is_ok());
+        assert!(Exemption::new("mutation", "2023-02-29").is_err());
+        assert!(Exemption::new("mutation", "2024-13-01").is_err());
+        assert!(Exemption::new("mutation", "not-a-date").is_err());
+    }
 }

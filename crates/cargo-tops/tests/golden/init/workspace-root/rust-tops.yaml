@@ -55,6 +55,7 @@ gates:
     nightly_seconds: 7200
     pr_smoke_seconds: 30
   lint:
+    avoid_breaking_exported_api: true
     clippy_deny:
       - "warnings"
       - "clippy::correctness"
@@ -64,6 +65,7 @@ gates:
       - "clippy::dbg_macro"
     cognitive_complexity_max: 12
     fmt_check: true
+    library_only: false
     too_many_arguments_max: 6
     too_many_lines_max: 40
   mutation:

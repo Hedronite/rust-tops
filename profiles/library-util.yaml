@@ -15,3 +15,6 @@ fuzz: false
 miri: if-unsafe
 kani: false
 callgrind: optional
+strict:
+  library_only: true
+  avoid_breaking_exported_api: true
