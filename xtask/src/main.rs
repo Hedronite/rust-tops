@@ -3,7 +3,8 @@
 //! `copies.toml` at the repo root has one `[[copy]]` table per source: `from`
 //! is the file read, and `to` lists the hand copies written from it. Sources
 //! are under `crates/cargo-tops/templates/`, except
-//! `schema/rust-tops.schema.json`, which the template vendors.
+//! `schema/rust-tops.schema.json`, which the template vendors, and
+//! `LICENSES/BeautifulRust-MIT.txt`, which the crate package ships.
 //!
 //! - `sync` rewrites every dest that is missing or differs from its source.
 //! - `sync --check` writes nothing. It exits 1 when a dest is missing, is not
@@ -26,8 +27,10 @@ use std::process::ExitCode;
 
 const LIST: &str = "copies.toml";
 const TEMPLATES: &str = "crates/cargo-tops/templates/";
-/// The one source outside `templates/`. The template is its copy.
+/// The one schema source outside `templates/`. The template is its copy.
 const SCHEMA: &str = "schema/rust-tops.schema.json";
+/// The BeautifulRust MIT text. The crate package ships a byte copy.
+const BEAUTIFULRUST_MIT: &str = "LICENSES/BeautifulRust-MIT.txt";
 /// `schema/` is a source. The kit workflow and the init goldens are not
 /// hand copies: init and the golden test own those bytes.
 const NEVER_WRITTEN: [&str; 3] = ["schema/", ".github/", "crates/cargo-tops/tests/golden/"];
@@ -257,9 +260,12 @@ fn validate(pairs: &[Pair]) -> Result<()> {
     for pair in pairs {
         inside(&pair.source)?;
         inside(&pair.dest)?;
-        if pair.source != SCHEMA && !pair.source.starts_with(TEMPLATES) {
+        if pair.source != SCHEMA
+            && pair.source != BEAUTIFULRUST_MIT
+            && !pair.source.starts_with(TEMPLATES)
+        {
             bail!(
-                "source {}: a source is under {TEMPLATES} or is {SCHEMA}",
+                "source {}: a source is under {TEMPLATES}, is {SCHEMA}, or is {BEAUTIFULRUST_MIT}",
                 pair.source
             );
         }
