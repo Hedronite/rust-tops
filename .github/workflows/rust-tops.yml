@@ -105,7 +105,7 @@ jobs:
         with:
           # Workspace rust-version. `cargo check --locked` on this exact compiler.
           toolchain: 1.99.1
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # {SYSDEPS}
       - run: cargo check --workspace --all-features --locked
 
@@ -130,7 +130,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
           toolchain: 1.99.1
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
       - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
 
@@ -144,7 +144,7 @@ jobs:
         with:
           toolchain: 1.99.1
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # {SYSDEPS}
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
