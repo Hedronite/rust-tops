@@ -13,6 +13,15 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 
 ## [Unreleased]
 
+### Security
+
+- `rustix` 1.1.5 → 1.1.6 (direct dependency of `cargo-tops` and `xtask`) to clear RUSTSEC-2026-0486 (unsound zero-length xattr buffer). MSRV stays **1.99.1**.
+
+### Changed
+
+- `verified_on` lines in `laws/bend.lock` and the init template (and its golden) no longer name people or machines; they keep the dates and the verification method.
+- README tool-lock row: `cargo-crap` 0.5.0 → 0.9.0, matching [`rust-tops.lock`](rust-tops.lock).
+
 ### Added
 
 - Three agent skills, `rust-tops-adopt`, `rust-tops-gate`, and `rust-tops-review`. Each is a `SKILL.md` plus a Nushell script that prints `{ok, command, data}`. The script wraps `cargo tops`; it does not re-implement it. `rust-tops-gate` returns `ok: true` only when `cargo tops gate` exits 0 and every law row is `checked` with verdict `Allow` or `Ack`. `data.gate_green` is true when that command exits 0 and every checked law passed. A `not-evaluated` law with `reason_code` `no_fact_reader` is a `data.gaps` item. One with `reason_code` `run_dependent` stays in `data.fixes`. Either list keeps `ok` false. The script does not read the report's top-level pass bit. A non-zero exit reports that code and the stderr tail before the report is read.

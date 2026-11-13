@@ -52,7 +52,7 @@ Protocol 1.1.0 adds the `laws` layer ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). It 
 | Package | 0.2.0 | workspace [`Cargo.toml`](Cargo.toml). Tagged `v0.2.0` at commit `e0fa684`. [GitHub release v0.2.0](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0). [crates.io](https://crates.io/crates/cargo-tops) `cargo-tops` 0.2.0 (2026-10-22 00:44 ET) |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
 | Crate page | 0.2.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
-| Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.5.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
+| Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
 
