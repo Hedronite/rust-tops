@@ -49,9 +49,9 @@ Protocol 1.1.0 adds the `laws` layer ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). It 
 | Plane | Pin | Where |
 | --- | --- | --- |
 | Protocol | 1.1.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
-| Package | 0.2.0 | workspace [`Cargo.toml`](Cargo.toml). Tagged `v0.2.0` at commit `e0fa684`. [GitHub release v0.2.0](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0). [crates.io](https://crates.io/crates/cargo-tops) `cargo-tops` 0.2.0 (2026-10-22 00:44 ET) |
+| Package | 0.3.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) at commit `e0fa684`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
-| Crate page | 0.2.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
+| Crate page | 0.3.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
 | Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
@@ -177,11 +177,11 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 | [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) | Candidate laws and their sources. The `laws` layer is spec §3.1 |
 | [`laws/`](laws/) | `LAWS.bend`, `PROOF.bend`, `NAMES` (H-01..H-53) |
 | [`flake.nix`](flake.nix) | Nix overlay |
-| [`CHANGELOG.md`](CHANGELOG.md) | Package history. Protocol 1.1.0 and package 0.2.0 are separate version planes |
+| [`CHANGELOG.md`](CHANGELOG.md) | Package history. Protocol 1.1.0 and package 0.3.0 are separate version planes |
 
 ## Status
 
-This tree is package **0.2.0** and protocol **1.1.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.2.0]`. Tagged `v0.2.0` at commit `e0fa684`. [GitHub release v0.2.0](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0). [crates.io](https://crates.io/crates/cargo-tops) `cargo-tops` 0.2.0 published 2026-10-22 00:44 ET.
+This tree is package **0.3.0** and protocol **1.1.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.3.0]`. The previous package release is [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) (`e0fa684`).
 
 This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
