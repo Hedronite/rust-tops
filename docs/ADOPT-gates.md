@@ -1,6 +1,6 @@
 # Adopt the rust-tops floor
 
-Floor for a workspace that adopts protocol 1.1.0 with `cargo-tops` 0.2.0. Coverage, CRAP, mutants, and Bend stay optional.
+Floor for a workspace that adopts protocol 1.1.0 with `cargo-tops` 0.3.0. Coverage, CRAP, mutants, and Bend stay optional.
 
 ## Floor
 
@@ -28,10 +28,10 @@ One `rust-tops.yaml` per crate, protocol 1.1.0, beside that crate. A binary crat
 
 ## cargo-tops pin
 
-`cargo-tops` 0.2.0 is not a dependency inside the product repo. On the build host:
+`cargo-tops` 0.3.0 is not a dependency inside the product repo. On the build host:
 
 ```
-cargo install cargo-tops --version 0.2.0 --locked
+cargo install cargo-tops --version 0.3.0 --locked
 ```
 
 ## CI operating systems

@@ -13,21 +13,26 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-13
+
+Package plane only. Protocol stays **1.1.0**.
+
+Changes since v0.2.0 (`e0fa684`, 2026-10-21).
+
 ### Security
 
 - `rustix` 1.1.5 → 1.1.6 (direct dependency of `cargo-tops` and `xtask`) to clear RUSTSEC-2026-0486 (unsound zero-length xattr buffer). MSRV stays **1.99.1**.
-
-### Changed
-
-- `verified_on` lines in `laws/bend.lock` and the init template (and its golden) no longer name people or machines; they keep the dates and the verification method.
-- README tool-lock row: `cargo-crap` 0.5.0 → 0.9.0, matching [`rust-tops.lock`](rust-tops.lock).
 
 ### Added
 
 - Three agent skills, `rust-tops-adopt`, `rust-tops-gate`, and `rust-tops-review`. Each is a `SKILL.md` plus a Nushell script that prints `{ok, command, data}`. The script wraps `cargo tops`; it does not re-implement it. `rust-tops-gate` returns `ok: true` only when `cargo tops gate` exits 0 and every law row is `checked` with verdict `Allow` or `Ack`. `data.gate_green` is true when that command exits 0 and every checked law passed. A `not-evaluated` law with `reason_code` `no_fact_reader` is a `data.gaps` item. One with `reason_code` `run_dependent` stays in `data.fixes`. Either list keeps `ok` false. The script does not read the report's top-level pass bit. A non-zero exit reports that code and the stderr tail before the report is read.
 - `cargo tops init --skills` writes that layout as ordinary files: `.agents/skills/<name>/`, `.claude/skills/<name>/`, `.cursor/skills/<name>/`, and `.grok/skills/<name>/` hold the same bytes. It does not create symlinks. A drift test in `cargo test --workspace` fails when any copy differs or is a symlink. It also writes a one-line `CLAUDE.md` (`@AGENTS.md`) and `docs/REVIEW.md`. Default `cargo tops init` does not write those files.
-- The repository `nextest` job installs Nushell 0.108.0 from the official GitHub release tarball `nu-0.108.0-x86_64-unknown-linux-gnu.tar.gz` (sha256 `f0daaa0256b0f7dd5f4d9925b4d5522d8de5e947ed9ad64a43526e5cffeb05df`) and sets `RUST_TOPS_REQUIRE_NU` so the skill envelope tests fail when `nu` is missing. No other job changes. The drop-in workflow is unchanged.
+- The repository `nextest` job installs Nushell 0.108.0 from the official GitHub release tarball `nu-0.108.0-x86_64-unknown-linux-gnu.tar.gz` (sha256 `f0daaa0256b0f7dd5f4d9925b4d5522d8de5e947ed9ad64a43526e5cffeb05df`) and sets `RUST_TOPS_REQUIRE_NU` so the skill envelope tests fail when `nu` is missing. No other job changes.
 - [`docs/REVIEW.md`](docs/REVIEW.md), the review gate. It does not change CRAP, coverage, or mutation.
+- Class profiles as data: `library-util`, `ffi-bridge`, and `workspace-root`, merged over the template. `init` writes the chosen class profile as data, and `check` refuses a crate that has none ([#17](https://github.com/Hedronite/rust-tops/pull/17)).
+- `xtask sync` writes and checks the hand copies listed in `copies.toml`. `init` refuses a symlinked `main.bend` ([#19](https://github.com/Hedronite/rust-tops/pull/19)).
+- The kit CI run of `cargo tops gate` in the drop-in, so an adopting tree can take the same gate the kit uses ([#18](https://github.com/Hedronite/rust-tops/pull/18)).
+- A BeautifulRust v1.5.0 strict lint table as the style companion for the kit, with the MIT terms noticed and the lint table marked as adapted. The BeautifulRust MIT text ships in the `cargo-tops` package ([#25](https://github.com/Hedronite/rust-tops/pull/25)).
 
 ### Changed
 
@@ -37,6 +42,19 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 - `AGENTS.md` (repo root, the init template, and the init golden) is the protocol 1.1.0 harness: `cargo tops check` then `cargo tops gate`, the optional `laws` layer, Refuse / not-evaluated / unreported, and the pinned kit files. It adds the module-structure rules and a short review section.
 - `cargo tops gate` writes `cases.bend` and `cases.json` under `$CARGO_TARGET_DIR/rust-tops` when that variable is set, otherwise under `cargo metadata`'s `target_directory`, otherwise under `<project>/target/rust-tops`.
 - [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) states that the laws layer is normative in protocol 1.1.0. [`RUST_TOPS.md`](RUST_TOPS.md) §14.3 points at the harness `init` writes.
+- Gate layers are judged as argv steps. An enabled layer with no command is `NotRun` and fails the gate. A missing `origin/main` is an empty mutation diff, reported as such ([#15](https://github.com/Hedronite/rust-tops/pull/15), [#16](https://github.com/Hedronite/rust-tops/pull/16)).
+- One coverage run is the test run of unit, integration, and property tests. CRAP is wired only to a fresh lcov file from a coverage run that passed ([#20](https://github.com/Hedronite/rust-tops/pull/20)).
+- The workspace MSRV, `rust-version`, and `rust-toolchain.toml` channel are **1.99.1**.
+- `cargo-crap` is pinned to 0.9.0 and to `rust-tops.lock`, with parent directories held open around the report path ([#22](https://github.com/Hedronite/rust-tops/pull/22)).
+- `verified_on` lines in `laws/bend.lock` and the init template (and its golden) no longer name people or machines; they keep the dates and the verification method.
+- README tool-lock row: `cargo-crap` 0.5.0 → 0.9.0, matching [`rust-tops.lock`](rust-tops.lock).
+- The kit and drop-in workflows pin `taiki-e/install-action` to v2.88.1, with no fallback install of `cargo-crap` ([#23](https://github.com/Hedronite/rust-tops/pull/23)). The opt-in fuzz job installs `cargo-fuzz` with Cargo and pins its actions ([#24](https://github.com/Hedronite/rust-tops/pull/24)). Remaining `Swatinem/rust-cache` steps are pinned to v2.9.3 ([#26](https://github.com/Hedronite/rust-tops/pull/26), [#27](https://github.com/Hedronite/rust-tops/pull/27)).
+- `unwrap` and `expect` are denied outside tests in the kit modules. The strict lint table names its pedantic lints instead of enabling the whole group, and stores lint scope on each class profile.
+
+### Fixed
+
+- Report-directory handling reuses one `cargo metadata` answer, writes lcov and CRAP under that directory, and creates parent directories before looking for them ([#21](https://github.com/Hedronite/rust-tops/pull/21)).
+- Every gate fixture stubs `curl`, and a failed proof is rerun. Clippy on the coverage flag check is satisfied. A second project spawns its own `cargo metadata`.
 
 ## [0.2.0] - 2026-10-21
 
@@ -168,7 +186,8 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
-[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Hedronite/rust-tops/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Hedronite/rust-tops/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Hedronite/rust-tops/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Hedronite/rust-tops/compare/v0.1.2...v0.1.3
