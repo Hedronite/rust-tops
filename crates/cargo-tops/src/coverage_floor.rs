@@ -32,7 +32,7 @@ impl Count {
 
     /// Percent covered; `None` when there is nothing to cover.
     fn percent(self) -> Option<f64> {
-        (self.count > 0).then(|| self.covered as f64 * 100.0 / self.count as f64)
+        (self.count != 0).then(|| self.covered as f64 * 100.0 / self.count as f64)
     }
 }
 

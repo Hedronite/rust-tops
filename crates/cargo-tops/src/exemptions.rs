@@ -81,10 +81,13 @@ pub(crate) fn for_layer(exemptions: Option<&Value>, layer: &str) -> Vec<Exemptio
 
 /// Today's UTC date as `YYYY-MM-DD`.
 pub(crate) fn today() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    civil_date(secs / 86_400)
+    civil_date(epoch_day(SystemTime::now()))
+}
+
+/// Whole UTC days from 1970-01-01 to `at`; 0 for a time before it.
+fn epoch_day(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() / 86_400)
 }
 
 /// The proleptic Gregorian date `days` after 1970-01-01 (Hinnant's
@@ -104,8 +107,19 @@ pub(crate) fn civil_date(days: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil_date, for_layer, today, Exemption};
+    use super::{civil_date, epoch_day, for_layer, today, Exemption};
     use serde_json::json;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn a_day_starts_at_utc_midnight() {
+        let at = |secs: u64| UNIX_EPOCH + Duration::from_secs(secs);
+        assert_eq!(epoch_day(at(0)), 0);
+        assert_eq!(epoch_day(at(86_399)), 0);
+        assert_eq!(epoch_day(at(86_400)), 1);
+        assert_eq!(epoch_day(at(20_771 * 86_400 + 43_200)), 20_771);
+        assert_eq!(epoch_day(UNIX_EPOCH - Duration::from_secs(1)), 0);
+    }
 
     fn exemption(path: &str, symbol: Option<&str>, expires: &str) -> Exemption {
         Exemption {

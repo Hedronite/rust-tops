@@ -151,12 +151,7 @@ fn crap(fixture: &Fixture, entries: &[(&str, &str, f64)]) {
 }
 
 fn tops(fixture: &Fixture, args: &[&str]) -> (Option<i32>, String) {
-    let path = std::env::join_paths([
-        fixture.bin.as_path(),
-        Path::new("/usr/bin"),
-        Path::new("/bin"),
-    ])
-    .expect("PATH");
+    let path = stub_path(fixture);
     let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args(args)
         .arg("--path")
@@ -172,6 +167,13 @@ fn tops(fixture: &Fixture, args: &[&str]) -> (Option<i32>, String) {
         String::from_utf8_lossy(&out.stderr)
     );
     (out.status.code(), text)
+}
+
+/// The stubs first, then the inherited `PATH` for `sh`, `cp` and the rest.
+fn stub_path(fixture: &Fixture) -> std::ffi::OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::iter::once(fixture.bin.clone()).chain(std::env::split_paths(&inherited));
+    std::env::join_paths(dirs).expect("PATH")
 }
 
 fn gate(fixture: &Fixture) -> (Option<i32>, String) {
@@ -503,12 +505,7 @@ fn a_report_that_is_missing_or_not_json_fails_and_a_failed_run_is_not_judged() {
 }
 
 fn tops_failing(fixture: &Fixture, pattern: &str) -> (Option<i32>, String) {
-    let path = std::env::join_paths([
-        fixture.bin.as_path(),
-        Path::new("/usr/bin"),
-        Path::new("/bin"),
-    ])
-    .expect("PATH");
+    let path = stub_path(fixture);
     let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args(["gate", "--path"])
         .arg(&fixture.repo)
@@ -522,4 +519,50 @@ fn tops_failing(fixture: &Fixture, pattern: &str) -> (Option<i32>, String) {
         out.status.code(),
         String::from_utf8_lossy(&out.stdout).into_owned(),
     )
+}
+
+#[test]
+fn coverage_floors_are_judged_with_the_crap_layer_off() {
+    let fixture = fixture("coverage-only");
+    summary(&fixture, &[("src/lib.rs", 50, 100, 50, 100)]);
+    edit(&fixture, |doc| {
+        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
+        for layer in layers.expect("layers") {
+            let crap = layer.get("id").and_then(Value::as_str) == Some("crap");
+            if crap {
+                set(layer, "", "enabled", Some(Value::Bool(false)));
+            }
+        }
+    });
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("  - coverage: line coverage 50.00% (50 of 100 lines)"),
+        "{text}"
+    );
+    assert!(!text.contains("==> [crap] threshold"), "{text}");
+}
+
+#[test]
+fn a_baseline_that_cannot_be_read_fails_and_is_not_taken_as_absent() {
+    let fixture = fixture("unreadable");
+    good_summary(&fixture);
+    crap(&fixture, &[("./src/lib.rs", "f", 2.0)]);
+    fs::create_dir_all(fixture.repo.join("ci/baseline.json")).expect("mkdir");
+    edit(&fixture, |doc| {
+        set(
+            doc,
+            "/gates/crap",
+            "baseline",
+            Some(json!("ci/baseline.json")),
+        );
+    });
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(1), "{text}");
+    let shown = fixture.repo.join("ci/baseline.json").display().to_string();
+    assert!(
+        text.contains(&format!("  - crap: baseline {shown}: ")),
+        "{text}"
+    );
+    assert!(!text.contains("no baseline"), "{text}");
 }
