@@ -1,6 +1,7 @@
 wrote {path}/rust-tops.yaml
 wrote {path}/rust-toolchain.toml
 wrote {path}/AGENTS.md
+wrote {path}/RUST-TOPS.md
 wrote {path}/clippy.toml
 wrote {path}/.config/nextest.toml
 wrote {path}/.cargo/mutants.toml

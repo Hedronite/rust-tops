@@ -663,6 +663,10 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         "config/drop-in/rust-tops.yml"
     ));
     assert!(has(
+        &format!("{TEMPLATES}/drop-in/RUST-TOPS.md"),
+        "config/drop-in/RUST-TOPS.md"
+    ));
+    assert!(has(
         "schema/rust-tops.schema.json",
         &format!("{TEMPLATES}/rust-tops.schema.json")
     ));
@@ -687,7 +691,7 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         assert_ne!(dest, "deny.toml");
         assert_ne!(dest, "rust-toolchain.toml");
     }
-    assert_eq!(pairs.len(), 48);
+    assert_eq!(pairs.len(), 49);
 }
 
 /// A link at `config` that comes and goes while sync writes

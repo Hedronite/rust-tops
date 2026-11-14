@@ -35,6 +35,9 @@ const INIT_CLASSES: [&str; 8] = [
 
 /// Passes, and writes the file after `--output-path` / `--output` the way
 /// `cargo llvm-cov` and `cargo crap` do. Logs its argv to `$CARGO_STUB_LOG`.
+/// The file is one JSON document that reads as a coverage summary (one
+/// fully covered `src/lib.rs`) and as a CRAP report with no function, so
+/// the coverage floors and the CRAP ratchet pass.
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ -n "${CARGO_STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$CARGO_STUB_LOG"
@@ -44,7 +47,7 @@ for arg in "$@"; do
   case $prev in
     --output-path | --output)
       mkdir -p "$(dirname "$arg")"
-      printf 'stub report\n' > "$arg"
+      printf '%s\n' '{"data":[{"files":[{"filename":"src/lib.rs","summary":{"lines":{"count":1,"covered":1},"regions":{"count":1,"covered":1}}}]}],"entries":[]}' > "$arg"
       ;;
   esac
   prev=$arg
@@ -797,7 +800,7 @@ fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_798_16 = doc["protocol"]["version"].clone();
-    assert_eq!(tops_idx_798_16, "1.1.0");
+    assert_eq!(tops_idx_798_16, "1.2.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"

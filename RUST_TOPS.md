@@ -1,7 +1,7 @@
 # Rust Testing and Optimization Protocol Suite (Rust-TOPS)
 
 **Protocol ID:** `rust-tops`  
-**Version:** 1.1.0  
+**Version:** 1.2.0  
 **Status:** Adopted specification  
 **Machine schema:** [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json)  
 **Example instance:** [`config/rust-tops.example.yaml`](config/rust-tops.example.yaml)  
@@ -12,6 +12,8 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 ---
 
 > **Bend laws:** 1.1.0 adds the `laws` layer (§3.1). It checks the crate's own files and gate reports against the Bend law pack `LAWS.bend`. [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) lists the candidate laws and their sources.
+
+> **1.2.0:** states what the CRAP thresholds apply to and how the gate holds existing code (§2.1), when an exhaustive dispatch `match` takes an exemption instead of a split (§2.2), how `max_fn_cc` relates to the CRAP threshold (§5.6), how the gate judges the coverage floors (§7.5) and the CRAP baseline (§16), how exemptions are matched (§19), and the `RUST-TOPS.md` record every adopting repo keeps (§14.4). No default threshold and no part of the CRAP formula changed.
 
 ## 0. Purpose
 
@@ -88,6 +90,28 @@ This protocol uses tighter numbers on *new production code* because high coverag
 | Agent-authored new code | **6** | Same scar-guard. Slightly looser because agents over-split when squeezed. |
 | Legacy / imported | **30** then ratchet | No new function may exceed 8 CC without an exemption. |
 | Generated (`build.rs`, proto) | exempt | Listed in `exemptions`. |
+
+### 2.1 New, changed, and existing code (since 1.2.0)
+
+The thresholds above apply to **new and changed** production functions. Existing code is held by a **baseline ratchet**, not by the threshold:
+
+- The **baseline** is a `cargo crap --format json` report of the code as it was accepted (§16). A function is identified by its file and its name.
+- A **new** function is one the baseline does not have (a new name, or a function moved to another file). It fails when its CRAP is above the threshold.
+- A **changed** function is one the baseline has. A change may not take it above the threshold if its baseline score was at or under it. If its baseline score was already above the threshold, its score may not rise above that baseline score (a rise of 0.01 or less is noise and not a rise).
+- With no baseline, every function is new, so the whole crate is held to the threshold.
+- Generated and exempted functions (§19) are out of both rules.
+
+The "Legacy / imported: 30 then ratchet" row means that imported code enters through the baseline at whatever it scores, 30 being the classic line, and may then only move down. A function leaves the ratchet for the threshold once a baseline refresh records it at or under the threshold.
+
+`cargo tops gate` implements this in its crap layer: it reads the `cargo crap` JSON of the run, compares each production function of the crate with the baseline, and fails on any new function above the threshold and any changed function that broke the ratchet. The threshold is `gates.crap.threshold_agent`, or `threshold_production` when the instance has no agent threshold. An instance with neither (a `workspace-root`) is not judged at the root; each package's own instance is.
+
+### 2.2 Exhaustive dispatch matches (since 1.2.0)
+
+The CC rule above counts every non-trivial `match` arm. So an idiomatic exhaustive dispatch — `enum` + `match` as §5.4 rule 2 asks, one arm per variant, no guards, each arm a single call or expression — scores CC equal to its arm count. A CLI `main` that dispatches 29 subcommands scores at least 29 at full coverage and can never meet a threshold of 6.
+
+Such a match may carry a `layer: crap` exemption (§19) that names the function as `symbol`, with a reason and an expiry, instead of being split. Splitting it into groups only to bring each part under the threshold is a scar-guard violation. The exemption holds only while the function stays a table: an arm that grows a guard, a nested branch, or more than one call or expression is real branching, and the function then answers to the threshold.
+
+Counting such a match as one decision is a candidate CC refinement for a future major version. It changes the CRAP input, so this minor version does not make it.
 
 **Scar-guard (normative):**  
 A change whose *only* justification is “CRAP was 7, now 3” and that increases production SLOC or fragments a named abstraction is a protocol violation. Fix CRAP by adding a test that asserts a real behavior, or by simplifying control flow, or by extracting a *named* concept. Never by slicing a function into `foo_part_1`.
@@ -259,6 +283,14 @@ Do not:
 - test getters that the type system already enforces
 - assert `debug` formatting unless that formatting is the product
 
+### 5.6 `max_fn_cc` and the CRAP threshold (since 1.2.0)
+
+`density.max_fn_cc` (default 8) is a design ceiling on any production function's cyclomatic complexity. Reviewers apply it in the `density-audit` layer. The CRAP threshold (§2) is what the gate enforces. Neither default changes here, and both hold.
+
+CRAP is never below CC, and equals it at 100% coverage. So a function that meets a CRAP threshold of 8 or less already has CC within `max_fn_cc`: under the agent threshold of 6, a new function that passes the gate has CC at most 6. For new and changed code the CRAP threshold is the tighter limit and it governs; `max_fn_cc` never loosens it.
+
+`max_fn_cc` governs the functions the threshold does not reach. A legacy function held only by the ratchet (§2.1) can raise its CC and still lower its CRAP by gaining coverage; review holds it to `max_fn_cc`: it may not grow past CC 8, and one already past 8 may not grow. An exempted function is held to `max_fn_cc` too, except an exhaustive dispatch match (§2.2), whose `crap` exemption also covers `max_fn_cc` because density treats such a match as a table (§5.3, `allow_long_table_functions`).
+
 ---
 
 ## 6. Unit, doc, integration, acceptance (Tiers 0–1)
@@ -401,6 +433,14 @@ A workspace average of 95% with one 20% file is a lie. Use `--fail-under-file-li
 ### 7.4 How coverage interacts with CRAP
 
 CRAP consumes the LCOV map. Functions with no coverage records score as 0% covered (pessimistic). That is intended: a new function that no test reached is automatically CRAPpy if it has any branching.
+
+### 7.5 How the gate judges the floors (since 1.2.0)
+
+`cargo tops gate` runs the suite once under `cargo llvm-cov nextest --workspace`, writes the LCOV for `cargo crap`, and writes a per-file summary with `cargo llvm-cov report --json --summary-only`. The run is workspace-wide on purpose: a test in any member counts for the code it reaches, and the one run stands for `unit`, `integration`, and `property`.
+
+The floors judge only the instance's crate. Its root is the directory of the package `crate.name` names, found from the gate directory's `Cargo.toml` or from `cargo metadata`, and otherwise the gate directory itself. A file outside that root belongs to another crate and is not judged by this instance. Inside it, a file is production unless a glob in `gates.coverage.exclude_globs`, or one of `tests/**`, `benches/**`, `examples/**`, matches it. A glob matches the path relative to the crate root or any trailing part of it that starts at a directory, so `tests/**` also leaves out `src/tests/`, as `cargo llvm-cov` does.
+
+The gate fails when the crate's line or region total over its production files is below `line_min_pct` or `region_min_pct`, and lists every production file below `per_file_line_min_pct` that no live `coverage` exemption names. A floor that is absent or `null` is not judged. A floor is met at exactly its value. A report that holds none of the crate's production files fails, because its floors cannot be judged.
 
 ---
 
@@ -760,7 +800,22 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 
 ### 14.3 `AGENTS.md`
 
-`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.1.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
+`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.2.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
+
+### 14.4 The adoption record `RUST-TOPS.md` (since 1.2.0)
+
+Every adopting repository keeps a `RUST-TOPS.md` at its root. It is the one page a reader or an agent opens to learn what the repo adopted. It records:
+
+1. that the repo adopts this protocol, with a link to <https://github.com/Hedronite/rust-tops>;
+2. the adopted protocol version and the URL of that version of this spec;
+3. the `cargo-tops` version the gate uses;
+4. each crate's class and thresholds, one row per `rust-tops.yaml`, taken from that file's `gates`;
+5. how to run the gate locally;
+6. where the CRAP baseline lives and how to refresh it;
+7. every exemption in force;
+8. known deviations from this protocol.
+
+The template is [`config/drop-in/RUST-TOPS.md`](config/drop-in/RUST-TOPS.md). `cargo tops init` writes it beside the instance, with items 2–4 and 6 filled from that instance. When `init` runs in one crate's directory of a larger repo, move its row into the root record and delete the copy. Keep it current when an instance, an exemption, or the baseline path changes. A record that disagrees with a `rust-tops.yaml` is wrong; the instance wins.
 
 ---
 
@@ -775,6 +830,7 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 ├── laws/bend.lock                 # pinned Bend release and sha256
 ├── scripts/fetch-bend.sh          # fetches that release
 ├── AGENTS.md
+├── RUST-TOPS.md                   # adoption record (§14.4)
 ├── clippy.toml
 ├── deny.toml
 ├── .cargo/mutants.toml
@@ -796,6 +852,8 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 └── .github/workflows/rust-tops.yml
 ```
 
+`RUST-TOPS.md` (the adoption record, §14.4) sits at the repo root beside `AGENTS.md`. A tracked CRAP baseline (§16) is source.
+
 Generated reports (`target/coverage`, mutants scratch, iai output, `target/rust-tops/cases.bend`) are artifacts, not source.
 
 ---
@@ -803,25 +861,26 @@ Generated reports (`target/coverage`, mutants scratch, iai output, `target/rust-
 ## 16. `.cargo-crap.toml` and coverage wiring
 
 ```toml
-# .cargo-crap.toml
+# .cargo-crap.toml (the drop-in, config/drop-in/cargo-crap.toml)
 threshold = 6.0
-fail = true
-exclude = ["src/generated/**", "tests/**"]
-
-[coverage]
-lcov = "target/coverage/lcov.info"
+try-weight = 0.0
+exclude = ["src/generated/**", "tests/**", "benches/**", "examples/**"]
 ```
 
-Pipeline in CI:
+`cargo-crap` does not fail the run by itself here: the gate reads its JSON and decides (§2.1). Earlier text showed `fail = true` and a `[coverage]` table; neither is a `cargo-crap` field, and the LCOV path is passed on the command line.
+
+Pipeline in CI, as `cargo tops gate` runs it (artifacts in `<target>/rust-tops/`):
 
 ```bash
-cargo llvm-cov nextest --workspace --all-features \
-  --lcov --output-path target/coverage/lcov.info \
-  --fail-under-lines 90
-cargo crap --format json --output target/crap.json
+cargo llvm-cov nextest --workspace --all-features --profile ci \
+  --lcov --output-path target/rust-tops/lcov.info
+cargo llvm-cov report --json --summary-only --output-path target/rust-tops/coverage.json
+cargo crap --lcov target/rust-tops/lcov.info --format json --output target/rust-tops/crap.json
 ```
 
-Fail if any *non-exempt production* function has `crap > threshold_agent` (6) on new code, or if delta vs `target/crap-baseline.json` introduces a new function above threshold.
+The gate then judges the coverage floors (§7.5) and fails if any *non-exempt production* function is new and has `crap > threshold_agent`, or is in the baseline and broke the ratchet (§2.1).
+
+**Baseline.** The baseline is a `cargo crap --format json` report. By default it is `target/crap-baseline.json` (in the Cargo target directory, so `CARGO_TARGET_DIR` moves it). An instance may name a tracked path instead with `gates.crap.baseline`, relative to the instance directory; a repo whose CI runs the gate should, or CI judges every function as new. `cargo tops crap-baseline` copies the last gate run's report there, sorted by file and function. Refresh the baseline to record code that improved or new code at or under the threshold, in the same change. Never refresh it to let a score rise; a refresh is reviewed like any other change to a gate.
 
 ---
 
@@ -887,6 +946,8 @@ exemptions:
 ```
 
 Expired exemptions fail CI. Reasons shorter than one clause are rejected.
+
+How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `coverage` exemption takes a file out of the per-file floor; its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
 
 ---
 
@@ -955,7 +1016,7 @@ cargo bench --bench hot          # local criterion
 
 ## 22. Normative vs advisory
 
-**Normative (non-compliance is a failed protocol run):** §§1 A1–A8, 2 (formula + scar-guard + thresholds for new code), 4 class minima, 5.4 density rules, 6.5 acceptance-oracle rule, 7 coverage floors, 8.3 zero unexplained survivors on the diff, 9.2 required properties, 11.2 Miri on unsafe, 12.1 order of attack, 12.4 Callgrind on listed hot paths, 14.2 agent orders, 19 exemption shape, 3.1 a `Refuse` from an enabled `laws` layer.
+**Normative (non-compliance is a failed protocol run):** §§1 A1–A8, 2 (formula + scar-guard + thresholds for new and changed code + the baseline ratchet), 4 class minima, 5.4 density rules, 6.5 acceptance-oracle rule, 7 coverage floors, 14.4 the adoption record, 8.3 zero unexplained survivors on the diff, 9.2 required properties, 11.2 Miri on unsafe, 12.1 order of attack, 12.4 Callgrind on listed hot paths, 14.2 agent orders, 19 exemption shape, 3.1 a `Refuse` from an enabled `laws` layer.
 
 **Advisory:** clippy pedantic cherry-picks, dashboard score, Criterion numbers on laptops, `cargo-crappy` idiom penalty, branch coverage until LLVM is stable on the crate.
 
@@ -963,9 +1024,11 @@ cargo bench --bench hot          # local criterion
 
 ## 23. Versioning
 
-This spec is `1.1.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
+This spec is `1.2.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
 
 1.1.0 added the `laws` layer (§3.1). A 1.0.0 instance that does not list `laws` still validates.
+
+1.2.0 states how the thresholds apply to new and changed code and the baseline ratchet (§2.1, §16), the dispatch-match exemption (§2.2), the relation of `max_fn_cc` to CRAP (§5.6), how the floors are judged (§7.5), how exemptions are read (§19), and the adoption record (§14.4). The schema adds the optional `gates.crap.baseline`. A 1.1.0 instance still validates. No default threshold and no part of the formula changed.
 
 ---
 

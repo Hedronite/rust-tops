@@ -1,7 +1,9 @@
 # Rust-TOPS policies (gates / checks)
 
 This is the **practice layer**. It does not amend [`RUST_TOPS.md`](RUST_TOPS.md).
-Protocol 1.1.0 adds the `laws` layer; the floors in this file are unchanged.
+Protocol 1.1.0 added the `laws` layer. Protocol 1.2.0 says how `cargo tops gate`
+judges the coverage floors and the CRAP threshold and ratchet of
+`rust-tops.yaml` (§2.1, §7.5, §16). The floors in this file are unchanged.
 Instance tightness lives in `rust-tops.yaml`. CI floor lives in
 [`config/drop-in/rust-tops.yml`](config/drop-in/rust-tops.yml).
 
@@ -58,6 +60,16 @@ Record-only is not a skip: empty LCOV / empty CRAP JSON is a fail.
 High CRAP → reduce real branching or cover the risky arm.
 Never extract `foo_part_2`. Never split a function only to please CRAP.
 A density extract must have a **domain name**.
+An exhaustive dispatch `match` over the threshold takes a dated `layer: crap`
+exemption, not a split (§2.2).
+
+## CRAP baseline
+
+The gate ratchets existing functions against a `cargo crap` JSON baseline
+(§16). A repo whose CI runs the gate names a tracked `gates.crap.baseline`.
+Refresh it with `cargo tops crap-baseline` in the change that moved the
+scores, and only to record improvements or new code at or under the
+threshold. A refresh that lets a score rise is a loosened gate.
 
 ## Tests
 

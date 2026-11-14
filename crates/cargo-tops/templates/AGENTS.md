@@ -1,10 +1,10 @@
-# Agent standing orders (Rust-TOPS 1.1.0)
+# Agent standing orders (Rust-TOPS 1.2.0)
 
 Goal: correct, dense, fast Rust.
 Production: fewest necessary lines that preserve named invariants and measured performance.
 Tests: as many as the contract needs. Never write tests by reading the implementation.
 
-Protocol 1.1.0. The text is [`RUST_TOPS.md`](RUST_TOPS.md). This file is the harness.
+Protocol 1.2.0. The text is [`RUST_TOPS.md`](RUST_TOPS.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
 The `laws` layer is optional. A 1.0.0 instance with no `laws` layer still validates, and `gate` does not call Bend.
 
 ## Do this
@@ -30,15 +30,18 @@ cargo nextest run --workspace --all-features --profile ci
 cargo test --doc --workspace --all-features
 cargo llvm-cov nextest --workspace --all-features --lcov --output-path target/coverage/lcov.info
 test -s target/coverage/lcov.info
+cargo llvm-cov report --json --summary-only --output-path target/coverage/coverage.json
 cargo crap --lcov target/coverage/lcov.info
 cargo mutants --in-diff <diff>
 ```
+
+After those commands the gate judges the reports itself. It fails when this crate's line or region coverage, or any of its production files, is under a floor in `rust-tops.yaml`. It fails when a new production function's CRAP is over `threshold_agent`, or when a function in the CRAP baseline gets worse (RUST_TOPS.md §2.1, §16). `cargo tops crap-baseline` records that baseline from the last gate run.
 
 Do not set `RUSTFLAGS=-D warnings`. Do not pass `--fail-under-lines` unless the instance class floor says so and the LCOV is already nonempty. `cargo tops gate` does not pass it.
 
 ## Gates
 
-- New production functions: CRAP ≤ 6 (humans target ≤ 4).
+- New production functions: CRAP ≤ 6 (humans target ≤ 4). A function in the baseline may not rise above the threshold, and one already above it may not rise at all.
 - Coverage: class minimum in `rust-tops.yaml` (parsers: 95% line / 90% region).
 - Mutation on the diff: 0 unexplained survivors. Never `--baseline skip`.
 - Every claimed invariant has a `proptest` (or Kani proof).
@@ -84,6 +87,8 @@ The reviewer is a fresh agent that did not write the diff. Write the inputs befo
 
 - Coverage hole → add a test for the specified missing branch, not a tautology.
 - High CRAP → reduce real branching or cover the risky arm. Do not extract `foo_part_2`.
+- An exhaustive dispatch `match` (one arm per enum variant, no guards, each arm one call or expression) over the threshold → a `layer: crap` exemption with a reason and an expiry, not a split (RUST_TOPS.md §2.2).
+- Never refresh the CRAP baseline to let a score rise.
 - Surviving mutant → assert the behavior the mutant broke.
 - Perf miss → profile, then algorithm / alloc / layout. `unsafe` is last and Miri-clean.
 - Empty LCOV / CRAP JSON → the recorder never ran; fix the kit, do not skip.

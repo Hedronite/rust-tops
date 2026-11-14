@@ -174,6 +174,9 @@ jobs:
   # does not have. cargo-tops builds with Rust 1.99.1 (its rust-version),
   # which can be newer than crate.msrv; the layers run on the pinned channel.
   # The cargo-tops version is pinned; bump it when the kit publishes.
+  # Since 0.4.0 the gate enforces the coverage floors and the CRAP threshold
+  # and ratchet of rust-tops.yaml. Name a tracked gates.crap.baseline there,
+  # or every function is judged as new (RUST_TOPS.md §16).
   tops-gate:
     runs-on: ubuntu-latest
     steps:
@@ -184,7 +187,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
         with:
           toolchain: 1.99.1
-      - run: cargo +1.99.1 install cargo-tops --version 0.3.0 --locked
+      - run: cargo +1.99.1 install cargo-tops --version 0.4.0 --locked
       - id: toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16

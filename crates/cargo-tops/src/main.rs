@@ -22,12 +22,17 @@ use std::process::{Command, ExitCode};
 use std::time::SystemTime;
 
 mod config;
+mod coverage_floor;
+mod crap_ratchet;
 mod credit;
+mod exemptions;
 mod facts;
+mod floors;
 mod laws;
 mod profile_data;
 mod profiles;
 mod schema;
+mod scope;
 mod skills;
 mod steps;
 mod strict_lints;
@@ -52,7 +57,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Write rust-tops.yaml, AGENTS.md, drop-in tool configs, and the Bend laws kit
+    /// Write rust-tops.yaml, AGENTS.md, RUST-TOPS.md, drop-in tool configs, and the Bend laws kit
     Init {
         /// Crate class: one of the profiles in `profiles/` (default: library-core)
         #[arg(long, default_value = "library-core")]
@@ -85,6 +90,11 @@ enum Commands {
         /// Print commands without running them
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Record the last gate's CRAP report as the baseline the crap ratchet reads
+    CrapBaseline {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -134,6 +144,11 @@ fn run() -> Result<ExitCode> {
             let cfg = load_config(&path)?;
             check(&cfg)?;
             gate(&path, &cfg, max_tier, dry_run)
+        }
+        Commands::CrapBaseline { path } => {
+            let cfg = load_config(&path)?;
+            floors::record_baseline(&path, &cfg)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -237,6 +252,12 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
         force,
     )?;
     write_file(dir, "AGENTS.md", profiles::AGENTS_MD, force)?;
+    write_file(
+        dir,
+        "RUST-TOPS.md",
+        &profiles::adoption_record(&yaml),
+        force,
+    )?;
     write_file(dir, "clippy.toml", &profiles::clippy_toml(class)?, force)?;
     write_file(dir, ".config/nextest.toml", profiles::NEXTEST_TOML, force)?;
     write_file(dir, ".cargo/mutants.toml", profiles::MUTANTS_TOML, force)?;
@@ -671,6 +692,8 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
             None => run_failure(run),
         }
     }));
+    // The coverage floors and the CRAP ratchet, on the reports just written.
+    failed.extend(floors::judge(dir, cfg, &runs, &report));
     let mut bend_ran = false;
     let evaluated = match judge {
         Some(judge) => {
@@ -1330,6 +1353,8 @@ mod tests {
                 "mkdir -p /r",
                 "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path /r/lcov.info",
                 "test -s /r/lcov.info",
+                "cargo llvm-cov report --json --summary-only --output-path /r/coverage.json",
+                "test -s /r/coverage.json",
             ]
         );
         #[expect(

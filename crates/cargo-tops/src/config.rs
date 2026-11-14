@@ -45,12 +45,20 @@ pub(crate) struct Gates {
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct CoverageGate {
     pub line_min_pct: Option<f64>,
+    pub region_min_pct: Option<f64>,
+    pub per_file_line_min_pct: Option<f64>,
+    pub exclude_globs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct CrapGate {
     /// Absent on a `workspace-root`, whose packages keep their own floors.
     pub threshold_agent: Option<f64>,
+    pub threshold_production: Option<f64>,
+    pub fail_on: Option<String>,
+    /// The CRAP baseline, relative to the instance directory. Absent means
+    /// `crap-baseline.json` in the Cargo target directory (§16).
+    pub baseline: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]

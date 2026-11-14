@@ -76,15 +76,16 @@ fn load_yaml(label: &str, yaml: &str) -> TopsConfig {
 
 /// Protocol 1.1.0 changed the bundled template in two places: it moved
 /// `protocol.version` and added a `laws` layer, which the drop-in pack turned
-/// off (D3: adopters opt in). Check both, then undo them so the rest still
-/// compares to the `968c390` serde_yaml oracle.
+/// off (D3: adopters opt in). Protocol 1.2.0 moved the version again. Check
+/// both, then undo them so the rest still compares to the `968c390`
+/// serde_yaml oracle.
 fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_86_16 = value["protocol"]["version"].clone();
-    assert_eq!(tops_idx_86_16, "1.1.0");
+    assert_eq!(tops_idx_86_16, "1.2.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
@@ -107,6 +108,31 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
         "template must carry one disabled tier-0 laws layer"
     );
     layers.retain(|layer| layer["id"] != "laws");
+    value
+}
+
+/// The floors pack types the keys the gate now judges. The oracle typed
+/// none of them, so drop them and the rest still compares to `968c390`.
+fn without_judged_floors(mut value: serde_json::Value) -> serde_json::Value {
+    let keys: [(&str, &[&str]); 2] = [
+        (
+            "/gates/coverage",
+            &["region_min_pct", "per_file_line_min_pct", "exclude_globs"],
+        ),
+        (
+            "/gates/crap",
+            &["threshold_production", "fail_on", "baseline"],
+        ),
+    ];
+    for (pointer, names) in keys {
+        let map = value
+            .pointer_mut(pointer)
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("the config has the gate");
+        for name in names {
+            map.remove(*name);
+        }
+    }
     value
 }
 
@@ -148,7 +174,7 @@ fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::
 }
 
 /// The drop-in pack fixed the kit's own `rust-tops.yaml` (K5): protocol
-/// 1.1.0, `laws` on, `acceptance` off, no `release_profile`, and no
+/// 1.1.0 (1.2.0 since the floors pack), `laws` on, `acceptance` off, no `release_profile`, and no
 /// `src/generated/**` exemption. Check that, then undo it so the rest still
 /// compares to the `968c390` oracle.
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
@@ -158,7 +184,7 @@ fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_158_16 = value["protocol"]["version"].clone();
-    assert_eq!(tops_idx_158_16, "1.1.0");
+    assert_eq!(tops_idx_158_16, "1.2.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
@@ -253,7 +279,9 @@ fn bundled_profile_templates_parse_to_pre_migration_config() {
             class,
             with_template_crap(
                 class,
-                with_acceptance_restored(without_protocol_1_1(config_json(&cfg))),
+                with_acceptance_restored(without_protocol_1_1(without_judged_floors(config_json(
+                    &cfg,
+                )))),
             ),
         );
     }
@@ -281,7 +309,10 @@ fn workspace_instance_parses_to_pre_migration_config() {
     )]
     let tops_idx_277_16 = doc["crate"]["unsafe_policy"].clone();
     assert_eq!(tops_idx_277_16, "forbid");
-    expect_value("workspace", without_kit_drop_in(config_json(&cfg)));
+    expect_value(
+        "workspace",
+        without_kit_drop_in(without_judged_floors(config_json(&cfg))),
+    );
 }
 
 const YAML11_BOOL_WORDS: &[&str] = &["yes", "no", "on", "off", "y", "n"];

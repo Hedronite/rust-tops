@@ -10,7 +10,7 @@ Spec, schema, class gates, and a thin orchestrator for the Cargo tools you alrea
 <p align="center">
   <a href="https://www.rust-lang.org"><img alt="Rust edition 2021" src="https://img.shields.io/badge/rust-2021-B06038?style=flat-square&logo=rust&logoColor=E8C39E&labelColor=1A1A1A" /></a>
   <a href="https://github.com/Hedronite"><img alt="Hedronite" src="https://img.shields.io/badge/org-Hedronite-C9A227?style=flat-square&logo=github&logoColor=E8C39E&labelColor=1A1A1A" /></a>
-  <a href="RUST_TOPS.md"><img alt="Protocol 1.1.0" src="https://img.shields.io/badge/protocol-1.1.0-C9A227?style=flat-square&labelColor=1A1A1A" /></a>
+  <a href="RUST_TOPS.md"><img alt="Protocol 1.2.0" src="https://img.shields.io/badge/protocol-1.2.0-C9A227?style=flat-square&labelColor=1A1A1A" /></a>
   <a href="laws/README.md"><img alt="Bend 2.0.36" src="https://img.shields.io/badge/bend-2.0.36-B06038?style=flat-square&labelColor=1A1A1A" /></a>
   <br/>
   <a href="https://crates.io/crates/cargo-tops"><img alt="crates.io: cargo-tops" src="https://img.shields.io/crates/v/cargo-tops?style=flat-square&label=crates.io&labelColor=1A1A1A&color=B06038" /></a>
@@ -42,16 +42,16 @@ Rust-TOPS (Rust Testing and Optimization Protocol Suite) is a protocol: a writte
 
 It is for Rust library and binary authors, and for the people who own their CI, who want one gate order: lint, tests, coverage, CRAP, mutation on the diff, then the extra layers the crate class names.
 
-Protocol 1.1.0 adds the `laws` layer ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). It checks an adopting crate against the Bend2 laws pack under [`laws/`](laws/). For each law, the runner reads one fact from the crate's files or this gate run's reports and picks a case. `bend` then judges the case file, one program that imports `LAWS.bend`. A `Refuse` fails the gate. Fifteen of the 53 laws have fact readers. The other thirty-eight are reported `not-evaluated`, never as a pass. On this repository, required CI also proves all 53 laws with Bend 2.0.36 (TOFU-pinned) and rechecks them with Lean 4.34.0.
+Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with a baseline ratchet for existing code, and how the gate judges the coverage floors ([`RUST_TOPS.md`](RUST_TOPS.md) §2.1, §7.5, §16). Protocol 1.1.0 added the `laws` layer ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). It checks an adopting crate against the Bend2 laws pack under [`laws/`](laws/). For each law, the runner reads one fact from the crate's files or this gate run's reports and picks a case. `bend` then judges the case file, one program that imports `LAWS.bend`. A `Refuse` fails the gate. Fifteen of the 53 laws have fact readers. The other thirty-eight are reported `not-evaluated`, never as a pass. On this repository, required CI also proves all 53 laws with Bend 2.0.36 (TOFU-pinned) and rechecks them with Lean 4.34.0.
 
 ## Pins
 
 | Plane | Pin | Where |
 | --- | --- | --- |
-| Protocol | 1.1.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
-| Package | 0.3.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) at commit `e0fa684`. |
+| Protocol | 1.2.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
+| Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) at commit `e0fa684`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
-| Crate page | 0.3.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
+| Crate page | 0.4.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
 | Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
@@ -87,11 +87,13 @@ cargo tops check
 cargo tops gate
 ```
 
-`--class` accepts `library-core` (the default), `parser-codec`, `no-std-embedded`, `unsafe-kernel`, or `binary-cli`. `init` writes `rust-tops.yaml` (protocol 1.1.0, `laws` layer enabled at tier 0), `rust-toolchain.toml` (`channel` = `crate.msrv`), `AGENTS.md`, the drop-in configs, a class workflow at `.github/workflows/rust-tops.yml`, `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. It does not write `rust-tops.lock`. The generated instance still starts from the parser-codec example (edition 2024, MSRV 1.88).
+`--class` accepts `library-core` (the default), `parser-codec`, `no-std-embedded`, `unsafe-kernel`, or `binary-cli`. `init` writes `rust-tops.yaml` (protocol 1.2.0, `laws` layer at tier 0), `rust-toolchain.toml` (`channel` = `crate.msrv`), `AGENTS.md`, `RUST-TOPS.md` (the adoption record, filled from the instance), the drop-in configs, a class workflow at `.github/workflows/rust-tops.yml`, `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. It does not write `rust-tops.lock`. The generated instance still starts from the parser-codec example (edition 2024, MSRV 1.88).
 
 `check` reads `rust-tops.yaml` and checks protocol id, a non-empty version, a crate name, `gates.crap.threshold_agent >= 1`, and that class `library-core` keeps `unexplained_survivors_max` at 0.
 
-`gate` runs enabled layers at or below `--max-tier` (default 1). `--dry-run` prints the commands and does not run them. A mapped tool missing from `PATH` fails the gate. The `laws` layer runs last, on the reports the other layers wrote. When Bend 2.0.36 is absent, `gate` fetches it by `laws/bend.lock` first.
+`gate` runs enabled layers at or below `--max-tier` (default 1). `--dry-run` prints the commands and does not run them. A mapped tool missing from `PATH` fails the gate. After the layers run, `gate` judges their reports: the crate's line and region coverage and each production file against the `gates.coverage` floors, and each production function against `gates.crap.threshold_agent` (new functions) and the CRAP baseline (functions that already existed). The `laws` layer runs last, on the reports the other layers wrote. When Bend 2.0.36 is absent, `gate` fetches it by `laws/bend.lock` first.
+
+`crap-baseline` copies the last gate run's CRAP report to the baseline: `gates.crap.baseline` when the instance names one, otherwise `crap-baseline.json` in the Cargo target directory. Without a baseline every function is judged as new.
 
 ### Nix
 
@@ -156,15 +158,15 @@ Order for a gated change, from [`RUST_TOPS.md`](RUST_TOPS.md):
 1. `cargo fmt`, Clippy with `-D warnings`, `cargo deny check`.
 2. `cargo nextest` (profile `ci`) and `cargo test --doc`.
 3. `cargo llvm-cov` writing LCOV, then `test -s` on that file.
-4. `cargo crap --lcov` against that LCOV. The drop-in threshold is 6.0. Pass `--lcov` on the CLI. `fail = true` is not a cargo-crap config field.
+4. `cargo crap --lcov` against that LCOV. The drop-in threshold is 6.0. Pass `--lcov` on the CLI. `fail = true` is not a cargo-crap config field. `cargo tops gate` reads the JSON report and fails on a new function over the threshold or a function that got worse than its baseline.
 5. `cargo mutants --in-diff`. The gate diffs `origin/main...HEAD`.
 6. Property tests, fuzz, Miri, Kani, and Callgrind when the crate class requires them. `cargo tops gate` has no commands for this step.
 
-The protocol cap for new human-authored code is CRAP 4. The cap for new code written by a coding agent is CRAP 6. A class table can set other numbers: [`profiles/binary-cli.yaml`](profiles/binary-cli.yaml) uses human 6 and agent 8. Coverage floors live in `rust-tops.yaml`. The drop-in workflow does not pass `--fail-under-lines`.
+The protocol cap for new human-authored code is CRAP 4. The cap for new code written by a coding agent is CRAP 6. A class table can set other numbers: [`profiles/binary-cli.yaml`](profiles/binary-cli.yaml) uses human 6 and agent 8. Coverage floors live in `rust-tops.yaml`, and `cargo tops gate` judges them on the run's summary. The drop-in workflow does not pass `--fail-under-lines`.
 
 | Path | Role |
 | --- | --- |
-| [`RUST_TOPS.md`](RUST_TOPS.md) | Normative protocol 1.1.0 |
+| [`RUST_TOPS.md`](RUST_TOPS.md) | Normative protocol 1.2.0 |
 | [`schema/`](schema/) | Draft 2020-12 schema for an instance, and a separate optional gate-report schema |
 | [`POLICIES.md`](POLICIES.md) | CI floor and the checks harvested from applying the protocol |
 | [`docs/ADOPT-gates.md`](docs/ADOPT-gates.md) | Floor for a multi-crate workspace: five mandatory jobs, advisory layers, per-crate class |
@@ -177,11 +179,11 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 | [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) | Candidate laws and their sources. The `laws` layer is spec §3.1 |
 | [`laws/`](laws/) | `LAWS.bend`, `PROOF.bend`, `NAMES` (H-01..H-53) |
 | [`flake.nix`](flake.nix) | Nix overlay |
-| [`CHANGELOG.md`](CHANGELOG.md) | Package history. Protocol 1.1.0 and package 0.3.0 are separate version planes |
+| [`CHANGELOG.md`](CHANGELOG.md) | Package history. Protocol 1.2.0 and package 0.4.0 are separate version planes |
 
 ## Status
 
-This tree is package **0.3.0** and protocol **1.1.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.3.0]`. The previous package release is [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) (`e0fa684`).
+This tree is package **0.4.0** and protocol **1.2.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.4.0]`. The previous package release is [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) (`e0fa684`).
 
 This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
