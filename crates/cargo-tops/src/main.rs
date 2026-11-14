@@ -108,14 +108,17 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<ExitCode> {
-    // `cargo tops …` execs this binary with argv[1] == "tops".
-    // `cargo-tops …` does not. Drop that one word so both forms parse.
-    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+/// The argv clap parses. `cargo tops …` execs this binary with argv[1] ==
+/// "tops"; `cargo-tops …` does not. Drop that one word so both forms parse.
+fn subcommand_argv(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     if args.get(1).and_then(|arg| arg.to_str()) == Some("tops") {
         args.remove(1);
     }
-    let cli = Cli::parse_from(args);
+    args
+}
+
+fn run() -> Result<ExitCode> {
+    let cli = Cli::parse_from(subcommand_argv(std::env::args_os().collect()));
     match cli.command {
         Commands::Init {
             class,
@@ -1281,6 +1284,28 @@ mod tests {
             .iter()
             .find(|step| step.kind == Kind::Tool)
             .expect("a tool step")
+    }
+
+    /// Cargo passes the subcommand name; the bare binary does not. The
+    /// `cargo_argv` journey runs whichever `cargo-tops` Cargo finds first,
+    /// so this rule has its own oracle here.
+    #[test]
+    fn cargo_s_tops_word_is_dropped_and_nothing_else_is() {
+        let argv = |words: &[&str]| -> Vec<std::ffi::OsString> {
+            words.iter().map(std::ffi::OsString::from).collect()
+        };
+        let cases: [(&[&str], &[&str]); 4] = [
+            (&["cargo-tops", "tops", "gate"], &["cargo-tops", "gate"]),
+            (
+                &["cargo-tops", "gate", "tops"],
+                &["cargo-tops", "gate", "tops"],
+            ),
+            (&["cargo-tops", "check"], &["cargo-tops", "check"]),
+            (&["cargo-tops"], &["cargo-tops"]),
+        ];
+        for (given, want) in cases {
+            assert_eq!(subcommand_argv(argv(given)), argv(want), "{given:?}");
+        }
     }
 
     #[test]
