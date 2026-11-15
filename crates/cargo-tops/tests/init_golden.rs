@@ -5,6 +5,9 @@
 //! workflow (drop-in floor plus the jobs §4 requires).
 //! Re-recorded for the drop-in pack: `laws` off (D3) and the drop-in
 //! `tops-gate` job.
+//! Re-recorded for protocol 1.2.0 / package 0.4.0: `RUST-TOPS.md`, the
+//! adoption record filled per class, the `protocol.version` and the
+//! cargo-tops install pin.
 //!
 //! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
 //! CI does not set it.
@@ -30,6 +33,7 @@ const PER_CLASS: &[&str] = &[
     "rust-toolchain.toml",
     "clippy.toml",
     ".github/workflows/rust-tops.yml",
+    "RUST-TOPS.md",
 ];
 
 const SHARED: &[&str] = &[

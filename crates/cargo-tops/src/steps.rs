@@ -22,6 +22,9 @@ const DIFF_NAME: &str = "rust-tops.diff";
 
 /// The coverage layer's LCOV, under the gate's artifact directory.
 pub(crate) const LCOV: &str = "lcov.info";
+/// The coverage layer's per-file summary (`llvm.coverage.json.export`),
+/// under the gate's artifact directory. The floors are judged on it.
+pub(crate) const SUMMARY: &str = "coverage.json";
 /// The crap layer's report, under the gate's artifact directory.
 pub(crate) const CRAP: &str = "crap.json";
 
@@ -187,14 +190,19 @@ pub(crate) fn tool_binary(argv: &[String]) -> Option<String> {
 }
 
 /// Coverage is `mkdir`, then `cargo llvm-cov`, then `test -s`, with
-/// [`LCOV`] under `dir`, the gate's artifact directory.
+/// [`LCOV`] under `dir`, the gate's artifact directory, then the per-file
+/// [`SUMMARY`] of the same run (`cargo llvm-cov report`, which reads that
+/// run's profiles and runs no test) and its `test -s`.
 /// The tool step names `cargo-llvm-cov`, not `mkdir`. It runs the suite with
 /// the same `--workspace`, `--all-features` and `--profile ci` as `unit`, so
-/// its run can stand for `unit`, `integration` and `property`.
+/// its run can stand for `unit`, `integration` and `property`. The run is
+/// workspace-wide even for a crate's instance, so a test in any member
+/// counts; the floors judge only that crate's files (`scope`).
 #[must_use]
 pub(crate) fn coverage_steps(dir: &Path) -> Vec<Step> {
     let dir_shown = dir.display().to_string();
     let lcov = dir.join(LCOV).display().to_string();
+    let summary = dir.join(SUMMARY).display().to_string();
     vec![
         Step::command(["mkdir", "-p", dir_shown.as_str()]),
         Step::tool([
@@ -210,6 +218,16 @@ pub(crate) fn coverage_steps(dir: &Path) -> Vec<Step> {
             lcov.as_str(),
         ]),
         Step::artifact(lcov),
+        Step::tool([
+            "cargo",
+            "llvm-cov",
+            "report",
+            "--json",
+            "--summary-only",
+            "--output-path",
+            summary.as_str(),
+        ]),
+        Step::artifact(summary),
     ]
 }
 
@@ -399,7 +417,8 @@ fn one_layer(layer: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-fn valid_expiry(text: &str) -> bool {
+/// Whether `text` is a real `YYYY-MM-DD` day.
+pub(crate) fn valid_expiry(text: &str) -> bool {
     let bytes = text.as_bytes();
     #[expect(
         clippy::indexing_slicing,
@@ -699,7 +718,25 @@ fn is_env_assign(token: &str) -> bool {
 
 #[cfg(test)]
 mod expiry {
-    use super::Exemption;
+    use super::{Exemption, ExemptionError, Outcome};
+
+    #[test]
+    fn a_bad_layer_is_refused_and_each_refusal_says_why() {
+        assert_eq!(
+            Exemption::new("crap mutation", "2030-01-01"),
+            Err(ExemptionError::Layer)
+        );
+        assert_eq!(Exemption::new("", "2030-01-01"), Err(ExemptionError::Layer));
+        assert_eq!(
+            ExemptionError::Layer.to_string(),
+            "an exemption names one layer id"
+        );
+        assert_eq!(
+            ExemptionError::Expiry.to_string(),
+            "an exemption needs an expiry date (YYYY-MM-DD)"
+        );
+        assert_eq!(Outcome::Vacuous.to_string(), "Vacuous");
+    }
 
     #[test]
     fn a_real_date_is_accepted_and_a_fake_one_is_not() {

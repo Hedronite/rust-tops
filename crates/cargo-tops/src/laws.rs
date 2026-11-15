@@ -79,14 +79,16 @@ fn metadata_target_once(project: &Path) -> Option<String> {
     target
 }
 
-/// Same rule as [`report_dir`], with the two lookups passed in.
+/// Same rule as [`report_dir`], with the two lookups passed in. A relative
+/// `CARGO_TARGET_DIR` is under `project`, because the gate runs Cargo there
+/// and Cargo reads it relative to its working directory.
 pub(crate) fn resolve_report_dir(
     project: &Path,
     cargo_target_dir: Option<&str>,
     metadata_target: Option<&str>,
 ) -> PathBuf {
     if let Some(dir) = nonempty(cargo_target_dir) {
-        return PathBuf::from(dir).join("rust-tops");
+        return project.join(dir).join("rust-tops");
     }
     if let Some(dir) = nonempty(metadata_target) {
         return PathBuf::from(dir).join("rust-tops");
@@ -763,6 +765,9 @@ mod tests {
         let project = Path::new("/proj");
         let got = resolve_report_dir(project, Some("/env-target"), Some("/meta-target"));
         assert_eq!(got, PathBuf::from("/env-target/rust-tops"));
+        // Cargo runs in the project, so a relative target dir is under it.
+        let got = resolve_report_dir(project, Some("out/"), Some("/meta-target"));
+        assert_eq!(got, PathBuf::from("/proj/out/rust-tops"));
     }
 
     #[test]

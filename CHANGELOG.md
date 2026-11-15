@@ -6,12 +6,45 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 
 | Plane | What | Where |
 | --- | --- | --- |
-| Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.1.0`) and `schema/` |
+| Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.2.0`) and `schema/` |
 | Package | `cargo-tops` and git tag | `v0.2.0`, Cargo `0.2.0` |
 
 Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-14
+
+**Breaking 0.x minor.** `cargo tops gate` now fails on the coverage floors and the CRAP threshold and ratchet that `rust-tops.yaml` names. Protocol plane moves to **1.2.0** (prose and one optional schema key; no default threshold and no part of the CRAP formula changed). Package plane moves to **0.4.0**. Not tagged or published yet.
+
+### Upgrade
+
+- An instance with the `coverage` or `crap` layer enabled is now held to its numbers. Before the first 0.4.0 gate in CI, add `gates.crap.baseline: <tracked path>` to `rust-tops.yaml`, run `cargo tops gate` once, run `cargo tops crap-baseline`, and commit the baseline. Without a baseline every function is judged as new.
+- Set `protocol.version: "1.2.0"` when you adopt the 1.2.0 text. A 1.1.0 instance still validates.
+- Add a root `RUST-TOPS.md` from [`config/drop-in/RUST-TOPS.md`](config/drop-in/RUST-TOPS.md) (§14.4).
+
+### Added
+
+- Coverage floors in `cargo tops gate`: the crate's line and region totals against `gates.coverage.line_min_pct` and `region_min_pct`, and each production file against `per_file_line_min_pct`, with every failing file listed. The coverage layer adds `cargo llvm-cov report --json --summary-only` after its run and judges that summary (§7.5).
+- The CRAP threshold and ratchet in `cargo tops gate`: a new production function fails above `gates.crap.threshold_agent` (or `threshold_production`); a function in the baseline fails when it rises above the threshold, or, if it was already above it, above its baseline score plus 0.01 (§2.1, §16).
+- `cargo tops crap-baseline`: writes the last gate's CRAP report, sorted by file and function, to `gates.crap.baseline` or to `crap-baseline.json` in the Cargo target directory.
+- `gates.crap.baseline` in the schema and the typed config.
+- §19 exemptions in the gate: `layer: crap` by path glob and optional `symbol`, `layer: coverage` by path for the per-file floor. An expired exemption, or one whose date is not a day, exempts nothing and fails the gate.
+- `cargo tops init` writes `RUST-TOPS.md`, the adoption record, filled from the instance it writes. The template is `config/drop-in/RUST-TOPS.md`, a hand copy of `crates/cargo-tops/templates/drop-in/RUST-TOPS.md` that `xtask sync` checks.
+- This repository's own baseline, [`crap-baseline.json`](crap-baseline.json), is the CRAP report of `main` at the 0.3.0 release merge, and its root [`RUST-TOPS.md`](RUST-TOPS.md) records its own adoption.
+
+### Changed
+
+- Protocol 1.2.0 ([`RUST_TOPS.md`](RUST_TOPS.md)): §2.1 says the thresholds apply to new and changed production functions and existing code is held by the baseline ratchet; §2.2 allows a dated `crap` exemption for an exhaustive dispatch `match` instead of a split, and names counting such a match as one decision as a candidate for a future major version; §5.6 reconciles `density.max_fn_cc` with the agent CRAP threshold without changing either; §7.5 and §16 say how the gate judges the floors and the baseline; §14.4 requires the `RUST-TOPS.md` record; §19 says how exemptions are matched. The §16 `.cargo-crap.toml` example matches the drop-in.
+- Coverage and CRAP rows belong to the instance's crate: the package `crate.name` names (from the gate directory's `Cargo.toml` or `cargo metadata`), else the gate directory. Files under any `tests/`, `benches/` or `examples/` directory, and files that `gates.coverage.exclude_globs` match at any depth, are not production. This is what kept `src/tests/` files, which `cargo llvm-cov` leaves out of its report, from reaching the CRAP judgment with no coverage. The coverage run itself stays workspace-wide, so a test in any member counts and the run still stands for `unit`, `integration` and `property`.
+- Both schema `$id`s, the example instance, the init template and this repository's `rust-tops.yaml` move to `1.2.0`. `config/rust-tops.lock.example` sets `[notes] schema` to `1.2.0`.
+- `AGENTS.md` (repo root, init template, init golden) is the 1.2.0 harness: the gate judges the floors, the baseline ratchet, the dispatch-match exemption, and never refreshing the baseline to let a score rise.
+- The drop-in workflow installs `cargo-tops` 0.4.0 and says to name a tracked baseline. The init goldens are re-recorded for that pin, `RUST-TOPS.md`, and `protocol.version`.
+
+### Fixed
+
+- The coverage and crap layers judged nothing: `gate` passed with any coverage and any CRAP score once the reports were nonempty.
+- A relative `CARGO_TARGET_DIR` is read under the gate directory, where the gate runs Cargo, not under the caller's working directory. With `--path` pointing at a crate, the reports now sit where Cargo writes its build.
 
 ## [0.3.0] - 2026-11-13
 

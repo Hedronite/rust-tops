@@ -22,12 +22,17 @@ use std::process::{Command, ExitCode};
 use std::time::SystemTime;
 
 mod config;
+mod coverage_floor;
+mod crap_ratchet;
 mod credit;
+mod exemptions;
 mod facts;
+mod floors;
 mod laws;
 mod profile_data;
 mod profiles;
 mod schema;
+mod scope;
 mod skills;
 mod steps;
 mod strict_lints;
@@ -52,7 +57,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Write rust-tops.yaml, AGENTS.md, drop-in tool configs, and the Bend laws kit
+    /// Write rust-tops.yaml, AGENTS.md, RUST-TOPS.md, drop-in tool configs, and the Bend laws kit
     Init {
         /// Crate class: one of the profiles in `profiles/` (default: library-core)
         #[arg(long, default_value = "library-core")]
@@ -86,6 +91,11 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Record the last gate's CRAP report as the baseline the crap ratchet reads
+    CrapBaseline {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -98,14 +108,17 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<ExitCode> {
-    // `cargo tops …` execs this binary with argv[1] == "tops".
-    // `cargo-tops …` does not. Drop that one word so both forms parse.
-    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+/// The argv clap parses. `cargo tops …` execs this binary with argv[1] ==
+/// "tops"; `cargo-tops …` does not. Drop that one word so both forms parse.
+fn subcommand_argv(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     if args.get(1).and_then(|arg| arg.to_str()) == Some("tops") {
         args.remove(1);
     }
-    let cli = Cli::parse_from(args);
+    args
+}
+
+fn run() -> Result<ExitCode> {
+    let cli = Cli::parse_from(subcommand_argv(std::env::args_os().collect()));
     match cli.command {
         Commands::Init {
             class,
@@ -134,6 +147,11 @@ fn run() -> Result<ExitCode> {
             let cfg = load_config(&path)?;
             check(&cfg)?;
             gate(&path, &cfg, max_tier, dry_run)
+        }
+        Commands::CrapBaseline { path } => {
+            let cfg = load_config(&path)?;
+            floors::record_baseline(&path, &cfg)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -237,6 +255,12 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
         force,
     )?;
     write_file(dir, "AGENTS.md", profiles::AGENTS_MD, force)?;
+    write_file(
+        dir,
+        "RUST-TOPS.md",
+        &profiles::adoption_record(&yaml),
+        force,
+    )?;
     write_file(dir, "clippy.toml", &profiles::clippy_toml(class)?, force)?;
     write_file(dir, ".config/nextest.toml", profiles::NEXTEST_TOML, force)?;
     write_file(dir, ".cargo/mutants.toml", profiles::MUTANTS_TOML, force)?;
@@ -671,6 +695,8 @@ fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<Exi
             None => run_failure(run),
         }
     }));
+    // The coverage floors and the CRAP ratchet, on the reports just written.
+    failed.extend(floors::judge(dir, cfg, &runs, &report));
     let mut bend_ran = false;
     let evaluated = match judge {
         Some(judge) => {
@@ -1260,6 +1286,28 @@ mod tests {
             .expect("a tool step")
     }
 
+    /// Cargo passes the subcommand name; the bare binary does not. The
+    /// `cargo_argv` journey runs whichever `cargo-tops` Cargo finds first,
+    /// so this rule has its own oracle here.
+    #[test]
+    fn cargo_s_tops_word_is_dropped_and_nothing_else_is() {
+        let argv = |words: &[&str]| -> Vec<std::ffi::OsString> {
+            words.iter().map(std::ffi::OsString::from).collect()
+        };
+        let cases: [(&[&str], &[&str]); 4] = [
+            (&["cargo-tops", "tops", "gate"], &["cargo-tops", "gate"]),
+            (
+                &["cargo-tops", "gate", "tops"],
+                &["cargo-tops", "gate", "tops"],
+            ),
+            (&["cargo-tops", "check"], &["cargo-tops", "check"]),
+            (&["cargo-tops"], &["cargo-tops"]),
+        ];
+        for (given, want) in cases {
+            assert_eq!(subcommand_argv(argv(given)), argv(want), "{given:?}");
+        }
+    }
+
     #[test]
     fn the_g0_strings_name_the_tool_they_run() {
         let coverage = "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info";
@@ -1330,6 +1378,8 @@ mod tests {
                 "mkdir -p /r",
                 "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path /r/lcov.info",
                 "test -s /r/lcov.info",
+                "cargo llvm-cov report --json --summary-only --output-path /r/coverage.json",
+                "test -s /r/coverage.json",
             ]
         );
         #[expect(

@@ -1,6 +1,6 @@
 # Adopt the rust-tops floor
 
-Floor for a workspace that adopts protocol 1.1.0 with `cargo-tops` 0.3.0. Coverage, CRAP, mutants, and Bend stay optional.
+Floor for a workspace that adopts protocol 1.2.0 with `cargo-tops` 0.4.0. Coverage, CRAP, mutants, and Bend stay optional.
 
 ## Floor
 
@@ -16,11 +16,13 @@ These five are mandatory CI jobs:
 
 Coverage, CRAP, mutants, and Bend laws are advisory. Do not add a line floor, a CRAP threshold, or a mutation kill-rate gate. A job that only checks a report file is nonempty may stay. Do not add `--fail-under-lines`.
 
+From `cargo-tops` 0.4.0, `cargo tops gate` enforces the `gates.coverage` floors and the CRAP threshold and baseline of `rust-tops.yaml` whenever the `coverage` or `crap` layer is enabled. To keep a layer advisory, leave it `enabled: false`. To turn it on, record a baseline first (`cargo tops gate`, then `cargo tops crap-baseline`) at a tracked `gates.crap.baseline`.
+
 Do not enable the `laws` layer. `cargo tops init` turns that layer on and fetches Bend. Do not run `init` at the root of a multi-class workspace. If a crate file already has `laws`, leave `enabled: false`.
 
 ## Class map
 
-One `rust-tops.yaml` per crate, protocol 1.1.0, beside that crate. A binary crate is `binary-cli`. A library crate is `library-core`. `library-util` has no profile, so those crates use `library-core`. Do not add a root `workspace-root` file.
+One `rust-tops.yaml` per crate, protocol 1.2.0, beside that crate. The repo root keeps one `RUST-TOPS.md` with a row per crate (RUST_TOPS.md §14.4). A binary crate is `binary-cli`. A library crate is `library-core`. `library-util` has no profile, so those crates use `library-core`. Do not add a root `workspace-root` file.
 
 `crate.msrv` is that repo's own MSRV. Do not set a product toolchain to 1.99.1. That version is only the compiler that builds `cargo-tops`.
 
@@ -28,10 +30,10 @@ One `rust-tops.yaml` per crate, protocol 1.1.0, beside that crate. A binary crat
 
 ## cargo-tops pin
 
-`cargo-tops` 0.3.0 is not a dependency inside the product repo. On the build host:
+`cargo-tops` 0.4.0 is not a dependency inside the product repo. On the build host:
 
 ```
-cargo install cargo-tops --version 0.3.0 --locked
+cargo install cargo-tops --version 0.4.0 --locked
 ```
 
 ## CI operating systems

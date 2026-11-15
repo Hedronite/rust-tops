@@ -9,3 +9,4 @@ target/crap.json
 result
 result-*
 .direnv
+*.profraw

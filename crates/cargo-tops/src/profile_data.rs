@@ -399,3 +399,104 @@ mod strict_profile {
         assert!(bin.contains("avoid_breaking_exported_api: false"));
     }
 }
+
+/// `init` writes the merged profile with [`emit_yaml`]; what it writes must
+/// read back as the tree it was given.
+#[cfg(test)]
+mod emit {
+    use super::{emit_number, emit_yaml, parse_yaml};
+    use serde_json::{json, Number};
+
+    #[test]
+    fn emitted_yaml_reads_back_as_the_same_tree() {
+        let tree = json!({
+            "plain_key": "text",
+            "needs quotes": "a \"quoted\" \\ back\nslash\r\t",
+            "": null,
+            "flags": [true, false],
+            "numbers": [0, -7, 18_446_744_073_709_551_615_u64, 0.5, -2.25],
+            "empty_map": {},
+            "empty_list": [],
+            "nested": [[1, [2]], {"k": [{"deep": "v"}]}],
+        });
+        assert_eq!(parse_yaml(&emit_yaml(&tree)), Ok(tree));
+    }
+
+    #[test]
+    fn a_whole_float_is_written_as_an_integer() {
+        let cases: [(f64, &str); 4] = [(2.0, "2"), (-3.0, "-3"), (0.5, "0.5"), (-2.25, "-2.25")];
+        for (value, want) in cases {
+            let number = Number::from_f64(value).expect("finite");
+            assert_eq!(emit_number(&number), want, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_scalar_document_is_one_line() {
+        assert_eq!(emit_yaml(&json!("x")), "\"x\"\n");
+        assert_eq!(emit_yaml(&json!(null)), "null\n");
+        assert_eq!(emit_yaml(&json!(7)), "7\n");
+    }
+}
+
+/// A profile that cannot be merged is an error that names the class and
+/// the reason, never a document.
+#[cfg(test)]
+mod errors {
+    use super::{
+        avoid_breaking_exported_api, overlay, reject_tighter_agent, remove_keys, set_crate,
+        ProfileError,
+    };
+    use serde_json::json;
+
+    fn invalid(detail: &str) -> ProfileError {
+        ProfileError::Invalid {
+            class: "x".to_string(),
+            detail: detail.to_string(),
+        }
+    }
+
+    #[test]
+    fn an_unknown_class_has_no_lint_scope() {
+        let err = avoid_breaking_exported_api("no-such-class").unwrap_err();
+        assert_eq!(
+            err,
+            ProfileError::UnknownClass {
+                class: "no-such-class".to_string()
+            }
+        );
+        assert_eq!(err.to_string(), "no profile for class no-such-class");
+        assert_eq!(invalid("why").to_string(), "profile x is invalid: why");
+    }
+
+    #[test]
+    fn a_profile_value_must_land_on_a_template_map() {
+        let mut doc = json!({"gates": {"coverage": {}}});
+        assert_eq!(
+            overlay(&mut doc, "/gates/coverage", &json!(5), "x"),
+            Err(invalid("/gates/coverage profile value is not a map"))
+        );
+        assert_eq!(
+            overlay(&mut doc, "/gates/crap", &json!({}), "x"),
+            Err(invalid("template has no /gates/crap"))
+        );
+        assert_eq!(
+            set_crate(&mut doc, "x", "demo", &json!({})),
+            Err(invalid("template has no crate"))
+        );
+        remove_keys(&mut doc, "/gates/crap", &["threshold_agent"]);
+        assert_eq!(doc, json!({"gates": {"coverage": {}}}));
+    }
+
+    #[test]
+    fn an_agent_threshold_tighter_than_the_human_one_is_refused() {
+        let doc = json!({"gates": {"crap": {"threshold_agent": 4, "threshold_human": 6}}});
+        assert_eq!(
+            reject_tighter_agent(&doc, "x"),
+            Err(invalid("agent CRAP 4 is tighter than human 6"))
+        );
+        let equal = json!({"gates": {"crap": {"threshold_agent": 6, "threshold_human": 6}}});
+        assert_eq!(reject_tighter_agent(&equal, "x"), Ok(()));
+        assert_eq!(reject_tighter_agent(&json!({}), "x"), Ok(()));
+    }
+}

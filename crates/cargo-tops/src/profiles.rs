@@ -18,6 +18,55 @@ pub(crate) const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest
 pub(crate) const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml");
 pub(crate) const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
 pub(crate) const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
+/// The adoption record template (RUST_TOPS.md §14.4), with `{{mark}}`s.
+pub(crate) const RUST_TOPS_MD: &str = include_str!("../templates/drop-in/RUST-TOPS.md");
+
+/// Each `{{mark}}` in [`RUST_TOPS_MD`], the instance key that fills it, and
+/// the text for an instance that has no such key.
+const RECORD_MARKS: [(&str, &str, &str); 10] = [
+    ("{{protocol}}", "/protocol/version", "not set"),
+    ("{{crate}}", "/crate/name", "not set"),
+    ("{{class}}", "/crate/class", "not set"),
+    ("{{line}}", "/gates/coverage/line_min_pct", "per package"),
+    (
+        "{{region}}",
+        "/gates/coverage/region_min_pct",
+        "per package",
+    ),
+    (
+        "{{per_file}}",
+        "/gates/coverage/per_file_line_min_pct",
+        "per package",
+    ),
+    ("{{agent}}", "/gates/crap/threshold_agent", "per package"),
+    ("{{human}}", "/gates/crap/threshold_human", "per package"),
+    (
+        "{{baseline}}",
+        "/gates/crap/baseline",
+        "`crap-baseline.json` in the Cargo target directory (the default; not tracked)",
+    ),
+    ("{{cargo_tops}}", "", env!("CARGO_PKG_VERSION")),
+];
+
+/// `RUST-TOPS.md` for the instance `yaml`: [`RUST_TOPS_MD`] with every mark
+/// filled from that instance and this cargo-tops version.
+pub(crate) fn adoption_record(yaml: &str) -> String {
+    let doc = crate::facts::parse_yaml(yaml).unwrap_or_default();
+    RECORD_MARKS
+        .iter()
+        .fold(RUST_TOPS_MD.to_string(), |text, (mark, pointer, absent)| {
+            let value = doc.pointer(pointer).filter(|_| !pointer.is_empty());
+            text.replace(mark, &record_value(value, absent))
+        })
+}
+
+fn record_value(value: Option<&serde_json::Value>, absent: &str) -> String {
+    match value {
+        Some(serde_json::Value::String(text)) => format!("`{text}`"),
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        _ => absent.to_string(),
+    }
+}
 pub(crate) const WORKFLOW_YML: &str = include_str!("../templates/drop-in/rust-tops.yml");
 const JOB_FUZZ: &str = include_str!("../templates/drop-in/jobs/fuzz.yml");
 const JOB_MIRI: &str = include_str!("../templates/drop-in/jobs/miri.yml");
@@ -234,6 +283,30 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/init/shared/AGENTS.md");
         let body = std::fs::read_to_string(&golden).expect("golden AGENTS.md");
         assert_eq!(super::AGENTS_MD, body);
+    }
+
+    #[test]
+    fn the_adoption_record_is_filled_from_the_instance() {
+        let core = super::adoption_record(&super::profile_yaml("library-core", "demo").unwrap());
+        assert!(!core.contains("{{"), "{core}");
+        for want in [
+            "| Protocol version | `1.2.0` |",
+            "| `demo` | `library-core` | `rust-tops.yaml` | 95 | 90 | 90 | 6 | 4 |",
+            concat!("cargo install cargo-tops --version ", env!("CARGO_PKG_VERSION")),
+            "Baseline: `crap-baseline.json` in the Cargo target directory (the default; not tracked)",
+        ] {
+            assert!(core.contains(want), "{want}\n{core}");
+        }
+        let root = super::adoption_record(&super::profile_yaml("workspace-root", "ws").unwrap());
+        assert!(
+            root.contains(
+                "| per package | per package | per package | per package | per package |"
+            ),
+            "{root}"
+        );
+        let tracked = "gates:\n  crap:\n    baseline: ci/crap.json\n";
+        assert!(super::adoption_record(tracked).contains("Baseline: `ci/crap.json`"));
+        assert!(super::adoption_record("[not yaml").contains("| Protocol version | not set |"));
     }
 
     #[test]
