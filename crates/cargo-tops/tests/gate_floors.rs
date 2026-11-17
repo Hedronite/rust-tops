@@ -20,6 +20,12 @@ const CARGO_STUB: &str = r#"#!/bin/sh
 if [ -n "${CARGO_STUB_FAIL:-}" ]; then
   case "$*" in *"$CARGO_STUB_FAIL"*) exit 1 ;; esac
 fi
+if [ -n "${CARGO_STUB_LOG:-}" ]; then echo "$*" >> "$CARGO_STUB_LOG"; fi
+if [ "$1 $2" = "crap --version" ]; then
+  # The lock `init` writes pins cargo-crap 0.9.0; the gate compares this line.
+  echo "cargo-crap 0.9.0"
+  exit 0
+fi
 if [ "$1" = metadata ]; then
   cat "$REPORTS/metadata.json"
   exit 0
@@ -63,6 +69,11 @@ fn stub(bin: &Path, name: &str, body: &str) {
 
 /// A library-core instance named `fixture` with only coverage and crap on.
 fn fixture(name: &str) -> Fixture {
+    fixture_with(name, &["coverage", "crap"])
+}
+
+/// A library-core instance named `fixture` with only the `on` layers enabled.
+fn fixture_with(name: &str, on: &[&str]) -> Fixture {
     let root =
         std::env::temp_dir().join(format!("cargo-tops-floors-{name}-{}", std::process::id()));
     fs::remove_dir_all(&root).ok();
@@ -96,8 +107,8 @@ fn fixture(name: &str) -> Fixture {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
             let id = layer.get("id").and_then(Value::as_str);
-            let on = matches!(id, Some("coverage" | "crap"));
-            set(layer, "", "enabled", Some(Value::Bool(on)));
+            let enabled = id.is_some_and(|id| on.contains(&id));
+            set(layer, "", "enabled", Some(Value::Bool(enabled)));
         }
     });
     fixture
@@ -565,4 +576,73 @@ fn a_baseline_that_cannot_be_read_fails_and_is_not_taken_as_absent() {
         "{text}"
     );
     assert!(!text.contains("no baseline"), "{text}");
+}
+
+/// The argv of every `cargo deny` the stub saw, one per line.
+fn deny_runs(log: &Path) -> Vec<String> {
+    fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.starts_with("deny "))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn each_deny_check_kind_runs_once_per_gate() {
+    let fixture = fixture_with("deny-once", &["static-lint", "security-advisory"]);
+    let log = fixture.root.join("cargo.log");
+    let (code, text) = tops_with_log(&fixture, &log, None);
+    assert_eq!(code, Some(0), "{text}");
+    let runs = deny_runs(&log);
+    for kind in ["advisories", "bans", "licenses", "sources"] {
+        let hits = runs
+            .iter()
+            .flat_map(|run| run.split_whitespace().skip(2))
+            .filter(|word| *word == kind)
+            .count();
+        assert_eq!(hits, 1, "{kind} ran {hits} times: {runs:?}");
+    }
+    assert!(
+        runs.iter()
+            .all(|run| run.split_whitespace().nth(1) == Some("check")),
+        "{runs:?}"
+    );
+}
+
+#[test]
+fn a_failing_advisory_check_fails_security_advisory() {
+    let fixture = fixture_with("deny-advisory", &["static-lint", "security-advisory"]);
+    let log = fixture.root.join("cargo.log");
+    let (code, text) = tops_with_log(&fixture, &log, Some("deny check advisories"));
+    assert_eq!(code, Some(1), "{text}");
+    assert!(text.contains("security-advisory"), "{text}");
+    assert!(!text.contains("\nok: "), "{text}");
+    // The same failure on a kind the other layer owns fails that layer, not
+    // `security-advisory`.
+    let (code, text) = tops_with_log(&fixture, &log, Some("deny check bans"));
+    assert_eq!(code, Some(1), "{text}");
+}
+
+/// `gate`, with the cargo stub logging every argv to `log` and failing the
+/// argv that contains `fail`.
+fn tops_with_log(fixture: &Fixture, log: &Path, fail: Option<&str>) -> (Option<i32>, String) {
+    fs::remove_file(log).ok();
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+        .arg("gate")
+        .arg("--path")
+        .arg(&fixture.repo)
+        .env("PATH", stub_path(fixture))
+        .env("REPORTS", &fixture.reports)
+        .env("CARGO_STUB_LOG", log)
+        .env("CARGO_STUB_FAIL", fail.unwrap_or(""))
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("spawn cargo-tops");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code(), text)
 }
