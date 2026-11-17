@@ -7,15 +7,17 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.2.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | `v0.2.0`, Cargo `0.2.0` |
+| Package | `cargo-tops` and git tag | `v0.4.0`, Cargo `0.4.0` |
 
-Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0.
+Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0.
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-11-14
+## [0.4.0] - 2026-11-17
 
-**Breaking 0.x minor.** `cargo tops gate` now fails on the coverage floors and the CRAP threshold and ratchet that `rust-tops.yaml` names. Protocol plane moves to **1.2.0** (prose and one optional schema key; no default threshold and no part of the CRAP formula changed). Package plane moves to **0.4.0**. Not tagged or published yet.
+**Breaking 0.x minor.** `cargo tops gate` now fails on the coverage floors and the CRAP threshold and ratchet that `rust-tops.yaml` names. Protocol plane moves to **1.2.0** (prose and one optional schema key; no default threshold and no part of the CRAP formula changed). Package plane moves to **0.4.0**.
+
+Not tagged or published yet.
 
 ### Upgrade
 
@@ -32,6 +34,11 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 - §19 exemptions in the gate: `layer: crap` by path glob and optional `symbol`, `layer: coverage` by path for the per-file floor. An expired exemption, or one whose date is not a day, exempts nothing and fails the gate.
 - `cargo tops init` writes `RUST-TOPS.md`, the adoption record, filled from the instance it writes. The template is `config/drop-in/RUST-TOPS.md`, a hand copy of `crates/cargo-tops/templates/drop-in/RUST-TOPS.md` that `xtask sync` checks.
 - This repository's own baseline, [`crap-baseline.json`](crap-baseline.json), is the CRAP report of `main` at the 0.3.0 release merge, and its root [`RUST-TOPS.md`](RUST-TOPS.md) records its own adoption.
+- `cargo-tops --version` and `cargo tops --version` print the package version. `cargo tops version` prints the package, the protocol it implements (`1.2.0`) and the tool pins in `./rust-tops.lock`, or says there is none.
+- `.github/workflows/release.yml`: on a pushed `v*` tag it builds `cargo-tops` for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`, writes sha256 sums, attests build provenance, and creates the GitHub release with this changelog section. Its crates.io job uses trusted publishing and runs only when the repository variable `CRATES_IO_TRUSTED_PUBLISHING` is `true`. No registry token is stored.
+- A `publish-dry-run` job in the kit workflow (`cargo publish --dry-run -p cargo-tops --locked`), and `cargo run -p xtask -- pins`, which fails when the drop-in's `cargo-tops` install version differs from the workspace version. CI runs it.
+- A `nextest-macos` job (macOS, Rust 1.99.1, Nushell 0.108.0 fetched by sha256) and a `workflow-lint` job (actionlint 1.7.12 fetched by checksum, over `.github/workflows/` and `config/drop-in/`, with the bare job files wrapped before they are linted).
+- `cargo run -p xtask -- docs`: fails when the README pin table disagrees with `Cargo.toml`, the `rust-tops.lock` tool pins, or the number of `profiles/*.yaml`. CI runs it.
 
 ### Changed
 
@@ -40,11 +47,18 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 - Both schema `$id`s, the example instance, the init template and this repository's `rust-tops.yaml` move to `1.2.0`. `config/rust-tops.lock.example` sets `[notes] schema` to `1.2.0`.
 - `AGENTS.md` (repo root, init template, init golden) is the 1.2.0 harness: the gate judges the floors, the baseline ratchet, the dispatch-match exemption, and never refreshing the baseline to let a score rise.
 - The drop-in workflow installs `cargo-tops` 0.4.0 and says to name a tracked baseline. The init goldens are re-recorded for that pin, `RUST-TOPS.md`, and `protocol.version`.
+- `cargo tops init` reads the crate it runs in: `crate.name`, `edition` and `msrv` come from `cargo metadata` (`msrv` from `rust-version`, else the lock's `rustc`, said on stdout), `hot_paths` is empty, and `unsafe_policy` follows the crate's lint table. It no longer writes parser-codec defaults. It writes `rust-tops.lock`, writes no `rust-toolchain.toml` when one exists in the crate directory or a parent up to the workspace root, and writes the Bend files only with `--laws`, which also enables the `laws` layer. Plain `init` leaves it disabled.
+- The gate runs each `cargo deny` check kind once: `static-lint` runs `bans`, `licenses` and `sources`, and `security-advisory` runs `advisories`.
+- The drop-in installs `cargo-deny`, `cargo-nextest`, `cargo-llvm-cov` and `cargo-mutants` at the versions in `config/rust-tops.lock.example`. Every overlay checkout sets `persist-credentials: false`. The Miri and fuzz overlays use one dated nightly, recorded in the lock notes. Both schema `$id`s are `https` URLs for this repository at `v0.4.0`.
+- The `nextest` and `coverage-crap` jobs stay in this repository's workflow as the drop-in floor jobs that the laws layer requires. They are not required checks: `tops-gate` runs the same suite and coverage on Linux.
 
 ### Fixed
 
 - The coverage and crap layers judged nothing: `gate` passed with any coverage and any CRAP score once the reports were nonempty.
 - A relative `CARGO_TARGET_DIR` is read under the gate directory, where the gate runs Cargo, not under the caller's working directory. With `--path` pointing at a crate, the reports now sit where Cargo writes its build.
+- `cargo publish` could not build the `cargo-tops` tarball: the profile data was read from outside the crate. The profiles are copied under `crates/cargo-tops/templates/profiles/`, and `xtask sync` keeps them equal to `profiles/`.
+- The `cargo_argv` test runs the binary it just built, with an empty `CARGO_HOME` and only the environment cargo needs. The `xtask` sync tests run the built `xtask` binary instead of `cargo run`, which took about 1 s in all and ended the 20 s timeouts.
+- The README, the laws guide and the policies note stated facts that were no longer true: the previous tag, the tool lock rustc, the protocol version in the contrast table, the number of profile files and `--class` values, the docs.rs row for a version not yet published, what `init` writes for the laws layer, and a `cognitive-complexity` key the drop-in does not have. The `rust-tops.lock` notes name schema 1.2.0.
 
 ## [0.3.0] - 2026-11-13
 
