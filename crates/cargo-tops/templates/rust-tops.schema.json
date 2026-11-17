@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://specs.local/rust-tops/v1.2.0/schema.json",
+  "$id": "https://raw.githubusercontent.com/Hedronite/rust-tops/v0.4.0/schema/rust-tops.schema.json",
   "title": "Rust Testing and Optimization Protocol Suite (Rust-TOPS)",
   "description": "Machine-readable protocol for correctness, risk, mutation, property, fuzz, formal, and performance gates on Rust crates. Production code aims for highest function per line; tests are allowed to be larger than production as long as they do not scar design.",
   "type": "object",
