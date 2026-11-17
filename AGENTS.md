@@ -28,10 +28,11 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo deny check
 cargo nextest run --workspace --all-features --profile ci
 cargo test --doc --workspace --all-features
-cargo llvm-cov nextest --workspace --all-features --lcov --output-path target/coverage/lcov.info
-test -s target/coverage/lcov.info
-cargo llvm-cov report --json --summary-only --output-path target/coverage/coverage.json
-cargo crap --lcov target/coverage/lcov.info
+mkdir -p target/rust-tops
+cargo llvm-cov nextest --workspace --all-features --lcov --output-path target/rust-tops/lcov.info
+test -s target/rust-tops/lcov.info
+cargo llvm-cov report --json --summary-only --output-path target/rust-tops/coverage.json
+cargo crap --lcov target/rust-tops/lcov.info --format json --output target/rust-tops/crap.json
 cargo mutants --in-diff <diff>
 ```
 

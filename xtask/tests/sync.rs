@@ -692,7 +692,7 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         assert_ne!(dest, "deny.toml");
         assert_ne!(dest, "rust-toolchain.toml");
     }
-    assert_eq!(pairs.len(), 49);
+    assert_eq!(pairs.len(), 58);
 }
 
 /// A link at `config` that comes and goes while sync writes

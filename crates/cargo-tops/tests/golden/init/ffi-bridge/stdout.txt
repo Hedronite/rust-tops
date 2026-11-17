@@ -1,4 +1,5 @@
 wrote {path}/rust-tops.yaml
+wrote {path}/rust-tops.lock
 wrote {path}/rust-toolchain.toml
 wrote {path}/AGENTS.md
 wrote {path}/RUST-TOPS.md
@@ -8,8 +9,5 @@ wrote {path}/.cargo/mutants.toml
 wrote {path}/.cargo-crap.toml
 wrote {path}/deny.toml
 wrote {path}/.github/workflows/rust-tops.yml
-wrote {path}/LAWS.bend
-wrote {path}/laws/bend.lock
-wrote {path}/scripts/fetch-bend.sh
 initialized rust-tops for golden-crate (ffi-bridge) in {path}
 next: cargo tops check && cargo tops gate

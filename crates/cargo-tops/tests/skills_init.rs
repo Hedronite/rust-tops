@@ -58,6 +58,14 @@ fn run_init(label: &str, extra: &[&str]) -> (PathBuf, String, String, bool) {
         reason = "already in this crate when the strict table was turned on"
     )]
     let _ = fs::remove_dir_all(&dir);
+    // A package, so `init` reads it and prints no default-value notes.
+    fs::create_dir_all(dir.join("src")).expect("mkdir src");
+    fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"golden-crate\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.95\"\n\n[lints.rust]\nunsafe_code = \"forbid\"\n",
+    )
+    .expect("write Cargo.toml");
+    fs::write(dir.join("src/lib.rs"), "// fixture\n").expect("write lib.rs");
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args([
             "init",
