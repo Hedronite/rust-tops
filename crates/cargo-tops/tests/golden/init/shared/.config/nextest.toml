@@ -21,3 +21,12 @@ exclusive-fs = { max-threads = 1 }
 # [[profile.ci.overrides]]
 # filter = 'test(exclusive_fs)'
 # group = "exclusive-fs"
+
+# `init` then `gate` for every class, with the laws layer on. This is for the
+# kit suite and matches nothing in an adopter. Alone it ran in 6.0 s to 7.9 s
+# on the build machine under parallel load. In the full suite it measured
+# 7.8 s on a quiet run and 14 s to 18 s under load, and it timed out at 20 s
+# in 2 of 10 runs. This one test gets 60 s; the profile timeout is not raised.
+[[profile.ci.overrides]]
+filter = "test(=fresh_init_with_laws_on_then_gate_passes_for_every_class)"
+slow-timeout = { period = "10s", terminate-after = 6 }
