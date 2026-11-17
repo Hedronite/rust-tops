@@ -13,7 +13,7 @@
 
 use serde_json::{Map, Number, Value};
 
-use crate::init_meta::Settings;
+use crate::init_meta::{resolve_unsafe_policy, Settings};
 
 const TEMPLATE: &str = include_str!("../templates/rust-tops.example.yaml");
 
@@ -190,9 +190,8 @@ fn set_crate(
     Ok(())
 }
 
-/// The crate facts onto the merged document. `unsafe_policy`: a `forbid` lint
-/// wins for every class; otherwise the class profile's policy stands; a class
-/// with none gets `forbid`.
+/// The crate facts onto the merged document. `unsafe_policy` comes from
+/// [`resolve_unsafe_policy`], the P0-R7 rule.
 fn apply_settings(
     doc: &mut Value,
     profile: &Value,
@@ -209,22 +208,13 @@ fn apply_settings(
         slot.insert("msrv".to_string(), Value::String(msrv.clone()));
     }
     slot.insert("hot_paths".to_string(), Value::Array(Vec::new()));
-    if forbids_unsafe(profile, settings) {
-        slot.insert(
-            "unsafe_policy".to_string(),
-            Value::String("forbid".to_string()),
-        );
-    }
+    let class_policy = profile.get("unsafe_policy").and_then(Value::as_str);
+    let unsafe_policy = resolve_unsafe_policy(settings.unsafe_lint.as_deref(), class_policy).policy;
+    slot.insert("unsafe_policy".to_string(), Value::String(unsafe_policy));
     if settings.laws {
         enable_layer(doc, "laws", class)?;
     }
     Ok(())
-}
-
-/// Whether `unsafe_policy` is `forbid`: the lint table says so, or the class
-/// profile has no policy of its own.
-fn forbids_unsafe(profile: &Value, settings: &Settings) -> bool {
-    settings.unsafe_forbid || profile.get("unsafe_policy").is_none()
 }
 
 fn enable_layer(doc: &mut Value, id: &str, class: &str) -> Result<(), ProfileError> {

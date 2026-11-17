@@ -25,8 +25,8 @@ pub(crate) struct Settings {
     pub(crate) edition: Option<String>,
     /// `crate.msrv`; `None` keeps the template value.
     pub(crate) msrv: Option<String>,
-    /// The crate's lint table sets `unsafe_code = "forbid"`.
-    pub(crate) unsafe_forbid: bool,
+    /// The `unsafe_code` level in the crate's lint table, if it sets one.
+    pub(crate) unsafe_lint: Option<String>,
     /// `--laws`: the laws layer is written `enabled: true`.
     pub(crate) laws: bool,
 }
@@ -49,7 +49,7 @@ struct CrateFacts {
     name: Option<String>,
     edition: Option<String>,
     msrv: Option<String>,
-    unsafe_forbid: bool,
+    unsafe_lint: Option<String>,
     workspace_root: Option<PathBuf>,
 }
 
@@ -99,7 +99,7 @@ pub(crate) fn plan(req: &Request<'_>) -> Result<Plan> {
         settings: Settings {
             edition,
             msrv: Some(msrv),
-            unsafe_forbid: facts.unsafe_forbid,
+            unsafe_lint: facts.unsafe_lint,
             laws: req.laws,
         },
         write_toolchain: !has_toolchain_pin(req.dir, facts.workspace_root.as_deref()),
@@ -123,14 +123,43 @@ fn checked_edition(edition: Option<String>, notes: &mut Vec<String>) -> Result<O
     }
 }
 
-/// The note `init` prints when `unsafe_policy` did not come from a
-/// `forbid` lint. `policy` is the value written.
+/// The `unsafe_policy` `init` writes, and whether it prints a note saying
+/// the policy was not the crate's own.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct UnsafeChoice {
+    pub(crate) policy: String,
+    pub(crate) note: bool,
+}
+
+/// The whole P0-R7 decision, from the lint table's `unsafe_code` level (if
+/// any) and the class profile's policy (if any). A lint of `forbid`
+/// wins for every class, with no note. Otherwise the class profile's policy
+/// stands; a class with none gets `forbid`. Both fallbacks print a note.
+pub(crate) fn resolve_unsafe_policy(
+    lint_level: Option<&str>,
+    class_policy: Option<&str>,
+) -> UnsafeChoice {
+    let lint_forbids = lint_level == Some("forbid");
+    let policy = match (lint_forbids, class_policy) {
+        (false, Some(class)) => class,
+        _ => "forbid",
+    };
+    UnsafeChoice {
+        policy: policy.to_string(),
+        note: !lint_forbids,
+    }
+}
+
+/// The note `init` prints when `unsafe_policy` is a fallback. `policy` is the
+/// value written.
 pub(crate) fn unsafe_note(settings: &Settings, policy: &str) -> Option<String> {
-    (!settings.unsafe_forbid).then(|| {
-        format!(
-            "note: unsafe_policy {policy} is the class default; the crate's lint table does not set unsafe_code = \"forbid\""
-        )
-    })
+    resolve_unsafe_policy(settings.unsafe_lint.as_deref(), Some(policy))
+        .note
+        .then(|| {
+            format!(
+                "note: unsafe_policy {policy} is the class default; the crate's lint table does not set unsafe_code = \"forbid\""
+            )
+        })
 }
 
 /// The `[tools] rustc` of a `rust-tops.lock` text.
@@ -156,7 +185,7 @@ fn read(dir: &Path) -> Result<CrateFacts> {
         .with_context(|| format!("resolve {}", manifest.display()))?;
     let json = metadata(&manifest)?;
     let mut facts = from_metadata(&json, &manifest);
-    facts.unsafe_forbid = forbids_unsafe(&manifest, facts.workspace_root.as_deref());
+    facts.unsafe_lint = lint_level(&manifest, facts.workspace_root.as_deref());
     Ok(facts)
 }
 
@@ -220,7 +249,7 @@ fn from_metadata(json: &Value, manifest: &Path) -> CrateFacts {
         name,
         edition,
         msrv,
-        unsafe_forbid: false,
+        unsafe_lint: None,
         workspace_root,
     }
 }
@@ -236,14 +265,12 @@ fn read_toml(path: &Path) -> Option<toml::Table> {
     std::fs::read_to_string(path).ok()?.parse().ok()
 }
 
-/// Whether the lint table of the manifest (or, with `workspace = true`, of
-/// the workspace root) sets `unsafe_code` to `forbid`.
-fn forbids_unsafe(manifest: &Path, root: Option<&Path>) -> bool {
-    let Some(own) = read_toml(manifest) else {
-        return false;
-    };
+/// The `unsafe_code` level the lint table of the manifest (or, with
+/// `workspace = true`, of the workspace root) sets.
+fn lint_level(manifest: &Path, root: Option<&Path>) -> Option<String> {
+    let own = read_toml(manifest)?;
     let root_table = root.and_then(|dir| read_toml(&dir.join("Cargo.toml")));
-    unsafe_level(&own, root_table.as_ref()).as_deref() == Some("forbid")
+    unsafe_level(&own, root_table.as_ref())
 }
 
 fn unsafe_level(own: &toml::Table, root: Option<&toml::Table>) -> Option<String> {
@@ -495,7 +522,7 @@ mod tests {
         assert_eq!(plan.name, "krate");
         assert_eq!(plan.settings.edition.as_deref(), Some("2021"));
         assert_eq!(plan.settings.msrv.as_deref(), Some("1.95"));
-        assert!(plan.settings.unsafe_forbid);
+        assert_eq!(plan.settings.unsafe_lint.as_deref(), Some("forbid"));
         assert!(plan.notes.is_empty(), "{:?}", plan.notes);
         fs::remove_dir_all(&dir).ok();
     }
@@ -512,7 +539,7 @@ mod tests {
         fs::write(dir.join("src/lib.rs"), "").expect("write");
         let plan = plan_for(&dir, None, "norv").expect("plan");
         assert_eq!(plan.settings.msrv.as_deref(), Some("1.99.1"));
-        assert!(!plan.settings.unsafe_forbid);
+        assert_eq!(plan.settings.unsafe_lint, None);
         assert_eq!(plan.notes.len(), 1, "{:?}", plan.notes);
         assert!(plan.notes.iter().all(|n| n.contains("no rust-version")));
         fs::remove_dir_all(&dir).ok();
@@ -543,11 +570,36 @@ mod tests {
     }
 
     #[test]
+    fn the_unsafe_policy_follows_p0_r7_one_row_per_case() {
+        let kernel = Some("required-kernel");
+        let rows = [
+            // (lint level, class policy) -> (policy, note)
+            ((Some("forbid"), None), ("forbid", false)),
+            ((Some("forbid"), kernel), ("forbid", false)),
+            ((Some("deny"), kernel), ("required-kernel", true)),
+            ((Some("deny"), None), ("forbid", true)),
+            ((None, kernel), ("required-kernel", true)),
+            ((None, None), ("forbid", true)),
+        ];
+        for ((lint, class), (policy, note)) in rows {
+            let want = UnsafeChoice {
+                policy: policy.to_string(),
+                note,
+            };
+            assert_eq!(
+                resolve_unsafe_policy(lint, class),
+                want,
+                "{lint:?} {class:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_unsafe_note_is_printed_only_without_a_forbid_lint() {
         let mut settings = Settings::default();
         let note = unsafe_note(&settings, "forbid").expect("note");
         assert!(note.contains("unsafe_policy forbid"), "{note}");
-        settings.unsafe_forbid = true;
+        settings.unsafe_lint = Some("forbid".to_string());
         assert_eq!(unsafe_note(&settings, "forbid"), None);
     }
 
