@@ -48,6 +48,7 @@ use steps::{Kind, MutationPlan, Step};
 #[command(
     name = "cargo-tops",
     bin_name = "cargo-tops",
+    version,
     about = "Rust-TOPS protocol CLI: init, check, gate. Policy and sequencing only — not a test engine."
 )]
 struct Cli {
@@ -96,6 +97,44 @@ enum Commands {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
+    /// Print the package version, the protocol it implements, and the pins in ./rust-tops.lock
+    Version,
+}
+
+/// The protocol version this build implements.
+const PROTOCOL_VERSION: &str = "1.2.0";
+
+/// What `cargo tops version` prints: package, protocol, then the `[tools]`
+/// pins of the lock text, or one line saying why there are none.
+/// `lock` is `None` when `./rust-tops.lock` does not exist.
+fn version_text(lock: Option<&str>) -> String {
+    let mut lines = vec![
+        format!("cargo-tops {}", env!("CARGO_PKG_VERSION")),
+        format!("protocol {PROTOCOL_VERSION}"),
+    ];
+    match lock.map(str::parse::<toml::Table>) {
+        None => lines.push("tool pins: none (no ./rust-tops.lock)".to_string()),
+        Some(Err(err)) => {
+            lines.push(format!(
+                "tool pins: ./rust-tops.lock is not valid TOML: {err}"
+            ));
+        }
+        Some(Ok(table)) => {
+            lines.push("tool pins (./rust-tops.lock):".to_string());
+            let pins = table.get("tools").and_then(toml::Value::as_table);
+            for (name, pin) in pins.into_iter().flatten() {
+                lines.push(format!("  {name} = {}", pin.as_str().unwrap_or("?")));
+            }
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// `cargo tops version`: reads `./rust-tops.lock` from the current directory.
+fn print_version() {
+    let lock = fs::read_to_string("rust-tops.lock").ok();
+    print!("{}", version_text(lock.as_deref()));
 }
 
 fn main() -> ExitCode {
@@ -151,6 +190,10 @@ fn run() -> Result<ExitCode> {
         Commands::CrapBaseline { path } => {
             let cfg = load_config(&path)?;
             floors::record_baseline(&path, &cfg)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Version => {
+            print_version();
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -1141,7 +1184,8 @@ fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
                 "-D",
                 "warnings",
             ]),
-            tool(&["cargo", "deny", "check"]),
+            // `security-advisory` runs `advisories`; each kind runs once.
+            tool(&["cargo", "deny", "check", "bans", "licenses", "sources"]),
         ],
         "unit" | "integration" => vec![tool(&[
             "cargo",
@@ -1872,6 +1916,23 @@ mod tests {
     /// missing directories, walks real ones again, and tells a file from a
     /// link without following it.
     #[cfg(unix)]
+    #[test]
+    fn version_text_names_package_protocol_and_each_tools_pin() {
+        let pkg = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            version_text(None),
+            format!("cargo-tops {pkg}\nprotocol 1.2.0\ntool pins: none (no ./rust-tops.lock)\n")
+        );
+        let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
+        assert_eq!(
+            version_text(Some(lock)),
+            format!(
+                "cargo-tops {pkg}\nprotocol 1.2.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+            )
+        );
+        assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));
+    }
+
     #[test]
     fn the_path_walk_makes_directories_and_reads_what_is_at_a_name() {
         let root =
