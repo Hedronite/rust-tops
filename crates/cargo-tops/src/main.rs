@@ -30,7 +30,6 @@ mod facts;
 mod floors;
 mod init_meta;
 mod laws;
-mod planted;
 mod profile_data;
 mod profiles;
 mod schema;
@@ -147,9 +146,6 @@ fn print_version() {
 }
 
 fn main() -> ExitCode {
-    if std::env::var_os("RUST_TOPS_PLANTED").is_some() {
-        println!("{}", planted::planted_uncovered(7));
-    }
     match run() {
         Ok(code) => code,
         Err(err) => {
