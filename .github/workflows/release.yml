@@ -43,9 +43,8 @@ jobs:
         with:
           toolchain: 1.99.1
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: release-${{ matrix.target }}
+      # No cache restore anywhere in this workflow: a tag build compiles what it
+      # ships, so nothing a pull-request run could have written is read.
       - name: Tag matches the package version
         shell: bash
         env:
@@ -119,7 +118,10 @@ jobs:
             $0 ~ "^## \\[" v "\\]" { on = 1; next }
             on && /^## \[/ { exit }
             on { print }
-          ' CHANGELOG.md > release-notes.md
+          ' CHANGELOG.md > release-notes.raw
+          # The CHANGELOG says "Not tagged or published yet." until the tag
+          # exists. A published release must not carry that line.
+          sed 's/ *Not tagged or published yet\.//' release-notes.raw > release-notes.md
           if ! grep -q '[^[:space:]]' release-notes.md; then
             echo "CHANGELOG.md has no [${version}] section" >&2
             exit 1
