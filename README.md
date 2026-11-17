@@ -130,7 +130,7 @@ nix flake check
 | Class floors | None | Eight profile files; the schema allows eleven class names |
 | Drop-in configs | None | clippy, nextest, mutants, cargo-crap, cargo-deny, GitHub Actions floor |
 | Orchestrator | You sequence the commands | `cargo tops init`, `check`, and `gate` |
-| CI on this repo | — | `fmt-clippy-deny`, `nextest`, `msrv`, `feature-matrix`, `coverage-crap`, `bend-proof`, `bend-verdict`, `bend-gate-matrix`, plus `law-diff`. `bend-proof-macos` is informational |
+| CI on this repo | — | `fmt-clippy-deny`, `msrv`, `publish-dry-run`, `workflow-lint`, `nextest-macos`, `tops-gate`, `feature-matrix`, `bend-proof`, `bend-verdict`, `bend-gate-matrix`, plus `law-diff`. `nextest` and `coverage-crap` stay as the drop-in floor jobs; `tops-gate` runs the same suite and coverage. `bend-proof-macos` is informational. `release` runs on a `v*` tag |
 | CRAP config | — | [`.cargo-crap.toml`](.cargo-crap.toml): threshold `6.0`; excludes `src/generated/**`, `tests/**`, `benches/**`, `examples/**` |
 | Bend2 | — | 53 laws, H-01 through H-53. The `laws` layer has `bend` judge fifteen against your crate; thirty-eight are `not-evaluated`. Required CI on this repo proves all 53 |
 | Nix | — | Overlay and packages `cargo-tops`, `rust-tops-laws` |
@@ -185,7 +185,7 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 
 This tree is package **0.4.0** and protocol **1.2.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.4.0]`. The previous package release is [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) (`91417b5`).
 
-This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
+This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, a coverage job that fails when `lcov.info` or the CRAP JSON is empty, `cargo publish --dry-run`, actionlint over the workflows and the drop-ins, and nextest on macOS. `tops-gate` runs this repository's own `cargo tops gate`. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. A separate `release` workflow builds, attests and publishes a GitHub release when a `v*` tag is pushed. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
 The Bend2 pack is 53 laws. [`scripts/bend-gate.sh`](scripts/bend-gate.sh) checks names and template bytes, requires `bend` 2.0.36 from [`laws/bend.lock`](laws/bend.lock), and uses the exit code of `bend PROOF.bend` as the verdict. On an adopting crate, the `laws` layer judges fifteen of them with `bend`, and thirty-eight are `not-evaluated` ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). Moving a law into [`RUST_TOPS.md`](RUST_TOPS.md) takes an explicit spec bump. Public [`RUST_TOPS.md`](RUST_TOPS.md) still stops at §24. The review gate in [`docs/REVIEW.md`](docs/REVIEW.md) is additive guidance, not a protocol section.
 

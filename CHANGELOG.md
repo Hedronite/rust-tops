@@ -37,6 +37,8 @@ Not tagged or published yet.
 - `cargo-tops --version` and `cargo tops --version` print the package version. `cargo tops version` prints the package, the protocol it implements (`1.2.0`) and the tool pins in `./rust-tops.lock`, or says there is none.
 - `.github/workflows/release.yml`: on a pushed `v*` tag it builds `cargo-tops` for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`, writes sha256 sums, attests build provenance, and creates the GitHub release with this changelog section. Its crates.io job uses trusted publishing and runs only when the repository variable `CRATES_IO_TRUSTED_PUBLISHING` is `true`. No registry token is stored.
 - A `publish-dry-run` job in the kit workflow (`cargo publish --dry-run -p cargo-tops --locked`), and `cargo run -p xtask -- pins`, which fails when the drop-in's `cargo-tops` install version differs from the workspace version. CI runs it.
+- A `nextest-macos` job (macOS, Rust 1.99.1, Nushell 0.108.0 fetched by sha256) and a `workflow-lint` job (actionlint 1.7.12 fetched by checksum, over `.github/workflows/` and `config/drop-in/`, with the bare job files wrapped before they are linted).
+- `cargo run -p xtask -- docs`: fails when the README pin table disagrees with `Cargo.toml`, the `rust-tops.lock` tool pins, or the number of `profiles/*.yaml`. CI runs it.
 
 ### Changed
 
@@ -48,6 +50,7 @@ Not tagged or published yet.
 - `cargo tops init` reads the crate it runs in: `crate.name`, `edition` and `msrv` come from `cargo metadata` (`msrv` from `rust-version`, else the lock's `rustc`, said on stdout), `hot_paths` is empty, and `unsafe_policy` follows the crate's lint table. It no longer writes parser-codec defaults. It writes `rust-tops.lock`, writes no `rust-toolchain.toml` when one exists in the crate directory or a parent up to the workspace root, and writes the Bend files only with `--laws`, which also enables the `laws` layer. Plain `init` leaves it disabled.
 - The gate runs each `cargo deny` check kind once: `static-lint` runs `bans`, `licenses` and `sources`, and `security-advisory` runs `advisories`.
 - The drop-in installs `cargo-deny`, `cargo-nextest`, `cargo-llvm-cov` and `cargo-mutants` at the versions in `config/rust-tops.lock.example`. Every overlay checkout sets `persist-credentials: false`. The Miri and fuzz overlays use one dated nightly, recorded in the lock notes. Both schema `$id`s are `https` URLs for this repository at `v0.4.0`.
+- The `nextest` and `coverage-crap` jobs stay in this repository's workflow as the drop-in floor jobs that the laws layer requires. They are not required checks: `tops-gate` runs the same suite and coverage on Linux.
 
 ### Fixed
 
@@ -55,6 +58,7 @@ Not tagged or published yet.
 - A relative `CARGO_TARGET_DIR` is read under the gate directory, where the gate runs Cargo, not under the caller's working directory. With `--path` pointing at a crate, the reports now sit where Cargo writes its build.
 - `cargo publish` could not build the `cargo-tops` tarball: the profile data was read from outside the crate. The profiles are copied under `crates/cargo-tops/templates/profiles/`, and `xtask sync` keeps them equal to `profiles/`.
 - The `cargo_argv` test runs the binary it just built, with an empty `CARGO_HOME` and only the environment cargo needs. The `xtask` sync tests run the built `xtask` binary instead of `cargo run`, which took about 1 s in all and ended the 20 s timeouts.
+- The README, the laws guide and the policies note stated facts that were no longer true: the previous tag, the tool lock rustc, the protocol version in the contrast table, the number of profile files and `--class` values, the docs.rs row for a version not yet published, what `init` writes for the laws layer, and a `cognitive-complexity` key the drop-in does not have. The `rust-tops.lock` notes name schema 1.2.0.
 
 ## [0.3.0] - 2026-11-13
 
