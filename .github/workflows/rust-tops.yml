@@ -55,6 +55,8 @@ jobs:
       # {SYSDEPS: apt/brew any C-ABI dep a --all-features build.rs probes}
       # Hand copies match their source under crates/cargo-tops/templates/.
       - run: cargo run -p xtask --locked -- sync --check
+      # The README pin table matches Cargo.toml, the lock and profiles/.
+      - run: cargo run -p xtask --locked -- docs
       # The drop-in installs cargo-tops at the workspace version (G4).
       - run: cargo run -p xtask --locked -- pins
       - run: cargo fmt --all -- --check

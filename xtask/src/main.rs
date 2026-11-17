@@ -1,5 +1,8 @@
 //! `cargo run -p xtask -- sync [--check] [--root DIR]`.
 //!
+//! `cargo run -p xtask -- docs [--root DIR]` is in `docs.rs`: the README pin
+//! table must match `Cargo.toml`, `rust-tops.lock` and `profiles/`.
+//!
 //! `cargo run -p xtask -- pins [--root DIR]` is in `pins.rs`: the drop-in
 //! install pin must equal the workspace version.
 //!
@@ -28,6 +31,7 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
+mod docs;
 mod pins;
 
 const LIST: &str = "copies.toml";
@@ -134,6 +138,7 @@ fn main() -> ExitCode {
     let mut raw = std::env::args().skip(1);
     match raw.next().as_deref() {
         Some("upstream-diff") => return upstream_diff(raw.next().as_deref()),
+        Some("docs") => return docs::run(raw),
         Some("pins") => return pins::run(raw),
         _ => {}
     }
