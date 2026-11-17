@@ -28,9 +28,23 @@ fn path_with_built_tops() -> OsString {
     std::env::join_paths([&tops_dir, &cargo_dir]).expect("join PATH")
 }
 
+/// An empty `CARGO_HOME` for the spawned `cargo`.
+///
+/// Cargo looks for `cargo-<name>` in `$CARGO_HOME/bin` before it looks on
+/// `PATH`. A host whose `CARGO_HOME` holds an older `cargo-tops` (the
+/// `cargo install` copy) would then run that one, and this test would grade
+/// the wrong binary. An empty `CARGO_HOME` leaves `PATH`, with the binary
+/// just built first, as the only place cargo can look.
+fn empty_cargo_home() -> PathBuf {
+    let home = std::env::temp_dir().join(format!("cargo-tops-argv-home-{}", std::process::id()));
+    fs::create_dir_all(&home).expect("create the empty CARGO_HOME");
+    home
+}
+
 fn cargo_tops(args: &[&str], dir: Option<&std::path::Path>) -> std::process::Output {
     let mut cmd = Command::new(real_cargo());
     cmd.args(std::iter::once("tops").chain(args.iter().copied()))
+        .env("CARGO_HOME", empty_cargo_home())
         .env("PATH", path_with_built_tops());
     if let Some(dir) = dir {
         cmd.current_dir(dir);
@@ -113,6 +127,7 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
     );
     assert!(direct.status.success(), "{direct_text}");
     assert!(direct_text.contains("ok:"), "{direct_text}");
+    fs::remove_dir_all(empty_cargo_home()).ok();
     #[expect(
         clippy::let_underscore_must_use,
         reason = "already in this crate when the strict table was turned on"
