@@ -1,5 +1,8 @@
 //! `cargo run -p xtask -- sync [--check] [--root DIR]`.
 //!
+//! `cargo run -p xtask -- docs [--root DIR]` is in `docs.rs`: the README pin
+//! table must match `Cargo.toml`, `rust-tops.lock` and `profiles/`.
+//!
 //! `copies.toml` at the repo root has one `[[copy]]` table per source: `from`
 //! is the file read, and `to` lists the hand copies written from it. Sources
 //! are under `crates/cargo-tops/templates/`, except
@@ -24,6 +27,8 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
+
+mod docs;
 
 const LIST: &str = "copies.toml";
 const TEMPLATES: &str = "crates/cargo-tops/templates/";
@@ -127,8 +132,10 @@ fn upstream_diff(name: Option<&str>) -> ExitCode {
 
 fn main() -> ExitCode {
     let mut raw = std::env::args().skip(1);
-    if raw.next().as_deref() == Some("upstream-diff") {
-        return upstream_diff(raw.next().as_deref());
+    match raw.next().as_deref() {
+        Some("upstream-diff") => return upstream_diff(raw.next().as_deref()),
+        Some("docs") => return docs::run(raw),
+        _ => {}
     }
     let args = match parse_args(std::env::args().skip(1)) {
         Ok(args) => args,

@@ -49,10 +49,10 @@ Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with 
 | Plane | Pin | Where |
 | --- | --- | --- |
 | Protocol | 1.2.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
-| Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) at commit `e0fa684`. |
+| Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) at commit `91417b5`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
-| Crate page | 0.4.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
-| Tool lock | rustc 1.91.0, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
+| Crate page | not published yet | 0.4.0 has no [docs.rs/cargo-tops](https://docs.rs/cargo-tops) page until it is published |
+| Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
 
@@ -87,7 +87,7 @@ cargo tops check
 cargo tops gate
 ```
 
-`--class` accepts `library-core` (the default), `parser-codec`, `no-std-embedded`, `unsafe-kernel`, or `binary-cli`. `init` writes `rust-tops.yaml` (protocol 1.2.0, `laws` layer at tier 0), `rust-toolchain.toml` (`channel` = `crate.msrv`), `AGENTS.md`, `RUST-TOPS.md` (the adoption record, filled from the instance), the drop-in configs, a class workflow at `.github/workflows/rust-tops.yml`, `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. It does not write `rust-tops.lock`. The generated instance still starts from the parser-codec example (edition 2024, MSRV 1.88).
+`--class` accepts `library-core` (the default), `parser-codec`, `no-std-embedded`, `unsafe-kernel`, `binary-cli`, `library-util`, `ffi-bridge`, or `workspace-root`. `init` writes `rust-tops.yaml` (protocol 1.2.0, `laws` layer at tier 0), `rust-toolchain.toml` (`channel` = `crate.msrv`), `AGENTS.md`, `RUST-TOPS.md` (the adoption record, filled from the instance), the drop-in configs, a class workflow at `.github/workflows/rust-tops.yml`, `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. It does not write `rust-tops.lock`. The generated instance still starts from the parser-codec example (edition 2024, MSRV 1.88).
 
 `check` reads `rust-tops.yaml` and checks protocol id, a non-empty version, a crate name, `gates.crap.threshold_agent >= 1`, and that class `library-core` keeps `unexplained_survivors_max` at 0.
 
@@ -126,8 +126,8 @@ nix flake check
 
 | | Cargo alone | This kit |
 | --- | --- | --- |
-| Contract | Docs and tests you arrange | Protocol 1.1.0 and a draft 2020-12 JSON Schema |
-| Class floors | None | Five profile files; the schema allows eleven class names |
+| Contract | Docs and tests you arrange | Protocol 1.2.0 and a draft 2020-12 JSON Schema |
+| Class floors | None | Eight profile files; the schema allows eleven class names |
 | Drop-in configs | None | clippy, nextest, mutants, cargo-crap, cargo-deny, GitHub Actions floor |
 | Orchestrator | You sequence the commands | `cargo tops init`, `check`, and `gate` |
 | CI on this repo | — | `fmt-clippy-deny`, `nextest`, `msrv`, `feature-matrix`, `coverage-crap`, `bend-proof`, `bend-verdict`, `bend-gate-matrix`, plus `law-diff`. `bend-proof-macos` is informational |
@@ -145,7 +145,7 @@ nix flake check
 | Mutants, Darwin, or fuzz jobs in this repo | They are comments in [`.github/workflows/rust-tops.yml`](.github/workflows/rust-tops.yml). The feature matrix checks `cargo-tops` and `parser-codec` with `--no-default-features`, and `no-std-embedded` both with `--no-default-features` and with `--features std`. |
 | Every law judged on your crate | Fifteen laws have fact readers. Thirty-eight, including `evidence_not_self_served`, are reported `not-evaluated` and never count as a pass ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). The schema names the `laws` layer; the laws live in `LAWS.bend`. Hard rows encode as `Refuse`; soft rows as `Ack`. Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md). |
 | A green gate when `bend` is absent | Missing `bend` exits 1 (`H-37`). Names-only is the explicit opt-in `BEND_GATE_NAMES_ONLY=1`, and CI refuses that variable. |
-| `cargo tops init` for every schema class | The CLI classes are the five named above. The schema also lists `library-util`, `binary-service`, `concurrency-runtime`, `ffi-bridge`, `proc-macro`, and `workspace-root`. Those six have no profile file and no `--class` value. |
+| `cargo tops init` for every schema class | The CLI classes are the eight named above, one profile file each. The schema also lists `binary-service`, `concurrency-runtime`, and `proc-macro`. Those three have no profile file and no `--class` value. |
 | Published example crates | [`examples/parser-codec`](examples/parser-codec) and [`examples/no-std-embedded`](examples/no-std-embedded) set `publish = false`. |
 | A written gate report | [`schema/gate-report.schema.json`](schema/gate-report.schema.json) describes an optional report object. The CLI prints text and does not write that object. |
 
@@ -183,7 +183,7 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 
 ## Status
 
-This tree is package **0.4.0** and protocol **1.2.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.4.0]`. The previous package release is [`v0.2.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.2.0) (`e0fa684`).
+This tree is package **0.4.0** and protocol **1.2.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.4.0]`. The previous package release is [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) (`91417b5`).
 
 This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, and a coverage job that fails when `lcov.info` or the CRAP JSON is empty. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
@@ -194,7 +194,7 @@ The Bend2 pack is 53 laws. [`scripts/bend-gate.sh`](scripts/bend-gate.sh) checks
 Current limits:
 
 - `cargo tops gate` runs the mapped commands through tier 1.
-- `cargo tops init` covers five classes. The other six names exist in the schema and the spec table.
+- `cargo tops init` covers eight classes. The other three names exist in the schema and the spec table.
 - `bend-gate.sh` exits 1 when `bend` is absent.
 - The `laws` layer has fact readers for fifteen of the 53 laws. The rest are `not-evaluated`.
 - `bend-proof-macos` is informational. A large Bend pack can overflow the macOS stack; this job does not change `ulimit`.

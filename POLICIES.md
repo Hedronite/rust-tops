@@ -52,7 +52,7 @@ Record-only is not a skip: empty LCOV / empty CRAP JSON is a fail.
 
 - Trait methods required by a foreign trait are clippy-exempt for `too_many_arguments`.
 - Inherent helpers on the same type are **not**. Intern an existing type; do not invent a parallel spec type when the interned node already exists.
-- `cognitive-complexity` 12, `too-many-lines` 40, `too-many-arguments` 6 (see `config/drop-in/clippy.toml`).
+- `too-many-lines` 40 and `too-many-arguments` 6 (see `config/drop-in/clippy.toml`). `cognitive-complexity` has no key there: that lint is off, and `rust-tops.yaml` sets `cognitive_complexity_max: 12`.
 - Never enable `clippy::pedantic` or `clippy::restriction` as a group.
 
 ## scar_guard
