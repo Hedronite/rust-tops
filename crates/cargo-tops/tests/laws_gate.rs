@@ -2073,6 +2073,8 @@ fn without_the_crap_layer_the_gate_does_not_read_the_pin() {
 #[test]
 fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
     let fixture = fixture_with("tool-lock-honesty", &["static-lint", "laws"]);
+    // No rust-tops.lock before the commit, so a lock written later is untracked.
+    fs::remove_file(fixture.repo.join("rust-tops.lock")).expect("init wrote a lock");
     adopt(&fixture, Origin::None);
     stub_bend(&fixture);
     let honesty = |fixture: &Fixture| {
@@ -2080,8 +2082,7 @@ fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
         let entry = law(&cases_json(fixture), "lock_honesty").clone();
         (out.status.code(), entry, text)
     };
-    // No rust-tops.lock (removed from what `init` wrote): that is no drift.
-    fs::remove_file(fixture.repo.join("rust-tops.lock")).expect("init wrote a lock");
+    // No rust-tops.lock: that is no drift.
     let (code, entry, text) = honesty(&fixture);
     assert_eq!(code, Some(0), "{text}");
     #[expect(
