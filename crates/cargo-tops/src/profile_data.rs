@@ -1,6 +1,8 @@
 //! Class profiles merged onto the init template as data.
 //!
-//! Every file in `profiles/` is embedded with `include_str!`. [`merge_profile`]
+//! Every file in the crate's `templates/profiles/` is embedded with
+//! `include_str!`. That directory is the source and the repo-root `profiles/`
+//! its synced copy, so the published package holds them. [`merge_profile`]
 //! parses the base template and the class file and writes the profile's
 //! numbers into the template tree. It does not search-and-replace template
 //! text. An unknown class is an error, not a library-core document.
@@ -11,41 +13,43 @@
 
 use serde_json::{Map, Number, Value};
 
+use crate::init_meta::{resolve_unsafe_policy, Settings};
+
 const TEMPLATE: &str = include_str!("../templates/rust-tops.example.yaml");
 
-/// Every `profiles/*.yaml`, keyed by the class id in the file.
+/// Every `templates/profiles/*.yaml`, keyed by the class id in the file.
 const PROFILES: &[(&str, &str)] = &[
     (
         "binary-cli",
-        include_str!("../../../profiles/binary-cli.yaml"),
+        include_str!("../templates/profiles/binary-cli.yaml"),
     ),
     (
         "ffi-bridge",
-        include_str!("../../../profiles/ffi-bridge.yaml"),
+        include_str!("../templates/profiles/ffi-bridge.yaml"),
     ),
     (
         "library-core",
-        include_str!("../../../profiles/library-core.yaml"),
+        include_str!("../templates/profiles/library-core.yaml"),
     ),
     (
         "library-util",
-        include_str!("../../../profiles/library-util.yaml"),
+        include_str!("../templates/profiles/library-util.yaml"),
     ),
     (
         "no-std-embedded",
-        include_str!("../../../profiles/no-std-embedded.yaml"),
+        include_str!("../templates/profiles/no-std-embedded.yaml"),
     ),
     (
         "parser-codec",
-        include_str!("../../../profiles/parser-codec.yaml"),
+        include_str!("../templates/profiles/parser-codec.yaml"),
     ),
     (
         "unsafe-kernel",
-        include_str!("../../../profiles/unsafe-kernel.yaml"),
+        include_str!("../templates/profiles/unsafe-kernel.yaml"),
     ),
     (
         "workspace-root",
-        include_str!("../../../profiles/workspace-root.yaml"),
+        include_str!("../templates/profiles/workspace-root.yaml"),
     ),
 ];
 
@@ -105,6 +109,17 @@ pub(crate) fn avoid_breaking_exported_api(class: &str) -> Result<bool, ProfileEr
 /// [`ProfileError::UnknownClass`].
 #[must_use = "an unknown class is an error and must not be written as library-core"]
 pub(crate) fn merge_profile(class: &str, crate_name: &str) -> Result<String, ProfileError> {
+    merge_profile_with(class, crate_name, &Settings::default())
+}
+
+/// [`merge_profile`] with what `init` read from the crate: its edition and
+/// `rust-version`, whether its lint table forbids unsafe code, and `--laws`.
+/// `hot_paths` is always empty: an adopter names their own.
+pub(crate) fn merge_profile_with(
+    class: &str,
+    crate_name: &str,
+    settings: &Settings,
+) -> Result<String, ProfileError> {
     let source = profile_source(class).ok_or_else(|| ProfileError::UnknownClass {
         class: class.to_string(),
     })?;
@@ -117,6 +132,7 @@ pub(crate) fn merge_profile(class: &str, crate_name: &str) -> Result<String, Pro
         detail,
     })?;
     apply_profile(&mut doc, &profile, class, crate_name)?;
+    apply_settings(&mut doc, &profile, settings, class)?;
     Ok(emit_yaml(&doc))
 }
 
@@ -171,6 +187,48 @@ fn set_crate(
             Value::String(policy.to_string()),
         );
     }
+    Ok(())
+}
+
+/// The crate facts onto the merged document. `unsafe_policy` comes from
+/// [`resolve_unsafe_policy`], the P0-R7 rule.
+fn apply_settings(
+    doc: &mut Value,
+    profile: &Value,
+    settings: &Settings,
+    class: &str,
+) -> Result<(), ProfileError> {
+    let Some(slot) = doc.pointer_mut("/crate").and_then(Value::as_object_mut) else {
+        return Err(invalid(class, "template has no crate"));
+    };
+    if let Some(edition) = &settings.edition {
+        slot.insert("edition".to_string(), Value::String(edition.clone()));
+    }
+    if let Some(msrv) = &settings.msrv {
+        slot.insert("msrv".to_string(), Value::String(msrv.clone()));
+    }
+    slot.insert("hot_paths".to_string(), Value::Array(Vec::new()));
+    let class_policy = profile.get("unsafe_policy").and_then(Value::as_str);
+    let unsafe_policy = resolve_unsafe_policy(settings.unsafe_lint.as_deref(), class_policy).policy;
+    slot.insert("unsafe_policy".to_string(), Value::String(unsafe_policy));
+    if settings.laws {
+        enable_layer(doc, "laws", class)?;
+    }
+    Ok(())
+}
+
+fn enable_layer(doc: &mut Value, id: &str, class: &str) -> Result<(), ProfileError> {
+    let layer = doc
+        .pointer_mut("/layers")
+        .and_then(Value::as_array_mut)
+        .and_then(|layers| {
+            layers
+                .iter_mut()
+                .find(|l| l.get("id").and_then(Value::as_str) == Some(id))
+        })
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| invalid(class, format!("template has no {id} layer")))?;
+    layer.insert("enabled".to_string(), Value::Bool(true));
     Ok(())
 }
 
