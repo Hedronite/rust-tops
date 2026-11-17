@@ -113,7 +113,7 @@ cargo tops gate
 }
 ```
 
-`overlays.default` exposes `cargo-tops` and `rust-tops-laws`. Flake systems are `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, and `x86_64-linux`. Intel macOS follows input `nixpkgs-darwin-x64` (`nixpkgs-26.05-darwin`). The other systems follow `nixos-unstable`. `devShells.default` includes `cargo-tops`, `rustc`, `cargo`, `clippy`, and `rustfmt`.
+`overlays.default` exposes `cargo-tops` and `rust-tops-laws`. Flake systems are `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`, all following `nixos-unstable`. Intel macOS (`x86_64-darwin`) is not supported: nixpkgs 26.11 dropped it. `devShells.default` includes `cargo-tops`, `rustc`, `cargo`, `clippy`, and `rustfmt`.
 
 ```bash
 nix flake check
@@ -198,7 +198,7 @@ Current limits:
 - `bend-gate.sh` exits 1 when `bend` is absent.
 - The `laws` layer has fact readers for fifteen of the 53 laws. The rest are `not-evaluated`.
 - `bend-proof-macos` is informational. A large Bend pack can overflow the macOS stack; this job does not change `ulimit`.
-- Flake support for `x86_64-darwin` tracks `nixpkgs-26.05-darwin`, because the `nixos-unstable` pin dropped Intel macOS. Darwin `checks.bend-proof` is absent.
+- Flake support for `x86_64-darwin` is dropped, because nixpkgs 26.11 dropped Intel macOS. Darwin `checks.bend-proof` is absent.
 
 ## Contributing
 
