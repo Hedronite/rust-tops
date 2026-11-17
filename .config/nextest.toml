@@ -30,3 +30,12 @@ exclusive-fs = { max-threads = 1 }
 [[profile.ci.overrides]]
 filter = "test(=fresh_init_with_laws_on_then_gate_passes_for_every_class)"
 slow-timeout = { period = "10s", terminate-after = 6 }
+
+# A dry run, then the same repo run for real, for every class. This is for the
+# kit suite and matches nothing in an adopter. Alone it ran in 2.2 s to 8.6 s.
+# In the full suite it measured 16.1 s to 16.7 s at a load of about 10, and
+# timed out at 20 s once at a load of about 30 on the build machine. This one
+# test gets 40 s; the profile timeout is not raised.
+[[profile.ci.overrides]]
+filter = "test(=a_dry_run_runs_nothing_and_never_passes)"
+slow-timeout = { period = "10s", terminate-after = 4 }
