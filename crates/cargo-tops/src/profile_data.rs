@@ -209,7 +209,7 @@ fn apply_settings(
         slot.insert("msrv".to_string(), Value::String(msrv.clone()));
     }
     slot.insert("hot_paths".to_string(), Value::Array(Vec::new()));
-    if settings.unsafe_forbid || profile.get("unsafe_policy").is_none() {
+    if forbids_unsafe(profile, settings) {
         slot.insert(
             "unsafe_policy".to_string(),
             Value::String("forbid".to_string()),
@@ -219,6 +219,12 @@ fn apply_settings(
         enable_layer(doc, "laws", class)?;
     }
     Ok(())
+}
+
+/// Whether `unsafe_policy` is `forbid`: the lint table says so, or the class
+/// profile has no policy of its own.
+fn forbids_unsafe(profile: &Value, settings: &Settings) -> bool {
+    settings.unsafe_forbid || profile.get("unsafe_policy").is_none()
 }
 
 fn enable_layer(doc: &mut Value, id: &str, class: &str) -> Result<(), ProfileError> {

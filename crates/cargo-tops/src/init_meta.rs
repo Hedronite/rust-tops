@@ -324,8 +324,8 @@ mod tests {
     #[test]
     fn a_virtual_root_takes_the_highest_member_values() {
         let json = json!({"workspace_root": "/w", "packages": [
-            {"name": "a", "edition": "2021", "rust_version": "1.9", "manifest_path": "/w/a/Cargo.toml"},
             {"name": "b", "edition": "2024", "rust_version": "1.10", "manifest_path": "/w/b/Cargo.toml"},
+            {"name": "a", "edition": "2021", "rust_version": "1.9", "manifest_path": "/w/a/Cargo.toml"},
             {"name": "c", "edition": "2021", "rust_version": null, "manifest_path": "/w/c/Cargo.toml"},
         ]});
         let facts = from_metadata(&json, Path::new("/w/Cargo.toml"));
@@ -430,7 +430,9 @@ mod tests {
         assert_eq!(plan.settings.msrv.as_deref(), Some("1.99.1"));
         assert!(plan.write_toolchain);
         let mut notes = plan.notes.iter();
-        assert!(notes.next().is_some_and(|n| n.contains("crate.name bare")));
+        assert!(notes
+            .next()
+            .is_some_and(|n| n.contains("crate.name bare") && n.contains("no Cargo.toml here")));
         assert!(notes
             .next()
             .is_some_and(|n| n.contains("crate.edition 2024")));
@@ -449,6 +451,33 @@ mod tests {
         assert_eq!(named.name, "given");
         assert!(named.settings.laws);
         assert_eq!(named.notes.len(), 2, "--name needs no note");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_manifest_with_no_package_says_so_in_the_name_note() {
+        let dir = scratch("virtual");
+        fs::create_dir_all(dir.join("m/src")).expect("mkdir");
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"m\"]\nresolver = \"2\"\n",
+        )
+        .expect("write");
+        fs::write(
+            dir.join("m/Cargo.toml"),
+            "[package]\nname = \"m\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.95\"\n",
+        )
+        .expect("write");
+        fs::write(dir.join("m/src/lib.rs"), "").expect("write");
+        let plan = plan_for(&dir, None, "ws").expect("plan");
+        assert_eq!(plan.name, "ws");
+        assert_eq!(plan.settings.edition.as_deref(), Some("2021"));
+        assert_eq!(plan.settings.msrv.as_deref(), Some("1.95"));
+        assert_eq!(plan.notes.len(), 1, "{:?}", plan.notes);
+        assert!(plan
+            .notes
+            .iter()
+            .all(|n| n.contains("Cargo.toml has no package")));
         fs::remove_dir_all(&dir).ok();
     }
 

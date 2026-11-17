@@ -394,3 +394,38 @@ fn a_manifest_cargo_cannot_read_is_an_error_and_writes_nothing() {
     assert!(!dir.join("rust-tops.yaml").exists());
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn force_never_rewrites_an_existing_toolchain_pin() {
+    let manifest = "[package]\nname = \"f\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.95\"\n";
+    let pin = b"[toolchain]\nchannel = \"1.96.0\"\n# mine\n";
+    for file in ["rust-toolchain.toml", "rust-toolchain"] {
+        let dir = scratch(&format!("force-{file}"));
+        write_crate(&dir, manifest);
+        fs::write(dir.join(file), pin).expect("pin");
+        for flags in [&["init"][..], &["init", "--force"]] {
+            let (ok, out, err) = tops(flags, &dir);
+            assert!(ok, "{file} {flags:?}: {out}{err}");
+            assert_eq!(
+                fs::read(dir.join(file)).expect("read"),
+                pin,
+                "{file} {flags:?}"
+            );
+            let other = if file == "rust-toolchain" {
+                "rust-toolchain.toml"
+            } else {
+                "rust-toolchain"
+            };
+            assert!(!dir.join(other).exists(), "{file} {flags:?}: wrote {other}");
+        }
+        // `--force` still rewrites a file init owns.
+        fs::write(dir.join("clippy.toml"), "stale\n").expect("write");
+        let (ok, out, err) = tops(&["init", "--force"], &dir);
+        assert!(ok, "{out}{err}");
+        assert_ne!(
+            fs::read_to_string(dir.join("clippy.toml")).expect("read"),
+            "stale\n"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+}
