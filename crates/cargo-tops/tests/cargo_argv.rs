@@ -28,24 +28,67 @@ fn path_with_built_tops() -> OsString {
     std::env::join_paths([&tops_dir, &cargo_dir]).expect("join PATH")
 }
 
-/// An empty `CARGO_HOME` for the spawned `cargo`.
+/// A fresh directory that is removed when it drops, on every path out of the
+/// test. It holds the fixture crate and an empty `CARGO_HOME`.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-argv-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(dir.join("cargo-home")).expect("create the scratch directory");
+        Self(dir)
+    }
+
+    fn cargo_home(&self) -> PathBuf {
+        self.0.join("cargo-home")
+    }
+
+    fn root(&self) -> PathBuf {
+        self.0.join("root")
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).ok();
+    }
+}
+
+/// `cargo tops <args>` with an empty `CARGO_HOME` and a cleared environment.
 ///
 /// Cargo looks for `cargo-<name>` in `$CARGO_HOME/bin` before it looks on
 /// `PATH`. A host whose `CARGO_HOME` holds an older `cargo-tops` (the
 /// `cargo install` copy) would then run that one, and this test would grade
 /// the wrong binary. An empty `CARGO_HOME` leaves `PATH`, with the binary
-/// just built first, as the only place cargo can look.
-fn empty_cargo_home() -> PathBuf {
-    let home = std::env::temp_dir().join(format!("cargo-tops-argv-home-{}", std::process::id()));
-    fs::create_dir_all(&home).expect("create the empty CARGO_HOME");
-    home
-}
-
-fn cargo_tops(args: &[&str], dir: Option<&std::path::Path>) -> std::process::Output {
+/// just built first, as the only place cargo can look. The environment is
+/// cleared for the same reason: an inherited `CARGO_ALIAS_TOPS` or the like
+/// would also send `cargo tops` somewhere else. Only what cargo needs to run
+/// passes through.
+fn cargo_tops(
+    scratch: &Scratch,
+    args: &[&str],
+    dir: Option<&std::path::Path>,
+) -> std::process::Output {
     let mut cmd = Command::new(real_cargo());
     cmd.args(std::iter::once("tops").chain(args.iter().copied()))
-        .env("CARGO_HOME", empty_cargo_home())
+        .env_clear()
+        .env("CARGO_HOME", scratch.cargo_home())
         .env("PATH", path_with_built_tops());
+    for key in [
+        "HOME",
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO_TARGET_DIR",
+        "TMPDIR",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            cmd.env(key, value);
+        }
+    }
     if let Some(dir) = dir {
         cmd.current_dir(dir);
     }
@@ -55,7 +98,8 @@ fn cargo_tops(args: &[&str], dir: Option<&std::path::Path>) -> std::process::Out
 #[test]
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn cargo_tops_help_and_check_use_the_built_binary() {
-    let help = cargo_tops(&["--help"], None);
+    let scratch = Scratch::new();
+    let help = cargo_tops(&scratch, &["--help"], None);
     let help_text = format!(
         "{}{}",
         String::from_utf8_lossy(&help.stdout),
@@ -69,12 +113,7 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
         "{help_text}"
     );
 
-    let root = std::env::temp_dir().join(format!("cargo-tops-argv-{}", std::process::id()));
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "already in this crate when the strict table was turned on"
-    )]
-    let _ = fs::remove_dir_all(&root);
+    let root = scratch.root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
         root.join("Cargo.toml"),
@@ -84,6 +123,7 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
     fs::write(root.join("src/lib.rs"), "// fixture\n").unwrap();
 
     let init = cargo_tops(
+        &scratch,
         &[
             "init",
             "--class",
@@ -102,7 +142,7 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
     );
     assert!(init.status.success(), "{init_text}");
 
-    let check = cargo_tops(&["check", "--path", "."], Some(&root));
+    let check = cargo_tops(&scratch, &["check", "--path", "."], Some(&root));
     let check_text = format!(
         "{}{}",
         String::from_utf8_lossy(&check.stdout),
@@ -127,10 +167,4 @@ fn cargo_tops_help_and_check_use_the_built_binary() {
     );
     assert!(direct.status.success(), "{direct_text}");
     assert!(direct_text.contains("ok:"), "{direct_text}");
-    fs::remove_dir_all(empty_cargo_home()).ok();
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "already in this crate when the strict table was turned on"
-    )]
-    let _ = fs::remove_dir_all(&root);
 }
