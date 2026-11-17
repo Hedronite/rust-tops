@@ -52,7 +52,7 @@ Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with 
 | Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) at commit `91417b5`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
 | Crate page | not published yet | 0.4.0 has no [docs.rs/cargo-tops](https://docs.rs/cargo-tops) page until it is published |
-| Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18 | [`rust-tops.lock`](rust-tops.lock) |
+| Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18.9 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
 
@@ -87,7 +87,7 @@ cargo tops check
 cargo tops gate
 ```
 
-`--class` accepts `library-core` (the default), `parser-codec`, `no-std-embedded`, `unsafe-kernel`, `binary-cli`, `library-util`, `ffi-bridge`, or `workspace-root`. `init` writes `rust-tops.yaml` (protocol 1.2.0, `laws` layer at tier 0), `rust-toolchain.toml` (`channel` = `crate.msrv`), `AGENTS.md`, `RUST-TOPS.md` (the adoption record, filled from the instance), the drop-in configs, a class workflow at `.github/workflows/rust-tops.yml`, `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. It does not write `rust-tops.lock`. The generated instance still starts from the parser-codec example (edition 2024, MSRV 1.88).
+`--class` accepts `library-core` (the default), `parser-codec`, `no-std-embedded`, `unsafe-kernel`, `binary-cli`, `library-util`, `ffi-bridge`, or `workspace-root`. `init` reads `cargo metadata` for the package it runs in and writes that package's `crate.name`, `crate.edition` and `crate.msrv` into `rust-tops.yaml` (protocol 1.2.0). `msrv` is the package's `rust-version`; with none, it is the `rustc` pin in `rust-tops.lock`, and stdout says so. `hot_paths` is empty. `unsafe_policy` is `forbid`; stdout notes it when the crate's lint table does not set `unsafe_code = "forbid"`. `init` writes `rust-toolchain.toml` (`channel` = `crate.msrv`) only when no `rust-toolchain.toml` or `rust-toolchain` exists in the crate directory or any parent up to the workspace root; an existing file stays byte-identical, with `--force` too. It also writes `rust-tops.lock`, `AGENTS.md`, `RUST-TOPS.md` (the adoption record, filled from the instance), the drop-in configs, and a class workflow at `.github/workflows/rust-tops.yml`. The `laws` layer is written at tier 0 and disabled. `cargo tops init --laws` also writes `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`, and sets the layer to `enabled: true`.
 
 `check` reads `rust-tops.yaml` and checks protocol id, a non-empty version, a crate name, `gates.crap.threshold_agent >= 1`, and that class `library-core` keeps `unexplained_survivors_max` at 0.
 
