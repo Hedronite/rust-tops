@@ -3,6 +3,9 @@
 //! `cargo run -p xtask -- docs [--root DIR]` is in `docs.rs`: the README pin
 //! table must match `Cargo.toml`, `rust-tops.lock` and `profiles/`.
 //!
+//! `cargo run -p xtask -- pins [--root DIR]` is in `pins.rs`: the drop-in
+//! install pin must equal the workspace version.
+//!
 //! `copies.toml` at the repo root has one `[[copy]]` table per source: `from`
 //! is the file read, and `to` lists the hand copies written from it. Sources
 //! are under `crates/cargo-tops/templates/`, except
@@ -29,6 +32,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
 mod docs;
+mod pins;
 
 const LIST: &str = "copies.toml";
 const TEMPLATES: &str = "crates/cargo-tops/templates/";
@@ -135,6 +139,7 @@ fn main() -> ExitCode {
     match raw.next().as_deref() {
         Some("upstream-diff") => return upstream_diff(raw.next().as_deref()),
         Some("docs") => return docs::run(raw),
+        Some("pins") => return pins::run(raw),
         _ => {}
     }
     let args = match parse_args(std::env::args().skip(1)) {

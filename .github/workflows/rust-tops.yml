@@ -57,6 +57,8 @@ jobs:
       - run: cargo run -p xtask --locked -- sync --check
       # The README pin table matches Cargo.toml, the lock and profiles/.
       - run: cargo run -p xtask --locked -- docs
+      # The drop-in installs cargo-tops at the workspace version (G4).
+      - run: cargo run -p xtask --locked -- pins
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
@@ -110,6 +112,22 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # {SYSDEPS}
       - run: cargo check --workspace --all-features --locked
+
+  # What crates.io would take, minus the upload. Package, then build the
+  # package from its own tarball. No registry token is used or needed.
+  publish-dry-run:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo publish --dry-run -p cargo-tops --locked
 
   feature-matrix:
     strategy:
