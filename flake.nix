@@ -3,33 +3,27 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # nixpkgs 26.11 dropped Intel macOS. Keep x86_64-darwin on the last pin.
-    nixpkgs-darwin-x64.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      nixpkgs-darwin-x64,
     }:
     let
       inherit (nixpkgs) lib;
 
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
       ];
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
 
-      nixpkgsFor = system: if system == "x86_64-darwin" then nixpkgs-darwin-x64 else nixpkgs;
-
       pkgsFor =
         system:
-        import (nixpkgsFor system) {
+        import nixpkgs {
           inherit system;
           overlays = [ self.overlays.default ];
         };
