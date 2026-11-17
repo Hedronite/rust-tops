@@ -67,6 +67,20 @@ fn stub(bin: &Path, name: &str, body: &str) {
     }
 }
 
+/// The cargo stub and a stub for every plugin a layer probes for. `cargo-deny`
+/// is among them, so no test here depends on the host having it.
+fn stub_tools(bin: &Path) {
+    stub(bin, "cargo", CARGO_STUB);
+    for plugin in [
+        "cargo-llvm-cov",
+        "cargo-crap",
+        "cargo-nextest",
+        "cargo-deny",
+    ] {
+        stub(bin, plugin, "#!/bin/sh\nexit 0\n");
+    }
+}
+
 /// A library-core instance named `fixture` with only coverage and crap on.
 fn fixture(name: &str) -> Fixture {
     fixture_with(name, &["coverage", "crap"])
@@ -99,10 +113,7 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         .output()
         .expect("spawn init");
     assert!(init.status.success(), "init failed");
-    stub(&fixture.bin, "cargo", CARGO_STUB);
-    for plugin in ["cargo-llvm-cov", "cargo-crap", "cargo-nextest"] {
-        stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
-    }
+    stub_tools(&fixture.bin);
     edit(&fixture, |doc| {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
@@ -616,12 +627,25 @@ fn a_failing_advisory_check_fails_security_advisory() {
     let log = fixture.root.join("cargo.log");
     let (code, text) = tops_with_log(&fixture, &log, Some("deny check advisories"));
     assert_eq!(code, Some(1), "{text}");
-    assert!(text.contains("security-advisory"), "{text}");
+    // The failure is the advisories command exiting 1, not a tool that is
+    // missing: all four commands ran, and no other layer failed.
+    assert!(
+        text.contains("  - security-advisory: `cargo deny check advisories` failed"),
+        "{text}"
+    );
+    assert!(text.contains("count: 4 command(s) ran"), "{text}");
+    assert!(text.contains("1 problem(s)"), "{text}");
+    assert!(!text.contains("not on PATH"), "{text}");
     assert!(!text.contains("\nok: "), "{text}");
     // The same failure on a kind the other layer owns fails that layer, not
     // `security-advisory`.
     let (code, text) = tops_with_log(&fixture, &log, Some("deny check bans"));
     assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("  - static-lint: `cargo deny check bans licenses sources` failed"),
+        "{text}"
+    );
+    assert!(!text.contains("  - security-advisory:"), "{text}");
 }
 
 /// `gate`, with the cargo stub logging every argv to `log` and failing the

@@ -1917,6 +1917,23 @@ mod tests {
     /// link without following it.
     #[cfg(unix)]
     #[test]
+    fn version_text_names_package_protocol_and_each_tools_pin() {
+        let pkg = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            version_text(None),
+            format!("cargo-tops {pkg}\nprotocol 1.2.0\ntool pins: none (no ./rust-tops.lock)\n")
+        );
+        let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
+        assert_eq!(
+            version_text(Some(lock)),
+            format!(
+                "cargo-tops {pkg}\nprotocol 1.2.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+            )
+        );
+        assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));
+    }
+
+    #[test]
     fn the_path_walk_makes_directories_and_reads_what_is_at_a_name() {
         let root =
             std::env::temp_dir().join(format!("cargo-tops-path-walk-{}", std::process::id()));
