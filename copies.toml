@@ -138,3 +138,39 @@ to = ["config/lints/tops-strict.toml"]
 [[copy]]
 from = "LICENSES/BeautifulRust-MIT.txt"
 to = ["crates/cargo-tops/LICENSES/BeautifulRust-MIT.txt"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/rust-tops.lock.example"
+to = ["config/rust-tops.lock.example"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/binary-cli.yaml"
+to = ["profiles/binary-cli.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/ffi-bridge.yaml"
+to = ["profiles/ffi-bridge.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/library-core.yaml"
+to = ["profiles/library-core.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/library-util.yaml"
+to = ["profiles/library-util.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/no-std-embedded.yaml"
+to = ["profiles/no-std-embedded.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/parser-codec.yaml"
+to = ["profiles/parser-codec.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/unsafe-kernel.yaml"
+to = ["profiles/unsafe-kernel.yaml"]
+
+[[copy]]
+from = "crates/cargo-tops/templates/profiles/workspace-root.yaml"
+to = ["profiles/workspace-root.yaml"]

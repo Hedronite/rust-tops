@@ -1,8 +1,10 @@
 //! `cargo run -p xtask -- sync` against the committed tree and against
 //! fixture copies of it.
 //!
-//! Every run goes through `cargo run -p xtask --locked`, the command CI runs.
-//! Tests that drift a copy work on a fixture under `CARGO_TARGET_TMPDIR`, so
+//! Every run executes the `xtask` binary this suite just built. A `cargo run`
+//! per call re-checked the whole workspace each time, and with a dozen tests
+//! queued on the lock below, the wait alone passed the nextest timeout on a
+//! busy host. Tests that drift a copy work on a fixture under `CARGO_TARGET_TMPDIR`, so
 //! the committed tree is only read.
 //!
 //! The runs take turns on a file lock. On macOS 26.5, about one `cargo run`
@@ -21,18 +23,17 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// `cargo run -p xtask --locked -- sync <args>` from the workspace. Returns
-/// the exit code and stdout followed by stderr.
+/// `xtask <args>` from the workspace. Returns the exit code and stdout
+/// followed by stderr.
 fn xtask(args: &[&str]) -> (i32, String) {
     let lock = fs::File::create(Path::new(env!("CARGO_TARGET_TMPDIR")).join("xtask-run.lock"))
         .expect("create the run lock");
     lock.lock().expect("take the run lock");
-    let out = Command::new(env!("CARGO"))
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .current_dir(workspace())
-        .args(["run", "--quiet", "-p", "xtask", "--locked", "--"])
         .args(args)
         .output()
-        .expect("spawn cargo run -p xtask");
+        .expect("spawn xtask");
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -691,7 +692,7 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         assert_ne!(dest, "deny.toml");
         assert_ne!(dest, "rust-toolchain.toml");
     }
-    assert_eq!(pairs.len(), 49);
+    assert_eq!(pairs.len(), 58);
 }
 
 /// A link at `config` that comes and goes while sync writes

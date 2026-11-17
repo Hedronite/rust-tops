@@ -12,7 +12,7 @@ cargo-nextest = "0.9.145"
 cargo-llvm-cov = "0.9.1"
 cargo-mutants = "27.1.0"
 cargo-crap = "0.9.0"
-cargo-deny = "0.18"
+cargo-deny = "0.18.9"
 cargo-fuzz = "0.12"
 proptest = "1"
 kani-verifier = "0.68.0"
@@ -23,5 +23,7 @@ callgrind-runner = "gungraun-runner"
 [notes]
 schema = "1.0.0"
 installed_with = "cargo install --locked <tool>"
+# Date of the one nightly the Miri and fuzz overlays use; bump it as a pin, never a bare `nightly`.
+nightly = "nightly-2026-11-16"
 [upstream]
 beautifulrust = "v1.5.0 40db61c6fee84bd121cf288755f0e2f22a50e995"
