@@ -74,6 +74,8 @@ const JOB_KANI: &str = include_str!("../templates/drop-in/jobs/kani.yml");
 const JOB_CALLGRIND: &str = include_str!("../templates/drop-in/jobs/callgrind.yml");
 pub(crate) const LAWS_BEND: &str = include_str!("../templates/LAWS.bend");
 pub(crate) const BEND_LOCK: &str = include_str!("../templates/bend.lock");
+/// `rust-tops.lock`, the tool pins `init` writes at the crate root.
+pub(crate) const LOCK_TEMPLATE: &str = include_str!("../templates/rust-tops.lock.example");
 pub(crate) const FETCH_BEND_SH: &str = include_str!("../templates/fetch-bend.sh");
 
 /// Byte copy of `schema/rust-tops.schema.json`; `cargo tops check` validates
@@ -115,6 +117,16 @@ pub(crate) fn rust_toolchain_toml(msrv: &str) -> String {
 
 /// `rust-tops.yaml` for `class`: the class profile merged onto the template
 /// as data. A class with no profile is an error, never library-core.
+pub(crate) fn profile_yaml_with(
+    class: &str,
+    crate_name: &str,
+    settings: &crate::init_meta::Settings,
+) -> Result<String, crate::profile_data::ProfileError> {
+    crate::profile_data::merge_profile_with(class, crate_name, settings)
+}
+
+/// [`profile_yaml_with`] with no crate facts: what `check` merges to learn
+/// whether a class has a profile.
 pub(crate) fn profile_yaml(
     class: &str,
     crate_name: &str,

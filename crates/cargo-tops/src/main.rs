@@ -28,6 +28,7 @@ mod credit;
 mod exemptions;
 mod facts;
 mod floors;
+mod init_meta;
 mod laws;
 mod profile_data;
 mod profiles;
@@ -48,6 +49,7 @@ use steps::{Kind, MutationPlan, Step};
 #[command(
     name = "cargo-tops",
     bin_name = "cargo-tops",
+    version,
     about = "Rust-TOPS protocol CLI: init, check, gate. Policy and sequencing only — not a test engine."
 )]
 struct Cli {
@@ -55,26 +57,33 @@ struct Cli {
     command: Commands,
 }
 
+/// The flags of `init`.
+#[derive(clap::Args)]
+struct InitArgs {
+    /// Crate class: one of the profiles in `profiles/` (default: library-core)
+    #[arg(long, default_value = "library-core")]
+    class: String,
+    /// Directory to initialize (default: cwd)
+    #[arg(long, default_value = ".")]
+    path: PathBuf,
+    /// Crate name written into rust-tops.yaml (default: directory name)
+    #[arg(long)]
+    name: Option<String>,
+    /// Overwrite existing protocol files
+    #[arg(long)]
+    force: bool,
+    /// Also write portable agent skills, CLAUDE.md, and docs/REVIEW.md
+    #[arg(long)]
+    skills: bool,
+    /// Also write the Bend laws kit and turn the laws layer on
+    #[arg(long)]
+    laws: bool,
+}
+
 #[derive(Subcommand)]
 enum Commands {
-    /// Write rust-tops.yaml, AGENTS.md, RUST-TOPS.md, drop-in tool configs, and the Bend laws kit
-    Init {
-        /// Crate class: one of the profiles in `profiles/` (default: library-core)
-        #[arg(long, default_value = "library-core")]
-        class: String,
-        /// Directory to initialize (default: cwd)
-        #[arg(long, default_value = ".")]
-        path: PathBuf,
-        /// Crate name written into rust-tops.yaml (default: directory name)
-        #[arg(long)]
-        name: Option<String>,
-        /// Overwrite existing protocol files
-        #[arg(long)]
-        force: bool,
-        /// Also write portable agent skills, CLAUDE.md, and docs/REVIEW.md
-        #[arg(long)]
-        skills: bool,
-    },
+    /// Write rust-tops.yaml, rust-tops.lock, AGENTS.md, RUST-TOPS.md and the drop-in tool configs, read from the crate's Cargo.toml
+    Init(InitArgs),
     /// Validate rust-tops.yaml against the protocol schema (typed check)
     Check {
         #[arg(long, default_value = ".")]
@@ -96,6 +105,44 @@ enum Commands {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
+    /// Print the package version, the protocol it implements, and the pins in ./rust-tops.lock
+    Version,
+}
+
+/// The protocol version this build implements.
+const PROTOCOL_VERSION: &str = "1.2.0";
+
+/// What `cargo tops version` prints: package, protocol, then the `[tools]`
+/// pins of the lock text, or one line saying why there are none.
+/// `lock` is `None` when `./rust-tops.lock` does not exist.
+fn version_text(lock: Option<&str>) -> String {
+    let mut lines = vec![
+        format!("cargo-tops {}", env!("CARGO_PKG_VERSION")),
+        format!("protocol {PROTOCOL_VERSION}"),
+    ];
+    match lock.map(str::parse::<toml::Table>) {
+        None => lines.push("tool pins: none (no ./rust-tops.lock)".to_string()),
+        Some(Err(err)) => {
+            lines.push(format!(
+                "tool pins: ./rust-tops.lock is not valid TOML: {err}"
+            ));
+        }
+        Some(Ok(table)) => {
+            lines.push("tool pins (./rust-tops.lock):".to_string());
+            let pins = table.get("tools").and_then(toml::Value::as_table);
+            for (name, pin) in pins.into_iter().flatten() {
+                lines.push(format!("  {name} = {}", pin.as_str().unwrap_or("?")));
+            }
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// `cargo tops version`: reads `./rust-tops.lock` from the current directory.
+fn print_version() {
+    let lock = fs::read_to_string("rust-tops.lock").ok();
+    print!("{}", version_text(lock.as_deref()));
 }
 
 fn main() -> ExitCode {
@@ -120,14 +167,8 @@ fn subcommand_argv(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString>
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse_from(subcommand_argv(std::env::args_os().collect()));
     match cli.command {
-        Commands::Init {
-            class,
-            path,
-            name,
-            force,
-            skills,
-        } => {
-            init(&path, &class, name.as_deref(), force, skills)?;
+        Commands::Init(args) => {
+            init(&args)?;
             Ok(ExitCode::SUCCESS)
         }
         Commands::Check { path } => {
@@ -151,6 +192,10 @@ fn run() -> Result<ExitCode> {
         Commands::CrapBaseline { path } => {
             let cfg = load_config(&path)?;
             floors::record_baseline(&path, &cfg)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Version => {
+            print_version();
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -223,37 +268,45 @@ fn check(cfg: &TopsConfig) -> Result<()> {
     Ok(())
 }
 
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "already in this crate when the strict table was turned on"
-)]
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
-fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) -> Result<()> {
-    let crate_name = name
-        .map(str::to_string)
-        .or_else(|| dir_name(dir))
-        .unwrap_or_else(|| "unnamed".to_string());
+fn init(args: &InitArgs) -> Result<()> {
+    let (dir, class, name) = (
+        args.path.as_path(),
+        args.class.as_str(),
+        args.name.as_deref(),
+    );
+    let (force, skills, laws) = (args.force, args.skills, args.laws);
+    let fallback = dir_name(dir).unwrap_or_else(|| "unnamed".to_string());
+    let rustc = lock_rustc(dir)?;
+    let plan = init_meta::plan(&init_meta::Request {
+        dir,
+        name_flag: name,
+        dir_name: &fallback,
+        lock_rustc: &rustc,
+        laws,
+    })?;
+    let crate_name = plan.name.as_str();
+    let msrv = plan.settings.msrv.as_deref().unwrap_or(&rustc);
     // An unknown class fails here, before any directory or file is written.
-    let yaml = with_init_exemptions(&profiles::profile_yaml(class, &crate_name)?);
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "already in this crate when the strict table was turned on"
-    )]
-    let msrv = facts::parse_yaml(&yaml)
-        .ok()
-        .and_then(|doc| doc["crate"]["msrv"].as_str().map(str::to_string))
-        .ok_or_else(|| anyhow!("the {class} profile has no crate.msrv"))?;
+    let yaml = with_init_exemptions(&profiles::profile_yaml_with(
+        class,
+        crate_name,
+        &plan.settings,
+    )?);
 
     // The directory named on the command line may sit behind a link; the
     // directories below it may not, and `write_file` makes those.
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     write_file(dir, "rust-tops.yaml", &yaml, force)?;
-    write_file(
-        dir,
-        "rust-toolchain.toml",
-        &profiles::rust_toolchain_toml(&msrv),
-        force,
-    )?;
+    write_file(dir, "rust-tops.lock", profiles::LOCK_TEMPLATE, force)?;
+    if plan.write_toolchain {
+        write_file(
+            dir,
+            "rust-toolchain.toml",
+            &profiles::rust_toolchain_toml(msrv),
+            force,
+        )?;
+    }
     write_file(dir, "AGENTS.md", profiles::AGENTS_MD, force)?;
     write_file(
         dir,
@@ -272,14 +325,17 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
         &profiles::workflow_yml(class),
         force,
     )?;
-    write_file(dir, laws::PACK, profiles::LAWS_BEND, force)?;
-    write_file(dir, laws::LOCK, profiles::BEND_LOCK, force)?;
-    if write_file(dir, laws::FETCH, profiles::FETCH_BEND_SH, force)? {
-        make_executable(&dir.join(laws::FETCH))?;
+    if laws {
+        write_file(dir, laws::PACK, profiles::LAWS_BEND, force)?;
+        write_file(dir, laws::LOCK, profiles::BEND_LOCK, force)?;
+        if write_file(dir, laws::FETCH, profiles::FETCH_BEND_SH, force)? {
+            make_executable(&dir.join(laws::FETCH))?;
+        }
     }
     if skills {
         skills::emit(dir, force)?;
     }
+    print_init_notes(&plan, &yaml);
 
     println!(
         "initialized rust-tops for {crate_name} ({class}) in {}",
@@ -287,6 +343,38 @@ fn init(dir: &Path, class: &str, name: Option<&str>, force: bool, skills: bool) 
     );
     println!("next: cargo tops check && cargo tops gate");
     Ok(())
+}
+
+/// The `rustc` pin that stands in for an absent `rust-version`: the lock
+/// already in `dir`, else the template `init` writes.
+fn lock_rustc(dir: &Path) -> Result<String> {
+    let there = fs::read_to_string(dir.join("rust-tops.lock")).ok();
+    there
+        .as_deref()
+        .and_then(init_meta::lock_rustc)
+        .or_else(|| init_meta::lock_rustc(profiles::LOCK_TEMPLATE))
+        .ok_or_else(|| anyhow!("rust-tops.lock has no [tools] rustc"))
+}
+
+/// One line for each value `init` chose without the crate saying it.
+fn print_init_notes(plan: &init_meta::Plan, yaml: &str) {
+    for note in &plan.notes {
+        println!("{note}");
+    }
+    let policy = facts::parse_yaml(yaml)
+        .ok()
+        .and_then(|doc| {
+            doc.pointer("/crate/unsafe_policy")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if let Some(note) = init_meta::unsafe_note(&plan.settings, &policy) {
+        println!("{note}");
+    }
+    if !plan.write_toolchain {
+        println!("note: rust-toolchain.toml not written; the crate or a directory above it, up to the workspace root, already pins a toolchain");
+    }
 }
 
 /// The last path component of `dir`, which need not exist yet.
@@ -1141,7 +1229,8 @@ fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
                 "-D",
                 "warnings",
             ]),
-            tool(&["cargo", "deny", "check"]),
+            // `security-advisory` runs `advisories`; each kind runs once.
+            tool(&["cargo", "deny", "check", "bans", "licenses", "sources"]),
         ],
         "unit" | "integration" => vec![tool(&[
             "cargo",
@@ -1866,6 +1955,23 @@ mod tests {
             reason = "already in this crate when the strict table was turned on"
         )]
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn version_text_names_package_protocol_and_each_tools_pin() {
+        let pkg = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            version_text(None),
+            format!("cargo-tops {pkg}\nprotocol 1.2.0\ntool pins: none (no ./rust-tops.lock)\n")
+        );
+        let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
+        assert_eq!(
+            version_text(Some(lock)),
+            format!(
+                "cargo-tops {pkg}\nprotocol 1.2.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+            )
+        );
+        assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));
     }
 
     /// The path walk `write_file` takes off Unix, run here: it makes the

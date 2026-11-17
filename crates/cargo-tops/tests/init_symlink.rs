@@ -135,7 +135,7 @@ fn a_regular_file_is_skipped_or_rewritten_with_force() {
         "mine\n"
     );
 
-    let (ok, text) = init(&repo, &["--force"]);
+    let (ok, text) = init(&repo, &["--force", "--laws"]);
     assert!(ok, "{text}");
     assert!(
         text.contains(&format!("wrote {}", repo.join("AGENTS.md").display())),

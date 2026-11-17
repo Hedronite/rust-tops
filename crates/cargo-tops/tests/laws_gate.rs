@@ -42,6 +42,11 @@ const CARGO_STUB: &str = r#"#!/bin/sh
 if [ -n "${CARGO_STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$CARGO_STUB_LOG"
 fi
+# `init` writes rust-tops.lock, which pins cargo-crap 0.9.0.
+if [ "$*" = "crap --version" ]; then
+  echo 'cargo-crap 0.9.0'
+  exit 0
+fi
 prev=
 for arg in "$@"; do
   case $prev in
@@ -182,6 +187,15 @@ fn stub(bin: &Path, name: &str, body: &str) {
 /// A fresh `cargo tops init --class <class>` repo, with Cargo and plugin
 /// stubs on the fixture's `bin`.
 fn init_fixture(name: &str, class: &str) -> Fixture {
+    init_with(name, class, &[])
+}
+
+/// `init --laws`: the Bend kit is on disk and the laws layer is on.
+fn init_fixture_laws(name: &str, class: &str) -> Fixture {
+    init_with(name, class, &["--laws"])
+}
+
+fn init_with(name: &str, class: &str, extra: &[&str]) -> Fixture {
     let root = std::env::temp_dir().join(format!("cargo-tops-laws-{name}-{}", std::process::id()));
     #[expect(
         clippy::let_underscore_must_use,
@@ -200,6 +214,7 @@ fn init_fixture(name: &str, class: &str) -> Fixture {
     let init = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args(["init", "--class", class, "--name", "fixture", "--path"])
         .arg(&fixture.repo)
+        .args(extra)
         .output()
         .expect("spawn cargo-tops init");
     assert!(
@@ -225,7 +240,7 @@ fn fixture(name: &str) -> Fixture {
 /// A library-core repo with only the `keep` layers on, whatever `init`
 /// wrote for them.
 fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
-    let fixture = init_fixture(name, "library-core");
+    let fixture = init_fixture_laws(name, "library-core");
     edit_yaml(&fixture, |doc| {
         for layer in doc["layers"].as_array_mut().expect("layers") {
             let id = layer["id"].as_str().expect("layer id").to_string();
@@ -248,17 +263,6 @@ fn edit_yaml(fixture: &Fixture, edit: impl FnOnce(&mut serde_json::Value)) {
         reason = "already in this crate when the strict table was turned on"
     )]
     fs::write(&path, json + "\n").expect("write rust-tops.yaml");
-}
-
-/// Enable layer `id` as `init` wrote it.
-fn turn_on(fixture: &Fixture, id: &str) {
-    edit_yaml(fixture, |doc| {
-        for layer in doc["layers"].as_array_mut().expect("layers") {
-            if layer["id"] == id {
-                layer["enabled"] = serde_json::Value::Bool(true);
-            }
-        }
-    });
 }
 
 fn yaml_doc(fixture: &Fixture) -> serde_json::Value {
@@ -729,8 +733,12 @@ fn expect_fresh_init_with_laws_passes(
     path: impl Fn(&Path) -> OsString,
     stubbed: bool,
 ) {
-    let fixture = init_fixture(&format!("fresh-laws-{class}-{stubbed}"), class);
-    turn_on(&fixture, "laws");
+    let fixture = init_fixture_laws(&format!("fresh-laws-{class}-{stubbed}"), class);
+    assert_eq!(
+        layer(&yaml_doc(&fixture), "laws")["enabled"],
+        true,
+        "{class}"
+    );
     adopt(&fixture, Origin::None);
     if stubbed {
         stub_bend(&fixture);
@@ -786,10 +794,15 @@ fn expect_fresh_init_with_laws_passes(
 
 #[test]
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
-fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
-    let fixture = fixture("init");
+fn init_writes_the_laws_layer_off_the_bend_kit_only_with_laws_and_the_toolchain_pin() {
     let fresh = init_fixture("init-fresh", "library-core");
+    let with_laws = init_fixture_laws("init-laws", "library-core");
     let doc = yaml_doc(&fresh);
+    for rel in ["LAWS.bend", "laws/bend.lock", "scripts/fetch-bend.sh"] {
+        assert!(!fresh.repo.join(rel).exists(), "plain init wrote {rel}");
+    }
+    assert!(fresh.repo.join("rust-tops.lock").is_file());
+    assert_eq!(layer(&yaml_doc(&with_laws), "laws")["enabled"], true);
     #[expect(
         clippy::let_underscore_must_use,
         reason = "already in this crate when the strict table was turned on"
@@ -806,7 +819,10 @@ fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_803_16 = doc["crate"]["msrv"].clone();
-    assert_eq!(tops_idx_803_16, "1.88");
+    assert_eq!(
+        tops_idx_803_16, "1.99.1",
+        "a bare directory takes the lock rustc"
+    );
     let laws = layer(&doc, "laws");
     assert_eq!(
         (&laws["enabled"], &laws["tier"], &laws["runner"]),
@@ -839,9 +855,12 @@ fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
         "init wrote an exemption"
     );
     for rel in ["LAWS.bend", "laws/bend.lock", "scripts/fetch-bend.sh"] {
-        assert!(fixture.repo.join(rel).is_file(), "init did not write {rel}");
+        assert!(
+            with_laws.repo.join(rel).is_file(),
+            "init --laws did not write {rel}"
+        );
     }
-    let toolchain: toml::Table = fs::read_to_string(fixture.repo.join("rust-toolchain.toml"))
+    let toolchain: toml::Table = fs::read_to_string(with_laws.repo.join("rust-toolchain.toml"))
         .expect("rust-toolchain.toml")
         .parse()
         .expect("toml");
@@ -850,11 +869,11 @@ fn init_writes_the_laws_layer_off_the_bend_kit_and_the_toolchain_pin() {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_845_16 = toolchain["toolchain"]["channel"].clone();
-    assert_eq!(tops_idx_845_16.as_str(), Some("1.88"));
+    assert_eq!(tops_idx_845_16.as_str(), Some("1.99.1"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(fixture.repo.join("scripts/fetch-bend.sh"))
+        let mode = fs::metadata(with_laws.repo.join("scripts/fetch-bend.sh"))
             .expect("stat")
             .permissions()
             .mode();
@@ -1880,7 +1899,6 @@ fn a_missing_cargo_kani_fails_in_range_and_not_at_tier_1() {
     // `--max-tier 1`: Kani is missing and the gate still passes.
     let fresh = init_fixture("no-kani-fresh", "library-core");
     adopt(&fresh, Origin::None);
-    stub_bend(&fresh);
     fs::remove_file(fresh.bin.join("cargo-kani")).expect("remove stub");
     let (out, text) = gate(&fresh, path_with_only_stubs(&fresh.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -1994,6 +2012,7 @@ fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
 #[test]
 fn without_a_rust_tops_lock_the_crap_layer_asks_no_version() {
     let fixture = fixture_with("crap-no-lock", &["coverage", "crap"]);
+    fs::remove_file(fixture.repo.join("rust-tops.lock")).expect("init wrote a lock");
     stub_crap_version(&fixture, "cargo-crap 0.5.0");
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -2025,6 +2044,7 @@ fn a_rust_tops_lock_that_cannot_be_read_or_parsed_stops_the_gate() {
         let fixture = fixture_with(&format!("crap-pin-bad-lock-{how}"), &["coverage", "crap"]);
         let lock = fixture.repo.join("rust-tops.lock");
         if how == "dir" {
+            fs::remove_file(&lock).expect("init wrote a lock");
             fs::create_dir(&lock).expect("mkdir lock");
         } else {
             fs::write(&lock, "[tools\n").expect("write lock");
@@ -2053,6 +2073,8 @@ fn without_the_crap_layer_the_gate_does_not_read_the_pin() {
 #[test]
 fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
     let fixture = fixture_with("tool-lock-honesty", &["static-lint", "laws"]);
+    // No rust-tops.lock before the commit, so a lock written later is untracked.
+    fs::remove_file(fixture.repo.join("rust-tops.lock")).expect("init wrote a lock");
     adopt(&fixture, Origin::None);
     stub_bend(&fixture);
     let honesty = |fixture: &Fixture| {
@@ -2060,7 +2082,7 @@ fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {
         let entry = law(&cases_json(fixture), "lock_honesty").clone();
         (out.status.code(), entry, text)
     };
-    // No rust-tops.lock: `init` writes none, and that is no drift.
+    // No rust-tops.lock: that is no drift.
     let (code, entry, text) = honesty(&fixture);
     assert_eq!(code, Some(0), "{text}");
     #[expect(

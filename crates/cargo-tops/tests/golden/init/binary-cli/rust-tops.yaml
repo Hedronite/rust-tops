@@ -12,14 +12,11 @@ agent:
     - "mutants-diff"
 crate:
   class: "binary-cli"
-  edition: "2024"
-  hot_paths:
-    - "src/varint.rs::encode"
-    - "src/varint.rs::decode"
-    - "src/frame.rs::parse_frame"
-  msrv: "1.88"
+  edition: "2021"
+  hot_paths: []
+  msrv: "1.95"
   name: "golden-crate"
-  unsafe_policy: "allow-documented"
+  unsafe_policy: "forbid"
 density:
   allow_long_table_functions: true
   max_fn_cc: 8
