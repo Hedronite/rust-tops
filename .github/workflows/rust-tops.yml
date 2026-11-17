@@ -64,8 +64,13 @@ jobs:
           tool: cargo-deny@0.18.9
       - run: cargo deny check
 
-  nextest:
-    runs-on: ubuntu-latest
+  # The Linux suite runs once, inside tops-gate (unit, integration and doc
+  # layers share its coverage run). This lane keeps the macOS build and
+  # tests honest: the kit has cfg(unix) paths and a Darwin-only dyld history.
+  nextest-macos:
+    runs-on: macos-15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -74,28 +79,60 @@ jobs:
         with:
           toolchain: 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # {SYSDEPS}
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: nextest@0.9.145
-      # Instance-only. The drop-in floor does not install Nushell.
-      # Official release tarball, version and sha256 pinned. No floating tag.
+      # Instance-only. Official release tarball, version and sha256 pinned.
       - name: Install Nushell 0.108.0
         run: |
           set -euo pipefail
           version=0.108.0
-          archive="nu-${version}-x86_64-unknown-linux-gnu.tar.gz"
+          archive="nu-${version}-aarch64-apple-darwin.tar.gz"
           url="https://github.com/nushell/nushell/releases/download/${version}/${archive}"
           curl --fail --silent --show-error --location --output "${archive}" "${url}"
-          echo "f0daaa0256b0f7dd5f4d9925b4d5522d8de5e947ed9ad64a43526e5cffeb05df  ${archive}" | sha256sum --check
+          echo "21a11b4eb804f4bb7ce67bb18d90d227824d271e19e9f88da15733691888b916  ${archive}" | shasum -a 256 --check
           tar --extract --gzip --file "${archive}"
           mkdir -p "${HOME}/.local/bin"
-          install -m 0755 "nu-${version}-x86_64-unknown-linux-gnu/nu" "${HOME}/.local/bin/nu"
+          install -m 0755 "nu-${version}-aarch64-apple-darwin/nu" "${HOME}/.local/bin/nu"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
       - run: cargo nextest run --workspace --all-features --profile ci
         env:
           RUST_TOPS_REQUIRE_NU: "1"
-      - run: cargo test --doc --workspace --all-features
+
+  # actionlint over the workflows and the drop-ins. The job files under
+  # config/drop-in/jobs hold bare job maps, so each is wrapped in a trigger
+  # and a `jobs:` key before it is linted.
+  workflow-lint:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install actionlint 1.7.12
+        run: |
+          set -euo pipefail
+          version=1.7.12
+          archive="actionlint_${version}_linux_amd64.tar.gz"
+          url="https://github.com/rhysd/actionlint/releases/download/v${version}/${archive}"
+          curl --fail --silent --show-error --location --output "${archive}" "${url}"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${archive}" | sha256sum --check
+          mkdir -p "${RUNNER_TEMP}/actionlint"
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}/actionlint" actionlint
+          echo "${RUNNER_TEMP}/actionlint" >> "${GITHUB_PATH}"
+      - name: Lint workflows and drop-in workflows
+        run: |
+          set -euo pipefail
+          actionlint .github/workflows/*.yml config/drop-in/*.yml
+      - name: Lint drop-in job files
+        run: |
+          set -euo pipefail
+          wrapped="$(mktemp -d)"
+          for file in config/drop-in/jobs/*.yml; do
+            { printf "on: push\njobs:\n"; cat "${file}"; } > "${wrapped}/$(basename "${file}")"
+          done
+          actionlint "${wrapped}"/*.yml
 
   msrv:
     runs-on: ubuntu-latest
@@ -151,47 +188,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # {SYSDEPS if contains(matrix.features, '{FFI_FEATURE}')}
       - run: cargo check -p ${{ matrix.package }} ${{ matrix.features }} --locked
-
-  coverage-crap:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
-        with:
-          toolchain: 1.99.1
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # {SYSDEPS}
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: nextest@0.9.145
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: cargo-llvm-cov@0.9.1
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: cargo-crap@0.9.0
-          fallback: none
-      - run: |
-          mkdir -p target/coverage
-          cargo llvm-cov nextest --workspace --all-features \
-            --lcov --output-path target/coverage/lcov.info
-          test -s target/coverage/lcov.info
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: lcov
-          path: target/coverage/lcov.info
-          if-no-files-found: error
-      - run: |
-          cargo crap --lcov target/coverage/lcov.info --format json --output target/crap.json
-          test -s target/crap.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: crap
-          path: target/crap.json
-          if-no-files-found: error
 
   # Required when branch protection lists it. Wall time on a cold
   # `bend PROOF.bend --verdict` was 21.87s (see bend-verdict), under 5 min.
