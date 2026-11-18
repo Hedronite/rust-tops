@@ -60,6 +60,33 @@ to = [
 ]
 
 [[copy]]
+from = "crates/cargo-tops/templates/skills/rust-tops-style/SKILL.md"
+to = [
+    ".agents/skills/rust-tops-style/SKILL.md",
+    ".claude/skills/rust-tops-style/SKILL.md",
+    ".cursor/skills/rust-tops-style/SKILL.md",
+    ".grok/skills/rust-tops-style/SKILL.md",
+]
+
+[[copy]]
+from = "crates/cargo-tops/templates/skills/rust-tops-style/rust-tops-style.nu"
+to = [
+    ".agents/skills/rust-tops-style/rust-tops-style.nu",
+    ".claude/skills/rust-tops-style/rust-tops-style.nu",
+    ".cursor/skills/rust-tops-style/rust-tops-style.nu",
+    ".grok/skills/rust-tops-style/rust-tops-style.nu",
+]
+
+[[copy]]
+from = "crates/cargo-tops/templates/skills/rust-tops-style/rules.toml"
+to = [
+    ".agents/skills/rust-tops-style/rules.toml",
+    ".claude/skills/rust-tops-style/rules.toml",
+    ".cursor/skills/rust-tops-style/rules.toml",
+    ".grok/skills/rust-tops-style/rules.toml",
+]
+
+[[copy]]
 from = "crates/cargo-tops/templates/drop-in/cargo-crap.toml"
 to = ["config/drop-in/cargo-crap.toml", ".cargo-crap.toml"]
 

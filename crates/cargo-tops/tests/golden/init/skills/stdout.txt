@@ -33,6 +33,18 @@ wrote {path}/.cursor/skills/rust-tops-review/SKILL.md
 wrote {path}/.cursor/skills/rust-tops-review/rust-tops-review.nu
 wrote {path}/.grok/skills/rust-tops-review/SKILL.md
 wrote {path}/.grok/skills/rust-tops-review/rust-tops-review.nu
+wrote {path}/.agents/skills/rust-tops-style/SKILL.md
+wrote {path}/.agents/skills/rust-tops-style/rust-tops-style.nu
+wrote {path}/.agents/skills/rust-tops-style/rules.toml
+wrote {path}/.claude/skills/rust-tops-style/SKILL.md
+wrote {path}/.claude/skills/rust-tops-style/rust-tops-style.nu
+wrote {path}/.claude/skills/rust-tops-style/rules.toml
+wrote {path}/.cursor/skills/rust-tops-style/SKILL.md
+wrote {path}/.cursor/skills/rust-tops-style/rust-tops-style.nu
+wrote {path}/.cursor/skills/rust-tops-style/rules.toml
+wrote {path}/.grok/skills/rust-tops-style/SKILL.md
+wrote {path}/.grok/skills/rust-tops-style/rust-tops-style.nu
+wrote {path}/.grok/skills/rust-tops-style/rules.toml
 wrote {path}/CLAUDE.md
 wrote {path}/docs/REVIEW.md
 initialized rust-tops for golden-crate (library-core) in {path}

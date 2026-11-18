@@ -18,7 +18,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NAMES: &[&str] = &["rust-tops-adopt", "rust-tops-gate", "rust-tops-review"];
+const NAMES: &[&str] = &[
+    "rust-tops-adopt",
+    "rust-tops-gate",
+    "rust-tops-review",
+    "rust-tops-style",
+];
+
+/// Data files a skill's script reads beside itself.
+fn data_files(name: &str) -> &'static [&'static str] {
+    if name == "rust-tops-style" {
+        &["rules.toml"]
+    } else {
+        &[]
+    }
+}
 
 /// Every harness tree `init --skills` writes. Each file is a regular file.
 const COPIES: &[&str] = &[
@@ -241,7 +255,9 @@ fn has_word(text: &str, word: &str) -> bool {
 /// Fail when a harness copy is a symlink or its bytes differ from the template.
 fn assert_skill_copies(root: &Path, templates: &Path) {
     for name in NAMES {
-        for file in ["SKILL.md", &format!("{name}.nu")] {
+        let mut files = vec!["SKILL.md".to_string(), format!("{name}.nu")];
+        files.extend(data_files(name).iter().map(|f| (*f).to_string()));
+        for file in &files {
             let expected = fs::read(templates.join(name).join(file))
                 .unwrap_or_else(|err| panic!("template {name}/{file}: {err}"));
             for copy in COPIES {
