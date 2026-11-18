@@ -142,12 +142,88 @@
     ],
     "judgment": [
       {
+        "id": "API-16",
+        "rule": "A trait that outsiders should only use, never implement, is sealed."
+      },
+      {
+        "id": "API-17",
+        "rule": "A library follows the API rules strictly; an application keeps its code plain."
+      },
+      {
+        "id": "API-4",
+        "rule": "A function must not take ownership and then clone, or borrow and then clone to get ownership."
+      },
+      {
+        "id": "API-5",
+        "rule": "impl Into parameters earn their cost only in library entry points that are called often."
+      },
+      {
+        "id": "API-6",
+        "rule": "A library function returns an iterator when it would otherwise build a Vec just to hand it over."
+      },
+      {
+        "id": "API-7",
+        "rule": "Public fields, Rc, RefCell, Arc and third-party types do not leak through a public signature."
+      },
+      {
+        "id": "CONC-3",
+        "rule": "Callers' closures are not run while a lock is held, and a guard is not returned."
+      },
+      {
+        "id": "DOC-5",
+        "rule": "A doc comment opens with a one-line summary that adds information beyond the name."
+      },
+      {
+        "id": "ERR-5",
+        "rule": "Every public error type implements Display and Error, and is Send, Sync and 'static."
+      },
+      {
+        "id": "ERR-6",
+        "rule": "Error text names the file, line or value that failed, and the underlying cause stays reachable."
+      },
+      {
+        "id": "IDIOM-10",
+        "rule": "Pick match or a combinator by which reads better; use a loop when a chain gets long."
+      },
+      {
         "id": "OWN-2",
         "rule": "No clone exists only to quiet the borrow checker."
       },
       {
+        "id": "PANIC-4",
+        "rule": "Arithmetic on outside values must not overflow into a panic or a wrong answer."
+      },
+      {
         "id": "PANIC-5",
         "rule": "Each expect, assert and panic message carries the values that made it fire."
+      },
+      {
+        "id": "PANIC-6",
+        "rule": "An expected failure is returned as an error, never raised as a panic or caught with catch_unwind."
+      },
+      {
+        "id": "PANIC-7",
+        "rule": "A Drop impl never panics, blocks or has a failure path of its own."
+      },
+      {
+        "id": "TEST-1",
+        "rule": "Logic that decides something has a test that would fail if the logic broke."
+      },
+      {
+        "id": "TEST-2",
+        "rule": "A test checks behavior, not a copy of the constants it was built from."
+      },
+      {
+        "id": "TRAIT-3",
+        "rule": "A hand-written Ord agrees with the PartialEq and Hash on the same type."
+      },
+      {
+        "id": "TRAIT-4",
+        "rule": "Public types derive the common traits that fit them: Clone, Eq, Hash, Default and so on."
+      },
+      {
+        "id": "UNSAFE-5",
+        "rule": "A safe function must not allow undefined behavior through any sequence of safe calls."
       }
     ]
   }
