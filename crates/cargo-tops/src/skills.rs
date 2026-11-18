@@ -60,6 +60,12 @@ const SKILLS: &[Skill] = &[
             include_str!("../templates/skills/rust-tops-style/rules.toml"),
         )],
     },
+    Skill {
+        name: "rust-tops-port",
+        skill_md: include_str!("../templates/skills/rust-tops-port/SKILL.md"),
+        script: include_str!("../templates/skills/rust-tops-port/rust-tops-port.nu"),
+        data: &[],
+    },
 ];
 
 #[expect(
