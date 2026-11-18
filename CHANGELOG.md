@@ -13,6 +13,21 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 
 ## [Unreleased]
 
+### Added
+
+- Skills from BeautifulRust v1.5.0, rewritten in our own words and credited in `NOTICE` (MIT). Nushell 0.108.0 is their required runtime (`[tools] nushell` in `rust-tops.lock`). `cargo tops init --skills` now writes five skills and the rule catalog, and prints a line naming the Nushell requirement.
+  - Rule catalog ([#40](https://github.com/Hedronite/rust-tops/pull/40)): `rules.toml` with 75 rules, each an ID and a kind (`lint`, `probe` or `judgment`), and `docs/beautifulrust-map.md`, which maps the upstream bullets to rule IDs or to `dropped: <reason>`.
+  - Lint proof ([#41](https://github.com/Hedronite/rust-tops/pull/41)): a test proves every lint rule in the catalog is a lint clippy knows and fires on a probe line.
+  - `rust-tops-style` ([#42](https://github.com/Hedronite/rust-tops/pull/42)): `check [--path] [--base]` runs clippy for the lint rules and twelve Nushell probes, prints sorted JSON findings with the catalog's fix text, and keeps only changed lines with `--base`.
+  - `rust-tops-port` ([#44](https://github.com/Hedronite/rust-tops/pull/44)): `inventory` lists the original tests of a C, C++, Python, Go, JavaScript or TypeScript tree, and `verify` fails when an original test has no passing Rust counterpart. The catalog gains the port rule PORT-13.
+  - `rust-tops-review` ([#45](https://github.com/Hedronite/rust-tops/pull/45)): the new `style` command gives the style findings on the review range, and `answers` checks that every judgment rule was answered. `files` and `diff` are unchanged byte for byte.
+  - Eval regression ([#46](https://github.com/Hedronite/rust-tops/pull/46)): fixtures that check the skills against upstream's eval cases.
+
+### Changed
+
+- The `AGENTS.md` template (and its copies) no longer calls the upstream review skill an optional style pass; `rust-tops-review` runs it.
+- `.gitignore` lists `/mutants.out*`, the output the gate's mutation layer leaves in the repository root.
+
 ## [0.4.0] - 2026-11-17
 
 **Breaking 0.x minor.** `cargo tops gate` now fails on the coverage floors and the CRAP threshold and ratchet that `rust-tops.yaml` names. Protocol plane moves to **1.2.0** (prose and one optional schema key; no default threshold and no part of the CRAP formula changed). Package plane moves to **0.4.0**.
