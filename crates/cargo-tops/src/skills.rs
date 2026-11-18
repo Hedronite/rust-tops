@@ -28,6 +28,8 @@ struct Skill {
     name: &'static str,
     skill_md: &'static str,
     script: &'static str,
+    /// Extra files the script reads beside itself: (file name, contents).
+    data: &'static [(&'static str, &'static str)],
 }
 
 const SKILLS: &[Skill] = &[
@@ -35,16 +37,28 @@ const SKILLS: &[Skill] = &[
         name: "rust-tops-adopt",
         skill_md: include_str!("../templates/skills/rust-tops-adopt/SKILL.md"),
         script: include_str!("../templates/skills/rust-tops-adopt/rust-tops-adopt.nu"),
+        data: &[],
     },
     Skill {
         name: "rust-tops-gate",
         skill_md: include_str!("../templates/skills/rust-tops-gate/SKILL.md"),
         script: include_str!("../templates/skills/rust-tops-gate/rust-tops-gate.nu"),
+        data: &[],
     },
     Skill {
         name: "rust-tops-review",
         skill_md: include_str!("../templates/skills/rust-tops-review/SKILL.md"),
         script: include_str!("../templates/skills/rust-tops-review/rust-tops-review.nu"),
+        data: &[],
+    },
+    Skill {
+        name: "rust-tops-style",
+        skill_md: include_str!("../templates/skills/rust-tops-style/SKILL.md"),
+        script: include_str!("../templates/skills/rust-tops-style/rust-tops-style.nu"),
+        data: &[(
+            "rules.toml",
+            include_str!("../templates/skills/rust-tops-style/rules.toml"),
+        )],
     },
 ];
 
@@ -71,6 +85,9 @@ fn write_skill(dir: &Path, skill: &Skill, force: bool) -> Result<()> {
         let skill_dir = Path::new(root).join(skill.name);
         write_file(dir, skill_dir.join("SKILL.md"), skill.skill_md, force)?;
         write_file(dir, skill_dir.join(&script), skill.script, force)?;
+        for (name, body) in skill.data {
+            write_file(dir, skill_dir.join(name), body, force)?;
+        }
     }
     Ok(())
 }
