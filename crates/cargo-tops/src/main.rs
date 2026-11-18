@@ -334,6 +334,9 @@ fn init(args: &InitArgs) -> Result<()> {
     }
     if skills {
         skills::emit(dir, force)?;
+        println!(
+            "note: the skills run on Nushell (nu) 0.108.0, a required dependency; see the README"
+        );
     }
     print_init_notes(&plan, &yaml);
 

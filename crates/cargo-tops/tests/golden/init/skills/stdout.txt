@@ -55,5 +55,6 @@ wrote {path}/.grok/skills/rust-tops-port/SKILL.md
 wrote {path}/.grok/skills/rust-tops-port/rust-tops-port.nu
 wrote {path}/CLAUDE.md
 wrote {path}/docs/REVIEW.md
+note: the skills run on Nushell (nu) 0.108.0, a required dependency; see the README
 initialized rust-tops for golden-crate (library-core) in {path}
 next: cargo tops check && cargo tops gate
