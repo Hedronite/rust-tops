@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "command": "git -C . diff base...HEAD",
+  "data": {
+    "base": "base",
+    "includes_worktree": false,
+    "read_diff": true,
+    "untracked": [],
+    "diff": "diff --git a/a.rs b/a.rs\nindex ca05282..83021ca 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1,2 @@\n fn a() {}\n+fn b() {}\ndiff --git a/c.rs b/c.rs\nnew file mode 100644\nindex 0000000..afcf5ac\n--- /dev/null\n+++ b/c.rs\n@@ -0,0 +1 @@\n+fn c() {}\n",
+    "doc": "docs/REVIEW.md",
+    "rules": [
+      "The reviewer did not write the diff.",
+      "Write the inputs you will run before reading the implementation.",
+      "Run those inputs. Compare results with the base commit.",
+      "Say what you executed. A green test suite is not evidence.",
+      "High-risk changes (business rules, thresholds, scoring, pricing, or a validation gate) get a second reviewer on a different model.",
+      "Review every fix commit again.",
+      "Each finding is BLOCKING or NIT, with input, expected, and actual.",
+      "Report N of the K found so far.",
+      "End with exactly one line: VERDICT: APPROVE or VERDICT: CHANGES.",
+      "Follow docs/REVIEW.md. This script does not emit a verdict."
+    ]
+  }
+}

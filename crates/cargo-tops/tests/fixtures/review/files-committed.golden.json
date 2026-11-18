@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "command": "git -C . diff --name-only base...HEAD",
+  "data": {
+    "base": "base",
+    "includes_worktree": false,
+    "files": [
+      "a.rs",
+      "c.rs"
+    ],
+    "committed": [
+      "a.rs",
+      "c.rs"
+    ],
+    "uncommitted": [],
+    "untracked": [],
+    "read_diff": false,
+    "doc": "docs/REVIEW.md",
+    "next": "Write the inputs you will run. Then run: nu rust-tops-review.nu diff",
+    "rules": [
+      "The reviewer did not write the diff.",
+      "Write the inputs you will run before reading the implementation.",
+      "Run those inputs. Compare results with the base commit.",
+      "Say what you executed. A green test suite is not evidence.",
+      "High-risk changes (business rules, thresholds, scoring, pricing, or a validation gate) get a second reviewer on a different model.",
+      "Review every fix commit again.",
+      "Each finding is BLOCKING or NIT, with input, expected, and actual.",
+      "Report N of the K found so far.",
+      "End with exactly one line: VERDICT: APPROVE or VERDICT: CHANGES.",
+      "Follow docs/REVIEW.md. This script does not emit a verdict."
+    ]
+  }
+}
