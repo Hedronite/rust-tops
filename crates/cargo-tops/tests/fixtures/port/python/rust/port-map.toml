@@ -1,0 +1,15 @@
+[port]
+lang = "python"
+from = "../original"
+
+[[test]]
+original = "test_wc.py::test_counts_words"
+rust = "tests::test_counts_words"
+
+[[test]]
+original = "test_wc.py::test_empty"
+rust = "tests::test_empty"
+
+[[test]]
+original = "test_wc.py::test_first_of_a_tie_wins"
+rust = "tests::test_first_of_a_tie_wins"

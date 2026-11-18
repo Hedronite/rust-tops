@@ -17,11 +17,12 @@ use std::process::Command;
 
 const TEMPLATES: &str = "crates/cargo-tops/templates";
 const HARNESSES: [&str; 4] = [".agents", ".claude", ".cursor", ".grok"];
-const SKILLS: [&str; 4] = [
+const SKILLS: [&str; 5] = [
     "rust-tops-adopt",
     "rust-tops-gate",
     "rust-tops-review",
     "rust-tops-style",
+    "rust-tops-port",
 ];
 
 fn workspace() -> PathBuf {
@@ -249,14 +250,14 @@ fn a_missing_copy_fails_the_check_and_sync_writes_it() {
         "{text}"
     );
     assert!(
-        text.contains(&format!("10 of {total} copies differ")),
+        text.contains(&format!("12 of {total} copies differ")),
         "{text}"
     );
 
     let (code, text) = sync(&root, false);
     assert_eq!(code, 0, "{text}");
     assert!(
-        text.contains(&format!("sync: wrote 10 of {total} copies")),
+        text.contains(&format!("sync: wrote 12 of {total} copies")),
         "{text}"
     );
     assert!(root.join(".grok/skills/rust-tops-gate/SKILL.md").is_file());
@@ -697,7 +698,7 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         assert_ne!(dest, "deny.toml");
         assert_ne!(dest, "rust-toolchain.toml");
     }
-    assert_eq!(pairs.len(), 70);
+    assert_eq!(pairs.len(), 78);
 }
 
 /// A link at `config` that comes and goes while sync writes

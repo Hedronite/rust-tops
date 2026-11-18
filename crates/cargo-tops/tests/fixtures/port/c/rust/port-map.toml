@@ -1,0 +1,15 @@
+[port]
+lang = "c"
+from = "../original"
+
+[[test]]
+original = "tests/test_lines.c::lines.unterminated_last_line"
+rust = "tests::lines_unterminated_last_line"
+
+[[test]]
+original = "tests/test_lines.c::test_no_lines"
+rust = "tests::test_no_lines"
+
+[[test]]
+original = "tests/test_lines.c::test_trailing_newline"
+rust = "tests::test_trailing_newline"
