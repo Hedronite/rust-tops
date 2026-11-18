@@ -422,3 +422,32 @@ fn a_member_crate_path_gives_the_same_findings_and_drops_the_rest() {
         "a run at the workspace root sees the other member"
     );
 }
+
+#[test]
+fn a_denied_warnings_group_still_reports_findings() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = fresh("deny");
+    fs::write(
+        dir.join("src/lib.rs"),
+        "#![deny(warnings)]\n\n/// Returns the first element.\npub fn first(v: &[i32]) -> i32 {\n    *v.first().unwrap()\n}\n",
+    )
+    .expect("lib.rs");
+    let doc = json(&check(&nu, &dir, &target, &[]));
+    assert_eq!(
+        doc.get("ok"),
+        Some(&serde_json::Value::Bool(false)),
+        "{doc}"
+    );
+    assert!(doc.get("error").is_none(), "no build error: {doc}");
+    let ids: Vec<String> = findings(&doc)
+        .iter()
+        .map(|f| field(f, "rule").as_str().unwrap_or("").to_string())
+        .collect();
+    let unwrap_id = catalog()
+        .iter()
+        .find(|r| rule_str(r, "check") == "clippy::unwrap_used")
+        .map(|r| rule_str(r, "id").to_string())
+        .expect("the catalog has a clippy::unwrap_used rule");
+    assert!(ids.contains(&"IDIOM-1".to_string()), "{ids:?}");
+    assert!(ids.contains(&unwrap_id), "{ids:?}");
+}

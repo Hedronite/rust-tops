@@ -1,6 +1,6 @@
 ---
 name: rust-tops-review
-description: Review a diff with the Rust-TOPS review gate in docs/REVIEW.md. Use for a fresh review, including each fix commit. Write inputs before reading the diff. Requires Nushell. Run the script.
+description: Review a diff with the Rust-TOPS review gate in docs/REVIEW.md, then run the style pass on the changed lines and answer the judgment rules. Use for a fresh review, including each fix commit. Requires Nushell. Run the script.
 ---
 
 # rust-tops-review
@@ -10,14 +10,30 @@ Nushell (`nu`) is required. The reviewer did not write the diff. Run the script.
 ```bash
 nu rust-tops-review.nu files [--base origin/main] [--path .] [--committed-only]
 nu rust-tops-review.nu diff [--base origin/main] [--path .] [--committed-only]
+nu rust-tops-review.nu style [--base origin/main] [--path .] [--committed-only]
+nu rust-tops-review.nu answers <file>
 ```
 
 Run `files` first and write the inputs you will execute. Then run `diff` and follow `docs/REVIEW.md`. The script does not emit a verdict.
 
-BeautifulRust's `rust-review` is an optional style pass beside this gate. The protocol review stays `docs/REVIEW.md`. Do not copy the BeautifulRust skill text.
+MIT. The style rules are distilled from BeautifulRust v1.5.0 (40db61c6), rewritten. Copyright (c) 2026 Morgan Linton. See LICENSES/BeautifulRust-MIT.txt.
 
-By default the range is `base...HEAD` plus the working tree. That is `git diff HEAD` for staged and unstaged changes to tracked files. Untracked paths are listed in `data.untracked` and are not part of the patch. `--committed-only` omits the working tree.
+## Style pass
 
-Each command prints JSON. `command` is the exact `git` argv. `ok` is false when `git` fails.
+1. Run `style`. It runs the style skill (`../rust-tops-style`) and keeps the findings on lines changed in the range. Fix each one, commit, and run it again.
+2. `data.judgment` lists the rules no tool decides, as `{id, rule}`. Answer every one against the diff.
+3. Write the answers as TOML, then run `answers <file>`:
+
+```toml
+[answers]
+"PANIC-4" = { status = "ok", note = "" }
+"PANIC-5" = { status = "finding", note = "src/lib.rs:40 expect names no value" }
+```
+
+`status` is `ok`, `finding` or `n/a`. A `finding` needs a note. `answers` gives `ok: false` for a missing or unknown ID. Report each `finding` as a review finding.
+
+By default the range is `base...HEAD` plus the working tree: tracked edits and untracked files. `--committed-only` omits the working tree.
+
+Each command prints JSON. `ok` is false when a command fails or, for `style` and `answers`, finds a problem. `style` needs a build. A wrong Nushell minor is `ok: false` with `nu <lock> required, found <version>`.
 
 If `nu` is not on PATH, there is no JSON. Treat `nu: command not found` as `{"ok":false,"command":"nu rust-tops-review.nu","error":"nu: command not found"}`.

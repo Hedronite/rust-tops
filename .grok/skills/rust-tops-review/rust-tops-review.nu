@@ -114,6 +114,163 @@ def "main diff" [--base: string = "origin/main", --path: string = ".", --committ
   } | to json
 }
 
+# --- style and answers --------------------------------------------------------
+# `style` runs the style skill's `check` and keeps the findings on lines changed
+# in the review range. `answers` checks that every review judgment ID was
+# answered. Neither prints a verdict. Same input gives the same bytes.
+
+const HERE = (path self | path dirname)
+const DEFAULT_NU = "0.108.0"
+const STATUSES = ["ok" "finding" "n/a"]
+
+def fail [command: string, error: string] {
+  {ok: false, command: $command, error: ($error | str trim | str substring 0..<400)} | to json
+}
+
+def minor [v: string] {
+  $v | split row "." | first 2 | str join "."
+}
+
+def find-lock [start: string] {
+  mut dir = ($start | path expand)
+  loop {
+    let cand = ($dir | path join "rust-tops.lock")
+    if ($cand | path exists) { return $cand }
+    let parent = ($dir | path dirname)
+    if $parent == $dir { return null }
+    $dir = $parent
+  }
+}
+
+# The error text when this nu is not the pinned minor, else null.
+def nu-mismatch [start: string] {
+  let lock = (find-lock $start)
+  let doc = if $lock == null { {} } else { try { open --raw $lock | from toml } catch { {} } }
+  let required = ($doc | get -o tools.nushell | default $DEFAULT_NU)
+  let found = (version | get version)
+  if (minor $required) != (minor $found) { $"nu ($required) required, found ($found)" } else { null }
+}
+
+def style-dir [] {
+  $HERE | path dirname | path join "rust-tops-style"
+}
+
+def catalog [] {
+  try { open (style-dir | path join "rules.toml") | get rule } catch { null }
+}
+
+# Rows {file, start, end} for the lines a unified diff adds or changes.
+def changed-ranges [diff: string] {
+  mut cur = ""
+  mut rows = []
+  for l in ($diff | lines) {
+    if ($l | str starts-with "+++ ") {
+      let p = ($l | str substring 4..)
+      $cur = if $p == "/dev/null" { "" } else if ($p | str starts-with "b/") { $p | str substring 2.. } else { $p }
+    } else if $cur != "" and ($l | str starts-with "@@ ") {
+      let m = ($l | parse --regex '^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,(?<count>\d+))? @@')
+      if not ($m | is-empty) {
+        let h = ($m | first)
+        let start = ($h.start | into int)
+        let count = if $h.count == "" { 1 } else { $h.count | into int }
+        if $count > 0 {
+          $rows = ($rows | append {file: $cur, start: $start, end: ($start + $count - 1)})
+        }
+      }
+    }
+  }
+  $rows
+}
+
+def in-ranges [f: record, ranges: list] {
+  $ranges | any {|r| $r.file == $f.file and $f.line >= $r.start and $f.line <= $r.end }
+}
+
+def "main style" [--base: string = "origin/main", --path: string = ".", --committed-only] {
+  let own = "nu rust-tops-review.nu style"
+  let wrong = (nu-mismatch $path)
+  if $wrong != null { return (fail "nu --version" $wrong) }
+  let rules = (catalog)
+  if $rules == null { return (fail "open rules.toml" "rules.toml is missing or not a rule catalog") }
+  let script = (style-dir | path join "rust-tops-style.nu")
+  if not ($script | path exists) { return (fail $own "rust-tops-style.nu is missing beside this skill") }
+
+  let child = (^$nu.current-exe $script check --path $path | complete)
+  let doc = (try { $child.stdout | from json } catch { null })
+  if $doc == null { return (fail $"nu rust-tops-style.nu check" $"the style check printed no JSON: ($child.stderr)") }
+  if ($doc | get -o error) != null { return $child.stdout }
+
+  let committed = (git-run ["-C" $path "-c" "core.quotePath=false" "diff" "-U0" "--no-renames" "--no-color" "--relative" $"($base)...HEAD"])
+  if not $committed.ok { return (fail $"git -C . diff -U0 ($base)...HEAD" $committed.error) }
+  mut command = $"($doc.command) && git -C . diff -U0 ($base)...HEAD"
+  mut ranges = (changed-ranges $committed.stdout)
+  if not $committed_only {
+    let work = (git-run ["-C" $path "-c" "core.quotePath=false" "diff" "-U0" "--no-renames" "--no-color" "--relative" "HEAD"])
+    if not $work.ok { return (fail "git -C . diff -U0 HEAD" $work.error) }
+    let extra = (git-run ["-C" $path "ls-files" "--others" "--exclude-standard"])
+    if not $extra.ok { return (fail "git -C . ls-files --others --exclude-standard" $extra.error) }
+    $ranges = ($ranges ++ (changed-ranges $work.stdout) ++ (names $extra.stdout | each {|f| {file: $f, start: 1, end: 2147483647} }))
+    $command = $"($command) && git -C . diff -U0 HEAD && git -C . ls-files --others --exclude-standard"
+  }
+  let findings = ($doc.data.findings | where {|f| in-ranges $f $ranges })
+  let judgment = (
+    $rules | where kind == "judgment" | where {|r| "review" in $r.skills } | sort-by id
+    | each {|r| {id: $r.id, rule: $r.rule} }
+  )
+  {
+    ok: ($findings | is-empty)
+    command: $command
+    data: {
+      base: $base
+      includes_worktree: (not $committed_only)
+      findings: $findings
+      judgment: $judgment
+    }
+  } | to json
+}
+
+# `<file>` is TOML: [answers] "<ID>" = { status = "ok" | "finding" | "n/a", note = "..." }
+def "main answers" [file: string] {
+  let own = $"nu rust-tops-review.nu answers ($file)"
+  let wrong = (nu-mismatch ".")
+  if $wrong != null { return (fail "nu --version" $wrong) }
+  let rules = (catalog)
+  if $rules == null { return (fail "open rules.toml" "rules.toml is missing or not a rule catalog") }
+  let required = ($rules | where kind == "judgment" | where {|r| "review" in $r.skills } | get id | sort)
+  let doc = (try { open --raw $file | from toml } catch { null })
+  if $doc == null { return (fail $own "the answers file is missing or not TOML") }
+  let answers = ($doc | get -o answers | default {})
+  if not (($answers | describe) | str starts-with "record") { return (fail $own "[answers] must be a table") }
+  let given = ($answers | columns | sort)
+  mut problems = []
+  for id in $required {
+    if $id not-in $given { $problems = ($problems | append {id: $id, problem: "missing"}) }
+  }
+  for id in $given {
+    if $id not-in $required {
+      $problems = ($problems | append {id: $id, problem: "unknown"})
+    } else {
+      let e = ($answers | get $id)
+      if not (($e | describe) | str starts-with "record") {
+        $problems = ($problems | append {id: $id, problem: "bad entry"})
+      } else if ($e | get -o status) not-in $STATUSES {
+        $problems = ($problems | append {id: $id, problem: "bad status"})
+      } else if ($e | get status) == "finding" and (($e | get -o note | default "" | into string | str trim) | is-empty) {
+        $problems = ($problems | append {id: $id, problem: "empty note"})
+      }
+    }
+  }
+  let sorted = ($problems | sort-by id problem)
+  {
+    ok: ($sorted | is-empty)
+    command: $own
+    data: {
+      required: $required
+      problems: $sorted
+    }
+  } | to json
+}
+
 def main [] {
   {ok: false, command: "git diff", error: "pass files or diff", exit: 2} | to json
 }
