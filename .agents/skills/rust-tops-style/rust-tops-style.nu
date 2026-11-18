@@ -274,7 +274,7 @@ def "main check" [--path: string = ".", --base: string] {
 
   let root = ($path | path expand)
   let args = (
-    ["clippy" "--all-targets" "--all-features" "--message-format=json" "--"]
+    ["clippy" "--all-targets" "--all-features" "--message-format=json" "--" "--cap-lints" "warn"]
     ++ ($lints | get check | each {|l| ["-W" $l] } | flatten)
   )
   mut command = (argv-line (["cargo"] ++ $args))
