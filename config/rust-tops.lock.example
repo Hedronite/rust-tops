@@ -19,6 +19,8 @@ kani-verifier = "0.68.0"
 criterion = "0.8"
 # callgrind runner: track the crate you actually install (gungraun-runner or iai-callgrind-runner)
 callgrind-runner = "gungraun-runner"
+# Nushell runs the skill scripts; the version CI already uses.
+nushell = "0.108.0"
 
 [notes]
 schema = "1.2.0"
