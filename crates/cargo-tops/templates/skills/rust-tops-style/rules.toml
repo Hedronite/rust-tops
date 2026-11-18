@@ -701,3 +701,12 @@ skills = ["port"]
 rule = "A porting-notes file records the API map, test map, differences, quirks and checks run."
 fix = "Write PORTING.md with those five headings."
 source = "rust-port §6"
+
+[[rule]]
+id = "PORT-13"
+kind = "judgment"
+check = ""
+skills = ["port"]
+rule = "The port builds, passes its tests and is lint-clean; the original's tests run on the same inputs where possible."
+fix = "Run build, test and clippy, fix what they report, and record the commands and results in the notes."
+source = "rust-port §5"

@@ -21,7 +21,7 @@ nu rust-tops-port.nu verify --map port-map.toml [--path .]
 1. Understand the original (PORT-1, PORT-2, PORT-3).
 2. Run `inventory --write`, then port every test first, one Rust test per original, named so it points back (PORT-4).
 3. Design the Rust API and implement it (PORT-5, PORT-6, PORT-7, PORT-8, PORT-9, PORT-10).
-4. Run `verify` until `ok` is true, and check the size (PORT-11).
+4. Run `verify` until `ok` is true, check the size (PORT-11), then build, test and lint the port (PORT-13).
 5. Write `PORTING.md` (PORT-12).
 
 ## Judgment rules
@@ -36,6 +36,7 @@ Rules are in `../rust-tops-style/rules.toml`, and `data.judgment` lists these. Y
 - PORT-9: expose the original's surface, nothing more.
 - PORT-10: keep the algorithm unless it is wrong.
 - PORT-11: compare code size with the original.
+- PORT-13: build, test and lint clean; re-run the original tests on the same inputs.
 
 Distilled from BeautifulRust v1.5.0 (40db61c6), rewritten. MIT, Copyright (c) 2026 Morgan Linton. See `LICENSES/BeautifulRust-MIT.txt`.
 

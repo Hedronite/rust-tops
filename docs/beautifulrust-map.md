@@ -83,6 +83,7 @@ Scope: `rust-best-practices` §2 and §13 (refs `S2.n`, `S13.n`), `rust-review` 
 | P4.2 | Do not grow the public surface | PORT-9 |
 | P4.3 | Keep the algorithm unless it is wrong | PORT-10 |
 | P4.4 | Compare code size with the original | PORT-11 |
+| P5.1 | Run build, test and clippy; ported tests pass; compare with the original where it can run | PORT-13 |
 | P6.1 | Notes list the API map | PORT-12 |
 | P6.2 | Notes list the test map | PORT-4 |
 | P6.3 | Notes list deliberate differences | PORT-12 |
