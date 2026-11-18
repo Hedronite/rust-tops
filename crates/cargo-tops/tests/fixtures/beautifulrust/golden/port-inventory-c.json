@@ -1,0 +1,54 @@
+{
+  "ok": true,
+  "command": "nu rust-tops-port.nu inventory --from tests --lang c",
+  "data": {
+    "lang": "c",
+    "count": 7,
+    "tests": [
+      {
+        "id": "test_config.c::test_basic",
+        "file": "test_config.c",
+        "line": 7,
+        "name": "test_basic"
+      },
+      {
+        "id": "test_config.c::test_untrimmed_values_keep_whitespace",
+        "file": "test_config.c",
+        "line": 21,
+        "name": "test_untrimmed_values_keep_whitespace"
+      },
+      {
+        "id": "test_config.c::test_get_int_errors",
+        "file": "test_config.c",
+        "line": 27,
+        "name": "test_get_int_errors"
+      },
+      {
+        "id": "test_config.c::test_duplicates",
+        "file": "test_config.c",
+        "line": 38,
+        "name": "test_duplicates"
+      },
+      {
+        "id": "test_config.c::test_case_insensitive",
+        "file": "test_config.c",
+        "line": 47,
+        "name": "test_case_insensitive"
+      },
+      {
+        "id": "test_config.c::test_syntax_errors",
+        "file": "test_config.c",
+        "line": 55,
+        "name": "test_syntax_errors"
+      },
+      {
+        "id": "test_config.c::test_empty_input",
+        "file": "test_config.c",
+        "line": 63,
+        "name": "test_empty_input"
+      }
+    ],
+    "written": "",
+    "next": "Fill in `rust` for each test, then run: nu rust-tops-port.nu verify --map port-map.toml"
+  }
+}

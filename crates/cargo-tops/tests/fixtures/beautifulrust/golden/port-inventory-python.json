@@ -1,0 +1,66 @@
+{
+  "ok": true,
+  "command": "nu rust-tops-port.nu inventory --from python --lang python",
+  "data": {
+    "lang": "python",
+    "count": 9,
+    "tests": [
+      {
+        "id": "test_taskgraph.py::test_parses_fields",
+        "file": "test_taskgraph.py",
+        "line": 20,
+        "name": "test_parses_fields"
+      },
+      {
+        "id": "test_taskgraph.py::test_negative_priority",
+        "file": "test_taskgraph.py",
+        "line": 28,
+        "name": "test_negative_priority"
+      },
+      {
+        "id": "test_taskgraph.py::test_parse_errors_report_line",
+        "file": "test_taskgraph.py",
+        "line": 31,
+        "name": "test_parse_errors_report_line"
+      },
+      {
+        "id": "test_taskgraph.py::test_errors_share_a_base_class",
+        "file": "test_taskgraph.py",
+        "line": 46,
+        "name": "test_errors_share_a_base_class"
+      },
+      {
+        "id": "test_taskgraph.py::test_order_respects_deps_and_priority",
+        "file": "test_taskgraph.py",
+        "line": 53,
+        "name": "test_order_respects_deps_and_priority"
+      },
+      {
+        "id": "test_taskgraph.py::test_missing_dependency",
+        "file": "test_taskgraph.py",
+        "line": 57,
+        "name": "test_missing_dependency"
+      },
+      {
+        "id": "test_taskgraph.py::test_cycle_is_named",
+        "file": "test_taskgraph.py",
+        "line": 62,
+        "name": "test_cycle_is_named"
+      },
+      {
+        "id": "test_taskgraph.py::test_empty",
+        "file": "test_taskgraph.py",
+        "line": 68,
+        "name": "test_empty"
+      },
+      {
+        "id": "test_taskgraph.py::test_counts_every_kind_in_order",
+        "file": "test_taskgraph.py",
+        "line": 73,
+        "name": "test_counts_every_kind_in_order"
+      }
+    ],
+    "written": "",
+    "next": "Fill in `rust` for each test, then run: nu rust-tops-port.nu verify --map port-map.toml"
+  }
+}
