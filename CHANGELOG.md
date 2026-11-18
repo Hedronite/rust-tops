@@ -21,7 +21,7 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - `rust-tops-style` ([#42](https://github.com/Hedronite/rust-tops/pull/42)): `check [--path] [--base]` runs clippy for the lint rules and twelve Nushell probes, prints sorted JSON findings with the catalog's fix text, and keeps only changed lines with `--base`.
   - `rust-tops-port` ([#44](https://github.com/Hedronite/rust-tops/pull/44)): `inventory` lists the original tests of a C, C++, Python, Go, JavaScript or TypeScript tree, and `verify` fails when an original test has no passing Rust counterpart. The catalog gains the port rule PORT-13.
   - `rust-tops-review` ([#45](https://github.com/Hedronite/rust-tops/pull/45)): the new `style` command gives the style findings on the review range, and `answers` checks that every judgment rule was answered. `files` and `diff` are unchanged byte for byte.
-  - Eval regression ([G5 PR to come](https://github.com/Hedronite/rust-tops/pulls)): fixtures that check the skills against upstream's eval cases.
+  - Eval regression ([#46](https://github.com/Hedronite/rust-tops/pull/46)): fixtures that check the skills against upstream's eval cases.
 
 ### Changed
 
