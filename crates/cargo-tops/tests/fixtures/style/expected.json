@@ -1,0 +1,60 @@
+{
+  "ok": false,
+  "command": "cargo clippy --all-targets --all-features --message-format=json -- -W clippy::unwrap_used",
+  "data": {
+    "base": null,
+    "findings": [
+      {
+        "rule": "PANIC-1",
+        "kind": "lint",
+        "file": "src/lib.rs",
+        "line": 6,
+        "col": 6,
+        "message": "used `unwrap()` on an `Option` value",
+        "fix": "Return the error with ?, or expect with the reason it cannot fail."
+      },
+      {
+        "rule": "PANIC-2",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 15,
+        "col": 22,
+        "message": "process::exit skips destructors",
+        "fix": "Return an error to main and let it choose the exit code."
+      },
+      {
+        "rule": "DOC-1",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 21,
+        "col": 4,
+        "message": "TODO has no issue number",
+        "fix": "Write TODO(#123) with the tracker number, or do the work."
+      },
+      {
+        "rule": "ERR-1",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 26,
+        "col": 29,
+        "message": "public fn returns a boxed error",
+        "fix": "Define an error enum for the crate."
+      },
+      {
+        "rule": "PANIC-2",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 32,
+        "col": 42,
+        "message": "process::exit skips destructors",
+        "fix": "Return an error to main and let it choose the exit code."
+      }
+    ],
+    "judgment": [
+      {
+        "id": "API-1",
+        "rule": "Public names say what the thing is, not how it is built."
+      }
+    ]
+  }
+}
