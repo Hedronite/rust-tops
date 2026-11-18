@@ -1,7 +1,7 @@
 # Rust-TOPS
 
 <p align="center">
-  <img src="docs/brand/rust-tops-banner.jpg" alt="rust-tops banner" width="720" />
+  <img src="docs/brand/rust-tops-banner.jpg" alt="Rust-TOPS product mark and wordmark" width="720" />
 </p>
 
 <p align="center"><strong>A protocol and drop-in kit for Rust that is correct, dense, and fast.</strong><br/>
@@ -14,6 +14,7 @@ Spec, schema, class gates, and a thin orchestrator for the Cargo tools you alrea
   <a href="laws/README.md"><img alt="Bend 2.0.36" src="https://img.shields.io/badge/bend-2.0.36-B06038?style=flat-square&labelColor=1A1A1A" /></a>
   <br/>
   <a href="https://crates.io/crates/cargo-tops"><img alt="crates.io: cargo-tops" src="https://img.shields.io/crates/v/cargo-tops?style=flat-square&label=crates.io&labelColor=1A1A1A&color=B06038" /></a>
+  <a href="https://docs.rs/cargo-tops"><img alt="docs.rs: cargo-tops" src="https://img.shields.io/docsrs/cargo-tops?style=flat-square&label=docs.rs&labelColor=1A1A1A&color=B06038" /></a>
   <a href="https://github.com/Hedronite/rust-tops/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Hedronite/rust-tops?style=flat-square&label=release&labelColor=1A1A1A&color=C9A227" /></a>
   <a href="#pins"><img alt="MSRV 1.99.1" src="https://img.shields.io/badge/msrv-1.99.1-B06038?style=flat-square&labelColor=1A1A1A" /></a>
   <a href="LICENSE"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-C9A227?style=flat-square&labelColor=1A1A1A" /></a>
@@ -49,9 +50,9 @@ Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with 
 | Plane | Pin | Where |
 | --- | --- | --- |
 | Protocol | 1.2.0 | [`RUST_TOPS.md`](RUST_TOPS.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
-| Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) at commit `91417b5`. |
+| Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Current tag [`v0.4.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.4.0). Previous tag [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) at commit `91417b5`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
-| Crate page | not published yet | 0.4.0 has no [docs.rs/cargo-tops](https://docs.rs/cargo-tops) page until it is published |
+| Crate page | [crates.io/crates/cargo-tops](https://crates.io/crates/cargo-tops) 0.4.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
 | Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18.9 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
@@ -183,7 +184,7 @@ The protocol cap for new human-authored code is CRAP 4. The cap for new code wri
 
 ## Status
 
-This tree is package **0.4.0** and protocol **1.2.0**. The release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.4.0]`. The previous package release is [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) (`91417b5`).
+This tree is package **0.4.0** and protocol **1.2.0**. The current GitHub and crates.io release is [`v0.4.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.4.0). Release notes are [`CHANGELOG.md`](CHANGELOG.md) `[0.4.0]`. The previous package release is [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) (`91417b5`).
 
 This repository's workflow runs format and Clippy, `cargo deny`, nextest, doc tests, an MSRV check on 1.99.1, the feature matrix above, a coverage job that fails when `lcov.info` or the CRAP JSON is empty, `cargo publish --dry-run`, actionlint over the workflows and the drop-ins, and nextest on macOS. `tops-gate` runs this repository's own `cargo tops gate`. It also runs `bend-proof`, `bend-verdict`, and `bend-gate-matrix`. A separate `release` workflow builds, attests and publishes a GitHub release when a `v*` tag is pushed. `law-diff` is a separate workflow. The workspace lint `unsafe_code = "forbid"` applies to `cargo-tops` and both fixtures.
 
