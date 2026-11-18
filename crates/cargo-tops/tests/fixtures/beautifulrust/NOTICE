@@ -1,0 +1,7 @@
+BeautifulRust eval fixtures
+
+The code files under this directory (inventory.rs, config.c, config.h, test_config.c, taskgraph.py and test_taskgraph.py) are copied from BeautifulRust v1.5.0 (40db61c6fee84bd121cf288755f0e2f22a50e995), skills/rust-best-practices/evals, skills/rust-review/evals and skills/rust-port/evals: the starting files of four non-Bevy cases.
+Each file is unmodified except for one added MIT line at its top.
+The upstream grader files are not copied. The grader names in tests/skills_evals.rs come from BeautifulRust 40db61c6 skills/*/evals/*/graders; the text beside each name is our own.
+The MIT text is LICENSES/BeautifulRust-MIT.txt and includes Copyright (c) 2026 Morgan Linton.
+https://github.com/morganlinton/BeautifulRust
