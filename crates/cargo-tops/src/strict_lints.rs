@@ -355,12 +355,10 @@ mod tests {
     /// `cargo clippy` the probe test runs, so it cannot be skipped. Fails if
     /// clippy did not build the scratch crate, since silence would mean "all known".
     fn rejected_by_clippy(rules: &[super::LintRule]) -> std::collections::BTreeSet<String> {
-        let dir = std::env::temp_dir().join(format!("tops-lint-known-{}", std::process::id()));
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let _ = std::fs::remove_dir_all(&dir);
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("tops-lint-known-{}-{call}", std::process::id()));
         std::fs::create_dir_all(dir.join("src")).unwrap();
         let manifest =
             "[package]\nname = \"tops-lint-known\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
@@ -377,11 +375,7 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
         assert!(
             text.contains("\"build-finished\""),
             "clippy did not run: {text}"
