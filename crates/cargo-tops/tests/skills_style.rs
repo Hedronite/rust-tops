@@ -115,11 +115,18 @@ fn catalog() -> Vec<toml::Value> {
         .unwrap_or_default()
 }
 
+/// True when the rule lists `style` in its `skills`.
+fn for_style(rule: &toml::Value) -> bool {
+    rule.get("skills")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|all| all.iter().any(|v| v.as_str() == Some("style")))
+}
+
 fn rule_str<'a>(rule: &'a toml::Value, key: &str) -> &'a str {
     rule.get(key).and_then(toml::Value::as_str).unwrap_or("")
 }
 
-/// One `//@ fire|near ID [col=N]` marker. `line` is the line after the marker.
+/// One trailing `//@ fire|near ID [col=N]` marker, on `line`.
 struct Marker {
     kind: String,
     id: String,
@@ -130,16 +137,15 @@ struct Marker {
 fn markers(lib: &str) -> Vec<Marker> {
     let mut found = Vec::new();
     for (index, text) in lib.lines().enumerate() {
-        let mut words = text
-            .trim()
-            .strip_prefix("//@ ")
-            .unwrap_or("")
-            .split_whitespace();
+        let Some((_, tail)) = text.split_once("//@ ") else {
+            continue;
+        };
+        let mut words = tail.split_whitespace();
         if let (Some(kind), Some(id)) = (words.next(), words.next()) {
             found.push(Marker {
                 kind: kind.to_string(),
                 id: id.to_string(),
-                line: index as u64 + 2,
+                line: index as u64 + 1,
                 col: words
                     .next()
                     .and_then(|w| w.strip_prefix("col="))
@@ -201,7 +207,10 @@ fn assert_pairs(all: &[Finding], marks: &[Marker]) {
 }
 
 fn assert_probes_paired(rules: &[toml::Value], marks: &[Marker]) {
-    for rule in rules.iter().filter(|r| rule_str(r, "kind") == "probe") {
+    for rule in rules
+        .iter()
+        .filter(|r| rule_str(r, "kind") == "probe" && for_style(r))
+    {
         let id = rule_str(rule, "id");
         for kind in ["fire", "near"] {
             assert!(
@@ -352,10 +361,21 @@ fn base_keeps_only_findings_on_changed_lines() {
     assert!(all.len() > 1, "the fixture should have several findings");
     let doc = json(&check(&nu, &dir, &target, &["--base", "HEAD~1"]));
     let kept = findings(&doc);
-    assert_eq!(kept.len(), 1, "{doc}");
-    let only = kept.first().expect("one finding");
-    assert_eq!(field(only, "rule").as_str(), Some("PANIC-1"));
-    assert_eq!(field(only, "line").as_u64(), Some(line));
+    assert!(!kept.is_empty(), "{doc}");
+    assert!(
+        kept.iter().all(|f| field(f, "line").as_u64() == Some(line)),
+        "{doc}"
+    );
+    let unwrap_id = catalog()
+        .iter()
+        .find(|r| rule_str(r, "check") == "clippy::unwrap_used")
+        .map(|r| rule_str(r, "id").to_string())
+        .expect("the catalog has a clippy::unwrap_used rule");
+    assert!(
+        kept.iter()
+            .any(|f| field(f, "rule").as_str() == Some(unwrap_id.as_str())),
+        "{doc}"
+    );
 }
 
 #[test]

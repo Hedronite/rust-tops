@@ -30,8 +30,8 @@ One JSON object: `ok`, `command` (the exact argv) and either `data` or `error`.
 2. Fix at the cause. Do not add `#[allow]` or `#[expect]` to quiet a finding unless the reason names the rule.
 3. Answer each `data.judgment` rule yourself, against the code you changed. These are the IDs:
 
-<!-- JUDGMENT -->
-- `API-1`: Public names say what the thing is, not how it is built.
+- `PANIC-5`: Each expect, assert and panic message carries the values that made it fire.
+- `OWN-2`: No clone exists only to quiet the borrow checker.
 
 Do not edit `rules.toml`. If a rule is wrong, tell the maintainer.
 

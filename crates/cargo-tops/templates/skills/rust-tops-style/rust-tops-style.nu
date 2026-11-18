@@ -49,12 +49,10 @@ def required-nu [start: string] {
 }
 
 # --- probes -----------------------------------------------------------------
-# A probe takes one file as a list of {n, text} rows (n is the 1-based line) and
-# returns {line, col, message} rows. Builtins only.
+# A probe takes one file as rows {file, n, text, prev} (n is the 1-based line, prev
+# the line above) and returns {line, col, message} rows. Builtins only.
 
-def is-comment [text: string] {
-  $text | str trim --left | str starts-with "//"
-}
+const FN_PUB = '\bpub (?:(?:const|async|unsafe) )*fn\b'
 
 # 1-based column, counted in Unicode scalars as clippy counts it.
 def col-of [text: string, needle: string] {
@@ -62,36 +60,119 @@ def col-of [text: string, needle: string] {
   1 + ($text | encode utf8 | bytes at 0..<$b | decode utf-8 | str length --chars)
 }
 
-# Rows whose code part (not a `//` line) holds `needle`.
-def code-hits [rows: list, needle: string, message: string] {
+def is-comment [text: string] {
+  $text | str trim --left | str starts-with "//"
+}
+
+def is-doc [text: string] {
+  let t = ($text | str trim --left)
+  ($t | str starts-with "///") or ($t | str starts-with "//!")
+}
+
+def is-bin [file: string] {
+  ($file | path basename) == "main.rs" or ($file | str starts-with "src/bin/")
+}
+
+def hit [r: record, needle: string, message: string] {
+  {line: $r.n, col: (col-of $r.text $needle), message: $message}
+}
+
+# Rows that are code (not a `//` line) and match `re`.
+def code-matching [rows: list, re: string] {
+  $rows | where {|r| (not (is-comment $r.text)) and ($r.text =~ $re) }
+}
+
+def probe-box-dyn-error-api [rows: list] {
   $rows
-  | where {|r| (not (is-comment $r.text)) and ($r.text | str contains $needle) }
-  | each {|r| {line: $r.n, col: (col-of $r.text $needle), message: $message} }
+  | where {|r| (not (is-bin $r.file)) and (not (is-comment $r.text)) and ($r.text =~ $FN_PUB) and ($r.text =~ 'Box<dyn (?:std::|core::)?(?:error::)?Error') }
+  | each {|r| hit $r "Box<dyn" "public fn exposes a boxed dynamic error" }
 }
 
-def probe-process-exit [rows: list] {
-  code-hits $rows "process::exit(" "process::exit skips destructors"
-}
-
-def probe-todo-comment [rows: list] {
+def probe-anyhow-in-api [rows: list] {
   $rows
-  | where {|r| (is-comment $r.text) and ($r.text | str contains "TODO") and (not ($r.text | str contains "TODO(#")) }
-  | each {|r| {line: $r.n, col: (col-of $r.text "TODO"), message: "TODO has no issue number"} }
+  | where {|r| (not (is-bin $r.file)) and (not (is-comment $r.text)) and ($r.text =~ $FN_PUB) and ($r.text =~ 'anyhow::(?:Result|Error)') }
+  | each {|r| hit $r "anyhow::" "public fn exposes an anyhow type" }
 }
 
-def probe-box-dyn-error [rows: list] {
+def probe-catch-unwind [rows: list] {
+  (code-matching $rows '\bcatch_unwind\(')
+  | where {|r| not (is-comment $r.prev) }
+  | each {|r| hit $r "catch_unwind" "catch_unwind with no comment naming the boundary" }
+}
+
+def probe-pub-bool-param [rows: list] {
+  (code-matching $rows ($FN_PUB + '[^)]*\(.*\w\s*:\s*bool\b'))
+  | each {|r| hit $r ": bool" "public fn takes a bool parameter" }
+}
+
+def probe-get-prefix-getter [rows: list] {
+  (code-matching $rows '\bfn get_\w+\(&self\)')
+  | each {|r| hit $r "fn get_" "getter has a get_ prefix" }
+}
+
+def probe-vague-type-name [rows: list] {
   $rows
-  | where {|r| (not (is-comment $r.text)) and ($r.text | str contains "pub fn") and (($r.text | str contains "Box<dyn Error") or ($r.text | str contains "Box<dyn std::error::Error")) }
-  | each {|r| {line: $r.n, col: (col-of $r.text "Box<dyn"), message: "public fn returns a boxed error"} }
+  | where {|r| not (is-comment $r.text) }
+  | each {|r|
+      let m = ($r.text | parse --regex '\b(?:struct|enum|trait|type|union)\s+(?<name>\w*(?:Manager|Util|Utils|Helper))\b')
+      if ($m | is-empty) { null } else { hit $r ($m | first | get name) "type name says nothing about what it models" }
+    }
+  | compact
 }
 
-const PROBES = ["box-dyn-error" "process-exit" "todo-comment"]
+def probe-transmute-use [rows: list] {
+  (code-matching $rows '\btransmute(?:::<.*>)?\(')
+  | each {|r| hit $r "transmute" "transmute call" }
+}
+
+def probe-unsafe-impl-send-sync [rows: list] {
+  (code-matching $rows '\bunsafe impl\b[^{]*\b(?:Send|Sync) for\b')
+  | where {|r| not ($r.prev | str trim --left | str starts-with "// SAFETY") }
+  | each {|r| hit $r "unsafe impl" "unsafe impl of Send or Sync with no SAFETY comment" }
+}
+
+def probe-doc-example-unwrap [rows: list] {
+  $rows
+  | where {|r| (is-doc $r.text) and ($r.text | str contains ".unwrap()") }
+  | each {|r| hit $r ".unwrap()" "doc example calls unwrap" }
+}
+
+def probe-deny-warnings-attr [rows: list] {
+  (code-matching $rows '^\s*#!?\[(?:deny|forbid)\([^)]*\bwarnings\b')
+  | each {|r| hit $r "deny(" "attribute denies the warnings group" }
+}
+
+def probe-crate-lint-attr [rows: list] {
+  (code-matching $rows '^\s*#!\[(?:allow|warn|deny|forbid|expect)\(')
+  | each {|r| hit $r "#![" "crate-level lint attribute" }
+}
+
+def probe-poison-into-inner [rows: list] {
+  (code-matching $rows '\.into_inner\(\)')
+  | where {|r| ($r.text | str contains "unwrap_or_else") or ($r.text | str contains "oison") }
+  | each {|r| hit $r ".into_inner()" "into_inner recovers a poisoned lock" }
+}
+
+const PROBES = [
+  "anyhow-in-api" "box-dyn-error-api" "catch-unwind" "crate-lint-attr" "deny-warnings-attr"
+  "doc-example-unwrap" "get-prefix-getter" "poison-into-inner" "pub-bool-param"
+  "transmute-use" "unsafe-impl-send-sync" "vague-type-name"
+]
 
 def run-probe [name: string, rows: list] {
   match $name {
-    "process-exit" => (probe-process-exit $rows)
-    "todo-comment" => (probe-todo-comment $rows)
-    "box-dyn-error" => (probe-box-dyn-error $rows)
+    "anyhow-in-api" => (probe-anyhow-in-api $rows)
+    "box-dyn-error-api" => (probe-box-dyn-error-api $rows)
+    "catch-unwind" => (probe-catch-unwind $rows)
+    "crate-lint-attr" => (probe-crate-lint-attr $rows)
+    "deny-warnings-attr" => (probe-deny-warnings-attr $rows)
+    "doc-example-unwrap" => (probe-doc-example-unwrap $rows)
+    "get-prefix-getter" => (probe-get-prefix-getter $rows)
+    "poison-into-inner" => (probe-poison-into-inner $rows)
+    "pub-bool-param" => (probe-pub-bool-param $rows)
+    "transmute-use" => (probe-transmute-use $rows)
+    "unsafe-impl-send-sync" => (probe-unsafe-impl-send-sync $rows)
+    "vague-type-name" => (probe-vague-type-name $rows)
     _ => []
   }
 }
@@ -178,8 +259,9 @@ def "main check" [--path: string = ".", --base: string] {
   if not (have cargo) { return (fail "cargo clippy" "cargo: command not found") }
   let rules = (try { open ($HERE | path join "rules.toml") | get rule } catch {|e| null })
   if $rules == null { return (fail $"open rules.toml" "rules.toml is missing or not a rule catalog") }
-  let lints = ($rules | where kind == "lint" | sort-by check)
-  let probes = ($rules | where kind == "probe" | sort-by id)
+  let mine = ($rules | where {|r| "style" in $r.skills })
+  let lints = ($mine | where kind == "lint" | sort-by check)
+  let probes = ($mine | where kind == "probe" | sort-by id)
   let judgment = (
     $rules | where kind == "judgment" | where {|r| "style" in $r.skills } | sort-by id
     | each {|r| {id: $r.id, rule: $r.rule} }
@@ -221,7 +303,11 @@ def "main check" [--path: string = ".", --base: string] {
   mut from_probes = []
   let files = (rust-files $root)
   for f in $files {
-    let rows = (open --raw ($root | path join $f) | lines | enumerate | each {|r| {n: ($r.index + 1), text: $r.item} })
+    let ls = (open --raw ($root | path join $f) | lines)
+    let rows = (
+      $ls | enumerate
+      | each {|r| {file: $f, n: ($r.index + 1), text: $r.item, prev: (if $r.index == 0 { "" } else { $ls | get ($r.index - 1) })} }
+    )
     for p in $probes {
       let hits = (run-probe $p.check $rows)
       $from_probes = ($from_probes | append ($hits | each {|h|

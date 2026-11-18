@@ -1,59 +1,153 @@
 {
   "ok": false,
-  "command": "cargo clippy --all-targets --all-features --message-format=json -- -W clippy::unwrap_used",
+  "command": "cargo clippy --all-targets --all-features --message-format=json -- -W clippy::allow_attributes -W clippy::allow_attributes_without_reason -W clippy::await_holding_lock -W clippy::await_holding_refcell_ref -W clippy::borrowed_box -W clippy::cast_possible_truncation -W clippy::derive_ord_xor_partial_ord -W clippy::derived_hash_with_manual_eq -W clippy::exhaustive_enums -W clippy::exhaustive_structs -W clippy::indexing_slicing -W clippy::iter_over_hash_type -W clippy::map_err_ignore -W clippy::missing_errors_doc -W clippy::missing_panics_doc -W clippy::missing_safety_doc -W clippy::needless_range_loop -W clippy::new_without_default -W clippy::ptr_arg -W clippy::redundant_clone -W clippy::result_unit_err -W clippy::should_implement_trait -W clippy::string_add -W clippy::undocumented_unsafe_blocks -W clippy::unnecessary_unwrap -W clippy::unwrap_used -W clippy::wildcard_imports -W clippy::wrong_self_convention -W missing_debug_implementations -W missing_docs",
   "data": {
     "base": null,
     "findings": [
       {
+        "rule": "DOC-3",
+        "kind": "lint",
+        "file": "src/lib.rs",
+        "line": 7,
+        "col": 1,
+        "message": "docs for function which may panic missing `# Panics` section",
+        "fix": "Add # Panics, or remove the panic."
+      },
+      {
         "rule": "PANIC-1",
         "kind": "lint",
         "file": "src/lib.rs",
-        "line": 6,
+        "line": 8,
         "col": 6,
         "message": "used `unwrap()` on an `Option` value",
-        "fix": "Return the error with ?, or expect with the reason it cannot fail."
+        "fix": "Propagate with ?, or use expect and state why the value cannot be missing."
       },
       {
-        "rule": "PANIC-2",
+        "rule": "IDIOM-9",
         "kind": "probe",
         "file": "src/lib.rs",
-        "line": 15,
-        "col": 22,
-        "message": "process::exit skips destructors",
-        "fix": "Return an error to main and let it choose the exit code."
+        "line": 18,
+        "col": 5,
+        "message": "crate-level lint attribute",
+        "fix": "Move the level into [lints] or [workspace.lints]."
       },
       {
-        "rule": "DOC-1",
+        "rule": "ERR-2",
         "kind": "probe",
         "file": "src/lib.rs",
-        "line": 21,
-        "col": 4,
-        "message": "TODO has no issue number",
-        "fix": "Write TODO(#123) with the tracker number, or do the work."
+        "line": 22,
+        "col": 33,
+        "message": "public fn exposes a boxed dynamic error",
+        "fix": "Return a named error type; keep the boxed form inside binaries."
       },
       {
-        "rule": "ERR-1",
+        "rule": "ERR-2",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 24,
+        "col": 52,
+        "message": "public fn exposes a boxed dynamic error",
+        "fix": "Return a named error type; keep the boxed form inside binaries."
+      },
+      {
+        "rule": "ERR-3",
         "kind": "probe",
         "file": "src/lib.rs",
         "line": 26,
-        "col": 29,
-        "message": "public fn returns a boxed error",
-        "fix": "Define an error enum for the crate."
+        "col": 25,
+        "message": "public fn exposes an anyhow type",
+        "fix": "Return a named error type and let the application wrap it with anyhow."
       },
       {
-        "rule": "PANIC-2",
+        "rule": "ERR-7",
         "kind": "probe",
         "file": "src/lib.rs",
-        "line": 32,
-        "col": 42,
-        "message": "process::exit skips destructors",
-        "fix": "Return an error to main and let it choose the exit code."
+        "line": 30,
+        "col": 29,
+        "message": "catch_unwind with no comment naming the boundary",
+        "fix": "Return a Result instead, or comment the boundary that needs the catch."
+      },
+      {
+        "rule": "API-3",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 35,
+        "col": 23,
+        "message": "public fn takes a bool parameter",
+        "fix": "Use a two-variant enum, or split into two named functions."
+      },
+      {
+        "rule": "API-11",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 39,
+        "col": 13,
+        "message": "getter has a get_ prefix",
+        "fix": "Rename get_len(&self) to len(&self)."
+      },
+      {
+        "rule": "API-13",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 43,
+        "col": 16,
+        "message": "type name says nothing about what it models",
+        "fix": "Name the type for the thing it models."
+      },
+      {
+        "rule": "UNSAFE-3",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 47,
+        "col": 28,
+        "message": "transmute call",
+        "fix": "Use from_le_bytes, TryFrom, a match, or a safe wrapper type."
+      },
+      {
+        "rule": "UNSAFE-4",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 51,
+        "col": 5,
+        "message": "unsafe impl of Send or Sync with no SAFETY comment",
+        "fix": "Fix the type so the auto trait holds, or document the invariant that makes it sound."
+      },
+      {
+        "rule": "DOC-4",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 58,
+        "col": 32,
+        "message": "doc example calls unwrap",
+        "fix": "Hide a fn main returning Result in the example and use ?."
+      },
+      {
+        "rule": "IDIOM-1",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 64,
+        "col": 7,
+        "message": "attribute denies the warnings group",
+        "fix": "Remove it and pass -D warnings in CI."
+      },
+      {
+        "rule": "CONC-4",
+        "kind": "probe",
+        "file": "src/lib.rs",
+        "line": 70,
+        "col": 39,
+        "message": "into_inner recovers a poisoned lock",
+        "fix": "Propagate the poison, or reset the data with a reason on record."
       }
     ],
     "judgment": [
       {
-        "id": "API-1",
-        "rule": "Public names say what the thing is, not how it is built."
+        "id": "OWN-2",
+        "rule": "No clone exists only to quiet the borrow checker."
+      },
+      {
+        "id": "PANIC-5",
+        "rule": "Each expect, assert and panic message carries the values that made it fire."
       }
     ]
   }
