@@ -11,7 +11,7 @@ source: "BeautifulRust v1.5.0 (40db61c6), MIT, Copyright (c) 2026 Morgan Linton"
 
 Every bullet in scope from the three upstream skills, with the catalog rule that carries it in `crates/cargo-tops/templates/skills/rust-tops-style/rules.toml`, or the reason it was dropped. The gist column is our own summary, not upstream text.
 
-Scope: `rust-best-practices` §2 and §13 (refs `S2.n`, `S13.n`), `rust-review` §3 (`R3.n`), and `rust-port` §1 to §6 (`P<section>.n`). A bullet is a list item or a table row, counted in file order within its section. A bullet that holds several checks is mapped to the rule that fits it best. The other rules it implies name the same section in their `source` field.
+Scope: `rust-best-practices` §2 and §13 (refs `S2.n`, `S13.n`), `rust-review` §3 (`R3.n`), and `rust-port` §1 to §6 (`P<section>.n`). A bullet is a list item or a table row, counted in file order within its section. Section 5 of `rust-port` has no bullets, only prose and a command block, so its one row `P5.1` stands for that prose. A bullet that holds several checks is mapped to the rule that fits it best. The other rules it implies name the same section in their `source` field.
 
 | Upstream | Gist | Rule |
 |---|---|---|

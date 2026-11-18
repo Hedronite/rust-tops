@@ -21,7 +21,7 @@
 const HERE = (path self | path dirname)
 const LANGS = ["c" "cpp" "python" "go" "js" "ts"]
 const SKIP_DIRS = ["node_modules" "target" ".git" "venv" ".venv" "__pycache__"]
-const DEFAULT_NU = "0.108"
+const DEFAULT_NU = "0.108.0"
 
 def fail [command: string, error: string] {
   {ok: false, command: $command, error: $error} | to json
@@ -42,13 +42,13 @@ def catalog [] {
   open --raw ($found | first) | from toml | get rule
 }
 
-# The pinned Nushell major.minor, from the nearest rust-tops.lock at or above `start`.
+# The pinned Nushell version as written, from the nearest rust-tops.lock at or above `start`.
 def pinned-nu [start: string] {
   mut dir = ($start | path expand)
   loop {
     let lock = ($dir | path join "rust-tops.lock")
     if ($lock | path exists) {
-      let hit = (open --raw $lock | lines | parse --regex '^\s*nushell\s*=\s*"(?P<v>[0-9]+\.[0-9]+)[^"]*"')
+      let hit = (open --raw $lock | lines | parse --regex '^\s*nushell\s*=\s*"(?P<v>[0-9]+\.[0-9]+[^"]*)"')
       if not ($hit | is-empty) { return {v: ($hit | first | get v)} }
     }
     let up = ($dir | path dirname)
@@ -58,10 +58,14 @@ def pinned-nu [start: string] {
   {v: $DEFAULT_NU}
 }
 
+def minor [v: string] {
+  $v | split row "." | first 2 | str join "."
+}
+
 def check-nu [start: string, command: string] {
   let want = (pinned-nu $start | get v)
-  let have = ((version).version | split row "." | first 2 | str join ".")
-  if $want != $have {
+  let have = (version).version
+  if (minor $want) != (minor $have) {
     return (fail $command $"nu ($want) required, found ($have)")
   }
   null

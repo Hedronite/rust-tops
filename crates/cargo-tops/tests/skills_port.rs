@@ -256,6 +256,44 @@ fn inventory_output_is_byte_identical_and_write_refuses_to_overwrite() {
 }
 
 #[test]
+fn another_nushell_minor_is_refused_with_both_versions() {
+    let Some(nu) = require_nu() else { return };
+    let rig = Rig::new(nu.clone(), "minor");
+    let version = Command::new(&nu).arg("--version").output().unwrap();
+    let found = String::from_utf8(version.stdout).unwrap().trim().to_owned();
+    let minor: u32 = found.split('.').nth(1).unwrap().parse().unwrap();
+    let wrong = format!("0.{}.0", if minor == 0 { 1 } else { minor - 1 });
+    fs::write(
+        rig.root.join("rust-tops.lock"),
+        format!("[tools]\nnushell = \"{wrong}\"\n"),
+    )
+    .unwrap();
+    let want = format!("nu {wrong} required, found {found}");
+    let (inv, _) = rig.run(
+        &rig.root,
+        &[
+            "inventory",
+            "--from",
+            "port/python/original",
+            "--lang",
+            "python",
+        ],
+    );
+    assert!(!ok(&inv), "{inv}");
+    assert_eq!(
+        inv.pointer("/error").and_then(Value::as_str),
+        Some(want.as_str())
+    );
+    let ver = rig.verify("python", "port-map.toml");
+    assert!(!ok(&ver), "{ver}");
+    assert_eq!(
+        ver.pointer("/error").and_then(Value::as_str),
+        Some(want.as_str())
+    );
+    assert!(ver.pointer("/data").is_none(), "{ver}");
+}
+
+#[test]
 fn verify_passes_the_complete_fixtures() {
     let Some(nu) = require_nu() else { return };
     let rig = Rig::new(nu, "pass");
@@ -267,13 +305,32 @@ fn verify_passes_the_complete_fixtures() {
             Some(3)
         );
     }
-    let a = rig
-        .run(&rig.krate("python"), &["verify", "--map", "port-map.toml"])
-        .1;
-    let b = rig
-        .run(&rig.krate("python"), &["verify", "--map", "port-map.toml"])
-        .1;
-    assert_eq!(a, b);
+}
+
+#[test]
+fn verify_output_is_byte_identical_and_holds_no_path() {
+    let Some(nu) = require_nu() else { return };
+    let rig = Rig::new(nu, "same");
+    let args = ["verify", "--map", "port-map.toml"];
+    for lang in ["python", "c"] {
+        let (_, first) = rig.run(&rig.krate(lang), &args);
+        let (_, second) = rig.run(&rig.krate(lang), &args);
+        assert_eq!(first, second, "{lang}");
+        let text = String::from_utf8(first).unwrap();
+        assert!(!text.contains(rig.root.to_str().unwrap()), "{lang}: {text}");
+    }
+    // A failing run is byte-identical too: findings are sorted.
+    let krate = rig.krate("python");
+    let good = fs::read_to_string(krate.join("port-map.toml")).unwrap();
+    fs::write(
+        krate.join("bad.toml"),
+        good.replace("tests::test_", "tests::t_"),
+    )
+    .unwrap();
+    let bad = ["verify", "--map", "bad.toml"];
+    let (_, first) = rig.run(&krate, &bad);
+    let (_, second) = rig.run(&krate, &bad);
+    assert_eq!(first, second);
 }
 
 #[test]
