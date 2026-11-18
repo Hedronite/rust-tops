@@ -162,12 +162,101 @@ pub(crate) fn prove_markers(source: &str, diags: &[Diag]) -> Result<(), Vec<Stri
     }
 }
 
+/// One `kind = "lint"` rule from `rules.toml`: its ID and the lint it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LintRule {
+    pub id: String,
+    pub check: String,
+}
+
+/// The `kind = "lint"` rules in a `rules.toml` body.
+/// Probe and judgment rules are skipped. A lint rule with no `id` or no
+/// `check` is an error, since nothing could prove it.
+pub(crate) fn lint_rules(catalog: &str) -> Result<Vec<LintRule>, String> {
+    let value: toml::Table = toml::from_str(catalog).map_err(|err| format!("rules.toml: {err}"))?;
+    let rules = value
+        .get("rule")
+        .and_then(toml::Value::as_array)
+        .ok_or("rules.toml: no [[rule]] tables")?;
+    let mut lints = Vec::new();
+    for rule in rules {
+        let field = |key: &str| rule.get(key).and_then(toml::Value::as_str);
+        if field("kind") != Some("lint") {
+            continue;
+        }
+        match (field("id"), field("check")) {
+            (Some(id), Some(check)) if !check.is_empty() => lints.push(LintRule {
+                id: id.to_string(),
+                check: check.to_string(),
+            }),
+            _ => {
+                return Err(format!(
+                    "rules.toml: a lint rule needs an id and a check: {rule}"
+                ))
+            }
+        }
+    }
+    Ok(lints)
+}
+
+/// Lint rules whose `check` has no `// expect: <check>` marker in the probe.
+pub(crate) fn missing_probe_lines(rules: &[LintRule], probe: &str) -> Vec<String> {
+    let marked: BTreeSet<String> = expect_markers(probe).into_values().flatten().collect();
+    rules
+        .iter()
+        .filter(|rule| !marked.contains(&rule.check))
+        .map(|rule| {
+            format!(
+                "{}: no `// expect: {}` line in the probe",
+                rule.id, rule.check
+            )
+        })
+        .collect()
+}
+
+/// A lint name as the compiler prints it in a diagnostic: underscores.
+fn normalize_lint(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+/// Lint names rustc rejected with `E0602` (unknown lint) in
+/// `cargo clippy --message-format=json` output. Run clippy with
+/// `-W <check>` for each lint rule, and a name clippy does not know shows up here.
+pub(crate) fn rejected_lints(output: &str) -> BTreeSet<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let message = value.get("message")?;
+            if message.pointer("/code/code")?.as_str()? != "E0602" {
+                return None;
+            }
+            let text = message.get("message")?.as_str()?;
+            Some(text.split('`').nth(1)?.to_string())
+        })
+        .collect()
+}
+
+/// Lint rules whose `check` clippy rejected as an unknown lint.
+pub(crate) fn unknown_lints(rules: &[LintRule], rejected: &BTreeSet<String>) -> Vec<String> {
+    rules
+        .iter()
+        .filter(|rule| rejected.contains(&rule.check))
+        .map(|rule| format!("{}: clippy does not know {}", rule.id, rule.check))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{expect_markers, prove_markers, unexplained_keys, Diag};
+    use super::{
+        expect_markers, lint_rules, missing_probe_lines, prove_markers, rejected_lints,
+        unexplained_keys, unknown_lints, Diag,
+    };
 
     const TABLE: &str = include_str!("../templates/lints/tops-strict.toml");
     const CLIPPY: &str = include_str!("../templates/drop-in/clippy.toml");
+    const CATALOG: &str = include_str!("../templates/skills/rust-tops-style/rules.toml");
+    const PROBE: &str = include_str!("../templates/lints/tops-strict-probe.inc");
 
     #[test]
     fn shipped_clippy_toml_keys_name_enabled_lints_in_every_class() {
@@ -244,8 +333,14 @@ mod tests {
     #[test]
     fn clippy_markers_match_the_template_and_removing_one_fails() {
         let source = include_str!("../templates/lints/tops-strict-probe.inc");
-        let diags = run_probe(source);
-        assert!(prove_markers(source, &diags).is_ok(), "{diags:?}");
+        let checks: Vec<String> = lint_rules(CATALOG)
+            .unwrap()
+            .into_iter()
+            .map(|rule| rule.check)
+            .collect();
+        let diags = run_probe(source, &checks);
+        let verdict = prove_markers(source, &diags);
+        assert!(verdict.is_ok(), "{verdict:?}");
         let stripped = source.replacen(" // expect: clippy::todo", "", 1);
         let err = prove_markers(&stripped, &diags).unwrap_err();
         assert!(err.iter().any(|item| item.contains("unmarked")), "{err:?}");
@@ -256,7 +351,120 @@ mod tests {
         assert!(caught >= 13, "caught {caught} of {tricks}");
     }
 
-    fn run_probe(source: &str) -> Vec<Diag> {
+    /// Lints clippy rejects as unknown when asked for with `-W`. Runs the same
+    /// `cargo clippy` the probe test runs, so it cannot be skipped. Fails if
+    /// clippy did not build the scratch crate, since silence would mean "all known".
+    fn rejected_by_clippy(rules: &[super::LintRule]) -> std::collections::BTreeSet<String> {
+        let dir = std::env::temp_dir().join(format!("tops-lint-known-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let manifest =
+            "[package]\nname = \"tops-lint-known\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
+        std::fs::write(dir.join("Cargo.toml"), manifest).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        let mut command = std::process::Command::new("cargo");
+        command.args(["clippy", "--message-format=json", "--"]);
+        for rule in rules {
+            command.args(["-W", &rule.check]);
+        }
+        let output = command.current_dir(&dir).output().expect("cargo clippy");
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            text.contains("\"build-finished\""),
+            "clippy did not run: {text}"
+        );
+        rejected_lints(&text)
+    }
+
+    fn lint_catalog(check: &str) -> String {
+        format!("[[rule]]\nid = \"T-1\"\nkind = \"lint\"\ncheck = \"{check}\"\n")
+    }
+
+    #[test]
+    fn every_lint_rule_has_a_probe_line_and_a_lint_clippy_knows() {
+        let rules = lint_rules(CATALOG).unwrap();
+        assert!(!rules.is_empty(), "the catalog has no lint rules");
+        let missing = missing_probe_lines(&rules, PROBE);
+        let unknown = unknown_lints(&rules, &rejected_by_clippy(&rules));
+        assert!(
+            missing.is_empty() && unknown.is_empty(),
+            "no probe line: {missing:?}\nunknown to clippy: {unknown:?}"
+        );
+        eprintln!(
+            "every_lint_rule_has_a_probe_line ok ({} lint rules)",
+            rules.len()
+        );
+    }
+
+    #[test]
+    fn a_lint_rule_with_no_probe_line_fails() {
+        let rules = lint_rules(&lint_catalog("clippy::absolute_paths")).unwrap();
+        let missing = missing_probe_lines(&rules, PROBE);
+        assert_eq!(missing.len(), 1, "{missing:?}");
+        assert!(
+            missing.iter().all(|item| item.starts_with("T-1:")),
+            "{missing:?}"
+        );
+        let marked = format!("{PROBE}\nfn t() {{}} // expect: clippy::absolute_paths\n");
+        assert!(missing_probe_lines(&rules, &marked).is_empty());
+        eprintln!("a_lint_rule_with_no_probe_line_fails ok (planted clippy::absolute_paths)");
+    }
+
+    #[test]
+    fn a_lint_clippy_does_not_know_fails() {
+        let rules = lint_rules(&lint_catalog("clippy::not_a_real_lint")).unwrap();
+        let unknown = unknown_lints(&rules, &rejected_by_clippy(&rules));
+        assert_eq!(
+            unknown,
+            vec!["T-1: clippy does not know clippy::not_a_real_lint"]
+        );
+        eprintln!("a_lint_clippy_does_not_know_fails ok (planted not_a_real_lint)");
+    }
+
+    #[test]
+    fn probe_and_judgment_rules_need_no_probe_line() {
+        let catalog = "[[rule]]\nid = \"T-1\"\nkind = \"probe\"\ncheck = \"p\"\n\
+                       [[rule]]\nid = \"T-2\"\nkind = \"judgment\"\ncheck = \"\"\n";
+        assert_eq!(lint_rules(catalog), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn a_lint_rule_with_no_check_or_a_bad_catalog_is_an_error() {
+        let no_check = "[[rule]]\nid = \"T-1\"\nkind = \"lint\"\ncheck = \"\"\n";
+        assert!(lint_rules(no_check).is_err());
+        assert!(lint_rules("[[rule]\n").is_err());
+        assert!(lint_rules("title = \"x\"\n").is_err());
+    }
+
+    #[test]
+    fn rejected_lints_reads_only_unknown_lint_errors() {
+        let output = concat!(
+            "{\"reason\":\"compiler-message\",\"message\":{\"code\":{\"code\":\"E0602\"},\"message\":\"unknown lint: `clippy::nope`\"}}\n",
+            "{\"reason\":\"compiler-message\",\"message\":{\"code\":{\"code\":\"E0133\"},\"message\":\"unknown lint: `x`\"}}\n",
+            "{\"reason\":\"compiler-message\",\"message\":{\"code\":null,\"message\":\"x\"}}\n",
+            "not json\n",
+        );
+        let rejected = rejected_lints(output);
+        assert_eq!(rejected.into_iter().collect::<Vec<_>>(), ["clippy::nope"]);
+    }
+
+    /// Compiles the probe as `rust-tops-style` runs it: the strict table, then
+    /// `-W` for every lint-kind catalog check, which reaches lints in neither
+    /// the table nor `clippy::all`.
+    fn run_probe(source: &str, catalog_checks: &[String]) -> Vec<Diag> {
         let dir = std::env::temp_dir().join(format!("tops-strict-probe-{}", std::process::id()));
         #[expect(
             clippy::let_underscore_must_use,
@@ -273,6 +481,11 @@ mod tests {
         std::fs::write(dir.join("src/lib.rs"), source).unwrap();
         let output = std::process::Command::new("cargo")
             .args(["clippy", "--message-format=json", "--", "-W", "clippy::all"])
+            .args(
+                catalog_checks
+                    .iter()
+                    .flat_map(|check| ["-W", check.as_str()]),
+            )
             .current_dir(&dir)
             .output()
             .expect("cargo clippy");
@@ -439,6 +652,23 @@ mod tests {
         blocks
     }
 
+    /// The lint a diagnostic belongs to. Rustc gives a few lints an error code
+    /// (`E0133` for `unsafe_op_in_unsafe_fn`); a note then says
+    /// "requested on the command line with `-W <lint>`", and that names it.
+    fn lint_of(message: &serde_json::Value, code: &str) -> String {
+        let named = message
+            .get("children")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|child| child.get("message")?.as_str())
+            .find_map(|text| text.split("`-W ").nth(1)?.split('`').next());
+        match named {
+            Some(name) if code.starts_with('E') => super::normalize_lint(name),
+            _ => code.to_string(),
+        }
+    }
+
     fn parse_diags(output: &str) -> Vec<Diag> {
         let mut diags = Vec::new();
         for line in output.lines() {
@@ -472,7 +702,7 @@ mod tests {
                     reason = "already in this crate when the strict table was turned on"
                 )]
                 line: line_no as usize,
-                lint: code.to_string(),
+                lint: lint_of(message, code),
             });
         }
         diags
