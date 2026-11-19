@@ -222,6 +222,12 @@ fn init_with(name: &str, class: &str, extra: &[&str]) -> Fixture {
         "init: {}",
         String::from_utf8_lossy(&init.stderr)
     );
+    // `cargo metadata` is asked about a project with a manifest.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
     stub(&fixture.bin, "cargo", CARGO_STUB);
     for plugin in PLUGINS {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
@@ -1655,7 +1661,9 @@ fn a_custom_cargo_target_dir_holds_lcov_crap_and_the_laws_report() {
     ] {
         assert!(log.lines().any(|line| line == run), "{run}: {log}");
     }
-    assert_eq!(metadata_runs(&fixture), 0, "CARGO_TARGET_DIR is set: {log}");
+    // The variable names where the report goes; it does not stand in for
+    // the manifest check, so `cargo metadata` runs once either way.
+    assert_eq!(metadata_runs(&fixture), 1, "CARGO_TARGET_DIR is set: {log}");
     // H-35 and H-43 read the artifacts where this gate wrote them.
     let cases: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(report.join("cases.json")).expect("read"))
@@ -2057,7 +2065,12 @@ fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
             "{dry}"
         );
         assert!(dry.contains(&must), "{dry}");
-        assert!(cargo_log(&fixture).is_empty(), "a dry run ran cargo");
+        assert!(
+            cargo_log(&fixture)
+                .lines()
+                .all(|line| line.starts_with("metadata ")),
+            "a dry run ran a layer"
+        );
         let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
         assert_eq!(out.status.code(), Some(0), "{text}");
         assert!(text.contains(&must), "{text}");

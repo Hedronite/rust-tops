@@ -958,44 +958,6 @@
       "line": 452
     },
     {
-      "coverage": 95.23809523809524,
-      "crap": 1.0001079796998165,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::new",
-      "line": 773,
-      "uncovered": [
-        {
-          "end": 784,
-          "start": 784
-        }
-      ]
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::query",
-      "line": 797
-    },
-    {
-      "coverage": 100.0,
-      "crap": 3.0,
-      "cyclomatic": 3.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::shared_from",
-      "line": 822
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::take",
-      "line": 835
-    },
-    {
       "coverage": 70.83333333333334,
       "crap": 8.215784143518517,
       "cyclomatic": 7.0,
@@ -1027,14 +989,6 @@
     },
     {
       "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "command_count",
-      "line": 859
-    },
-    {
-      "coverage": 100.0,
       "crap": 1.0,
       "cyclomatic": 1.0,
       "file": "./crates/cargo-tops/src/main.rs",
@@ -1050,22 +1004,6 @@
       "line": 269
     },
     {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "finish",
-      "line": 934
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "has_origin_main",
-      "line": 1048
-    },
-    {
       "coverage": 97.5609756097561,
       "crap": 3.0001305842921604,
       "cyclomatic": 3.0,
@@ -1078,14 +1016,6 @@
           "start": 238
         }
       ]
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "laws_evaluated",
-      "line": 907
     },
     {
       "coverage": 100.0,
@@ -1132,14 +1062,6 @@
       "crap": 1.0,
       "cyclomatic": 1.0,
       "file": "./crates/cargo-tops/src/main.rs",
-      "function": "ran_commands",
-      "line": 753
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
       "function": "refused",
       "line": 338
     },
@@ -1150,54 +1072,6 @@
       "file": "./crates/cargo-tops/src/main.rs",
       "function": "run",
       "line": 101
-    },
-    {
-      "coverage": 100.0,
-      "crap": 3.0,
-      "cyclomatic": 3.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_chain",
-      "line": 943
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_failure",
-      "line": 919
-    },
-    {
-      "coverage": 100.0,
-      "crap": 5.0,
-      "cyclomatic": 5.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_mutation",
-      "line": 1014
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_pinned_crap",
-      "line": 986
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "tool",
-      "line": 1097
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "tool_pin",
-      "line": 965
     },
     {
       "coverage": 68.29268292682927,

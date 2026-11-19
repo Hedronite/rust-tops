@@ -284,7 +284,9 @@ fn document(parts: &Parts<'_>, kind: Kind) -> Value {
     doc.insert("layers".into(), json!(layers));
     doc.insert("disabled".into(), json!(disabled));
     doc.insert("laws_checked".into(), json!(checked));
-    doc.insert("laws_total".into(), json!(total));
+    if let Some(total) = total {
+        doc.insert("laws_total".into(), json!(total));
+    }
     doc.insert("laws".into(), json!(laws));
     Value::Object(doc)
 }
@@ -440,8 +442,8 @@ fn read_cases(report_dir: &Path) -> Option<Value> {
 
 /// The laws as `cases.json` has them, how many were checked, and the total.
 /// Without a `cases.json` from this gate there are none to show.
-fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, usize) {
-    let total = parts.judged.map_or(0, |judged| judged.law_total);
+fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, Option<usize>) {
+    let total = parts.judged.map(|judged| judged.law_total);
     let ran = parts.judged.is_some_and(|judged| judged.bend_ran);
     let cases = ran.then(|| read_cases(&parts.report_dir)).flatten();
     let Some(list) = cases
@@ -467,7 +469,7 @@ fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, usize) {
         .iter()
         .filter(|law| law.get("status").and_then(Value::as_str) == Some("checked"))
         .count();
-    (rows, checked, list.len())
+    (rows, checked, Some(list.len()))
 }
 
 #[cfg(test)]

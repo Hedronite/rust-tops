@@ -59,14 +59,22 @@ const CARGO_BUILTINS: [&str; 6] = ["test", "build", "check", "doc", "run", "benc
 
 /// The first line `<tool> --version` prints, or `None` when the tool does
 /// not answer. A `cargo` subcommand asks itself; a built-in asks `cargo`.
-fn version_of(argv: &[String], cache: &mut HashMap<String, Option<String>>) -> Option<String> {
+fn version_of(
+    dir: &Path,
+    argv: &[String],
+    cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
     let (program, rest) = argv.split_first()?;
     let asks = version_ask(program, rest.first().map(String::as_str));
     cache
         .entry(asks.join(" "))
         .or_insert_with(|| {
             let (head, tail) = asks.split_first()?;
-            let out = Command::new(head).args(tail).output().ok()?;
+            let out = Command::new(head)
+                .args(tail)
+                .current_dir(dir)
+                .output()
+                .ok()?;
             out.status.success().then(|| {
                 String::from_utf8_lossy(&out.stdout)
                     .lines()
@@ -183,11 +191,10 @@ impl<'a> Runner<'_, 'a> {
             let run = run_mutation(self.dir, &layer.id, mutation).map_err(Fault::env)?;
             // The tool is asked for its version only when it ran: a vacuous
             // or failed diff runs no `cargo mutants`.
-            let version = run
-                .cmd
-                .contains(&mutation.mutants.display())
-                .then(|| version_of(&mutation.mutants.argv, &mut self.versions))
-                .flatten();
+            let version = (run.outcome != Outcome::ToolMissing
+                && run.cmd.contains(&mutation.mutants.display()))
+            .then(|| version_of(self.dir, &mutation.mutants.argv, &mut self.versions))
+            .flatten();
             self.done.record(run, clock, version);
         }
         Ok(())
@@ -224,7 +231,7 @@ impl<'a> Runner<'_, 'a> {
             // A tool that is not there has no version to ask for.
             None => first_tool(chain)
                 .filter(|_| run.outcome != Outcome::ToolMissing)
-                .and_then(|argv| version_of(argv, &mut self.versions)),
+                .and_then(|argv| version_of(self.dir, argv, &mut self.versions)),
         };
         self.done.record(run, clock, version);
         Ok(())
@@ -277,7 +284,9 @@ impl Executed<'_> {
             .iter()
             .filter(|timing| timing.layer == layer)
             .map(|timing| timing.seconds)
-            .sum()
+            .sum::<f64>()
+            // An empty float sum is -0.0; a layer that never ran took 0.0.
+            + 0.0
     }
 
     /// The tool versions seen for `layer`, once each, joined.
@@ -486,7 +495,8 @@ mod tests {
         };
         assert!((done.seconds("a") - 3.5).abs() < 1e-9);
         assert!((done.seconds("b") - 4.0).abs() < 1e-9);
-        assert!(done.seconds("c").abs() < 1e-9);
+        // A layer that never ran took 0.0, not -0.0.
+        assert!(done.seconds("c").abs() < 1e-9 && done.seconds("c").is_sign_positive());
     }
 
     #[test]
