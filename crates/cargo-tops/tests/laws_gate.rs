@@ -250,7 +250,9 @@ fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
     edit_yaml(&fixture, |doc| {
         for layer in doc["layers"].as_array_mut().expect("layers") {
             let id = layer["id"].as_str().expect("layer id").to_string();
-            layer["enabled"] = serde_json::Value::Bool(keep.contains(&id.as_str()));
+            // Protocol 1.3.0: check refuses an instance with a class-required layer off.
+            let required = id == "security-advisory" || id == "property";
+            layer["enabled"] = serde_json::Value::Bool(required || keep.contains(&id.as_str()));
         }
     });
     fixture
@@ -459,16 +461,6 @@ fn stub_cargo_failing(fixture: &Fixture, pattern: &str, code: u8) {
         1,
     );
     stub(&fixture.bin, "cargo", &body);
-}
-
-fn set_tier(fixture: &Fixture, id: &str, tier: u8) {
-    edit_yaml(fixture, |doc| {
-        for layer in doc["layers"].as_array_mut().expect("layers") {
-            if layer["id"] == id {
-                layer["tier"] = serde_json::Value::from(tier);
-            }
-        }
-    });
 }
 
 /// The layers that run the test suite.
@@ -964,7 +956,7 @@ fn a_layer_that_runs_no_command_makes_the_count_short() {
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
     assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
-        text.contains("  - count: 3 command(s) ran; 1 of 2 enabled layer(s) at tier <= 1 ran one; none ran for: coverage"),
+        text.contains("  - count: 4 command(s) ran; 2 of 4 enabled layer(s) at tier <= 1 ran one; property took the coverage run; none ran for: coverage, property"),
         "{text}"
     );
     assert!(!text.contains("\nok: "), "{text}");
@@ -980,7 +972,7 @@ fn the_bend_run_is_the_laws_layer_s_command() {
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(
-        text.contains("count: 1 command(s) ran; 1 of 1 enabled layer(s) at tier <= 1 ran one\n"),
+        text.contains("count: 3 command(s) ran; 3 of 3 enabled layer(s) at tier <= 1 ran one\n"),
         "{text}"
     );
     assert!(!text.contains("none ran for"), "{text}");
@@ -1299,10 +1291,10 @@ fn coverage_in_range_is_the_one_test_run_of_unit_integration_and_property() {
         assert!(!text.contains(&format!("==> [{layer}] cargo")), "{text}");
     }
     assert!(
-        text.contains("\ncount: 1 command(s) ran; 4 of 4 enabled layer(s) at tier <= 1 ran one; unit, integration, property took the coverage run\n"),
+        text.contains("\ncount: 2 command(s) ran; 5 of 5 enabled layer(s) at tier <= 1 ran one; unit, integration, property took the coverage run\n"),
         "{text}"
     );
-    assert!(text.contains("\nok: 1 command(s) passed\n"), "{text}");
+    assert!(text.contains("\nok: 2 command(s) passed\n"), "{text}");
 
     // A dry run lists the one command and still is not a pass.
     fs::remove_file(fixture.root.join("cargo.log")).expect("clear the cargo log");
@@ -1318,7 +1310,7 @@ fn coverage_in_range_is_the_one_test_run_of_unit_integration_and_property() {
         "{text}"
     );
     assert!(
-        text.contains("dry-run: 1 command(s) listed, 0 run"),
+        text.contains("dry-run: 2 command(s) listed, 0 run"),
         "{text}"
     );
     assert!(nextest_runs(&fixture).is_empty(), "{}", cargo_log(&fixture));
@@ -1342,7 +1334,7 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
         );
     }
     assert!(
-        text.contains("count: 0 command(s) ran; 0 of 4 enabled layer(s) at tier <= 1 ran one; unit, integration, property took the coverage run; none ran for: unit, integration, coverage, property"),
+        text.contains("count: 1 command(s) ran; 1 of 5 enabled layer(s) at tier <= 1 ran one; unit, integration, property took the coverage run; none ran for: unit, integration, coverage, property"),
         "{text}"
     );
     assert!(!text.contains("\nok: "), "{text}");
@@ -1372,7 +1364,7 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
         );
     }
     assert!(
-        text.contains("fail: 4 problem(s), 1 command(s) run"),
+        text.contains("fail: 4 problem(s), 2 command(s) run"),
         "{text}"
     );
 }
@@ -1380,20 +1372,17 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
 #[test]
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself() {
-    // Coverage above --max-tier, then coverage off: no coverage run either way.
-    for (name, edit) in [("above", true), ("off", false)] {
+    // Coverage off: no coverage run. (Tiers are fixed since 1.3.0, so an
+    // instance can no longer lift coverage above --max-tier.)
+    for name in ["off"] {
         let fixture = fixture_with(&format!("one-run-{name}"), &TEST_LAYERS);
-        if edit {
-            set_tier(&fixture, "coverage", 2);
-        } else {
-            edit_yaml(&fixture, |doc| {
-                for layer in doc["layers"].as_array_mut().expect("layers") {
-                    if layer["id"] == "coverage" {
-                        layer["enabled"] = serde_json::Value::Bool(false);
-                    }
+        edit_yaml(&fixture, |doc| {
+            for layer in doc["layers"].as_array_mut().expect("layers") {
+                if layer["id"] == "coverage" {
+                    layer["enabled"] = serde_json::Value::Bool(false);
                 }
-            });
-        }
+            }
+        });
         let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
         assert_eq!(out.status.code(), Some(0), "{name}: {text}");
         assert_eq!(
@@ -1423,20 +1412,17 @@ fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself()
         );
         assert!(!text.contains("==> [coverage]"), "{name}: {text}");
         assert!(
-            text.contains("\ncount: 2 command(s) ran; 3 of 3 enabled layer(s) at tier <= 1 ran one; integration took the unit run\n"),
+            text.contains("\ncount: 3 command(s) ran; 4 of 4 enabled layer(s) at tier <= 1 ran one; integration took the unit run\n"),
             "{name}: {text}"
         );
-        let skipped = if edit {
-            "above --max-tier 1, not judged: coverage"
-        } else {
-            "not run (enabled: false): "
-        };
-        assert!(text.contains(skipped), "{name}: {text}");
+        assert!(
+            text.contains("not run (enabled: false): "),
+            "{name}: {text}"
+        );
     }
 
     // --max-tier below coverage's tier: only unit is in range, and it runs.
     let fixture = fixture_with("one-run-tier-0", &TEST_LAYERS);
-    set_tier(&fixture, "coverage", 1);
     let (out, text) = gate_with(
         &fixture,
         path_with_only_stubs(&fixture.bin),
@@ -1444,13 +1430,17 @@ fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself()
         &["--max-tier", "0"],
     );
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(nextest_runs(&fixture), [UNIT_RUN], "{text}");
+    let runs = nextest_runs(&fixture);
     assert!(
-        text.contains("above --max-tier 0, not judged: integration, coverage, property"),
+        runs.len() == 1 && runs.iter().all(|run| run.starts_with("llvm-cov nextest ")),
+        "{runs:?}: {text}"
+    );
+    assert!(
+        text.contains("above --max-tier 0, not judged: integration, property"),
         "{text}"
     );
     assert!(
-        text.contains("\ncount: 1 command(s) ran; 1 of 1 enabled layer(s) at tier <= 0 ran one\n"),
+        text.contains("\ncount: 2 command(s) ran; 3 of 3 enabled layer(s) at tier <= 0 ran one; unit took the coverage run\n"),
         "{text}"
     );
 }
@@ -1585,7 +1575,7 @@ fn a_disabled_layer_is_printed_as_not_run() {
     }
     let (_, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
     assert!(
-        text.contains("count: 3 command(s) ran; 1 of 1 enabled layer(s) at tier <= 1 ran one\n"),
+        text.contains("count: 5 command(s) ran; 3 of 3 enabled layer(s) at tier <= 1 ran one\n"),
         "{text}"
     );
 
@@ -1825,7 +1815,7 @@ fn an_empty_diff_is_vacuous_and_counts_for_no_law() {
     );
     assert!(!text.contains("Vacuous: no origin/main"), "{text}");
     assert!(
-        text.contains("ok: 3 command(s) passed, 1 vacuous (counted for no law)"),
+        text.contains("ok: 5 command(s) passed, 1 vacuous (counted for no law)"),
         "{text}"
     );
     assert!(

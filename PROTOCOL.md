@@ -15,7 +15,7 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 
 > **1.2.0:** states what the CRAP thresholds apply to and how the gate holds existing code (§2.1), when an exhaustive dispatch `match` takes an exemption instead of a split (§2.2), how `max_fn_cc` relates to the CRAP threshold (§5.6), how the gate judges the coverage floors (§7.5) and the CRAP baseline (§16), how exemptions are matched (§19), and the `RUST-TOPS.md` record every adopting repo keeps (§14.4). No default threshold and no part of the CRAP formula changed.
 
-> **1.3.0:** fixes each layer's tier by its id and moves `security-advisory` to tier 0 (§3), makes `cargo tops check` hold an instance to its class floors and required layers (§4), and renames this file from `RUST_TOPS.md` to `PROTOCOL.md`. §14.4 still requires each adopting repo's root `RUST-TOPS.md`. No default threshold and no part of the CRAP formula changed.
+> **1.3.0:** fixes each layer's tier by its id and moves `security-advisory` to tier 0 (§3), makes `cargo tops check` hold an instance to its class floors and required layers (§4), and takes the file name `PROTOCOL.md` (the changelog names the old one). §14.4 still requires each adopting repo's root `RUST-TOPS.md`. No default threshold and no part of the CRAP formula changed.
 
 ## 0. Purpose
 
@@ -1040,7 +1040,7 @@ This spec is `1.3.0`. Additive layers bump minor. Changing a default threshold o
 
 1.2.0 states how the thresholds apply to new and changed code and the baseline ratchet (§2.1, §16), the dispatch-match exemption (§2.2), the relation of `max_fn_cc` to CRAP (§5.6), how the floors are judged (§7.5), how exemptions are read (§19), and the adoption record (§14.4). The schema adds the optional `gates.crap.baseline`. A 1.1.0 instance still validates. No default threshold and no part of the formula changed.
 
-1.3.0 fixes the tier of each layer by its id and moves `security-advisory` to tier 0 (§3), makes `check` hold an instance to its class (§4), and renames the file to `PROTOCOL.md`. The schema describes `tier` as fixed by layer id. A 1.2.0 instance with a loose floor or a wrong tier now fails `check` until it is fixed or carries a dated exemption. No default threshold and no part of the formula changed.
+1.3.0 fixes the tier of each layer by its id and moves `security-advisory` to tier 0 (§3), makes `check` hold an instance to its class (§4), and takes the file name `PROTOCOL.md`. The schema describes `tier` as fixed by layer id. A 1.2.0 instance with a loose floor or a wrong tier now fails `check` until it is fixed or carries a dated exemption. No default threshold and no part of the formula changed.
 
 ---
 
