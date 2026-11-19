@@ -958,44 +958,6 @@
       "line": 452
     },
     {
-      "coverage": 95.23809523809524,
-      "crap": 1.0001079796998165,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::new",
-      "line": 773,
-      "uncovered": [
-        {
-          "end": 784,
-          "start": 784
-        }
-      ]
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::query",
-      "line": 797
-    },
-    {
-      "coverage": 100.0,
-      "crap": 3.0,
-      "cyclomatic": 3.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::shared_from",
-      "line": 822
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "TestCommands::take",
-      "line": 835
-    },
-    {
       "coverage": 70.83333333333334,
       "crap": 8.215784143518517,
       "cyclomatic": 7.0,
@@ -1027,14 +989,6 @@
     },
     {
       "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "command_count",
-      "line": 859
-    },
-    {
-      "coverage": 100.0,
       "crap": 1.0,
       "cyclomatic": 1.0,
       "file": "./crates/cargo-tops/src/main.rs",
@@ -1050,40 +1004,6 @@
       "line": 269
     },
     {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "finish",
-      "line": 934
-    },
-    {
-      "coverage": 98.96373056994818,
-      "crap": 32.00113950967422,
-      "cyclomatic": 32.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "gate",
-      "line": 489,
-      "uncovered": [
-        {
-          "end": 499,
-          "start": 499
-        },
-        {
-          "end": 681,
-          "start": 681
-        }
-      ]
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "has_origin_main",
-      "line": 1048
-    },
-    {
       "coverage": 97.5609756097561,
       "crap": 3.0001305842921604,
       "cyclomatic": 3.0,
@@ -1096,14 +1016,6 @@
           "start": 238
         }
       ]
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "laws_evaluated",
-      "line": 907
     },
     {
       "coverage": 100.0,
@@ -1147,22 +1059,6 @@
     },
     {
       "coverage": 100.0,
-      "crap": 11.0,
-      "cyclomatic": 11.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "plan_for",
-      "line": 1104
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "ran_commands",
-      "line": 753
-    },
-    {
-      "coverage": 100.0,
       "crap": 1.0,
       "cyclomatic": 1.0,
       "file": "./crates/cargo-tops/src/main.rs",
@@ -1176,72 +1072,6 @@
       "file": "./crates/cargo-tops/src/main.rs",
       "function": "run",
       "line": 101
-    },
-    {
-      "coverage": 100.0,
-      "crap": 3.0,
-      "cyclomatic": 3.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_chain",
-      "line": 943
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_failure",
-      "line": 919
-    },
-    {
-      "coverage": 100.0,
-      "crap": 5.0,
-      "cyclomatic": 5.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_mutation",
-      "line": 1014
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_pinned_crap",
-      "line": 986
-    },
-    {
-      "coverage": 65.21739130434783,
-      "crap": 12.408564148927423,
-      "cyclomatic": 9.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_step",
-      "line": 1063,
-      "uncovered": [
-        {
-          "end": 1079,
-          "start": 1079
-        },
-        {
-          "end": 1093,
-          "start": 1084
-        }
-      ]
-    },
-    {
-      "coverage": 100.0,
-      "crap": 1.0,
-      "cyclomatic": 1.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "tool",
-      "line": 1097
-    },
-    {
-      "coverage": 100.0,
-      "crap": 4.0,
-      "cyclomatic": 4.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "tool_pin",
-      "line": 965
     },
     {
       "coverage": 68.29268292682927,
@@ -3400,6 +3230,76 @@
       "file": "./xtask/tests/sync.rs",
       "function": "xtask",
       "line": 26
+    },
+    {
+      "coverage": 100.0,
+      "crap": 11.0,
+      "cyclomatic": 11.0,
+      "file": "./crates/cargo-tops/src/gate/plan.rs",
+      "function": "plan_for",
+      "line": 141
+    },
+    {
+      "coverage": 95.65217391304348,
+      "crap": 9.01,
+      "cyclomatic": 9.0,
+      "file": "./crates/cargo-tops/src/gate/execute.rs",
+      "function": "run_step",
+      "line": 405,
+      "uncovered": [
+        {
+          "end": 421,
+          "start": 421
+        }
+      ]
+    },
+    {
+      "coverage": 88.88888888888889,
+      "crap": 9.11,
+      "cyclomatic": 9.0,
+      "file": "./crates/cargo-tops/src/gate/mod.rs",
+      "function": "run",
+      "line": 85,
+      "uncovered": [
+        {
+          "end": 105,
+          "start": 105
+        },
+        {
+          "end": 109,
+          "start": 109
+        }
+      ]
+    },
+    {
+      "coverage": 100.0,
+      "crap": 8.0,
+      "cyclomatic": 8.0,
+      "file": "./crates/cargo-tops/src/gate/execute.rs",
+      "function": "Runner::chain",
+      "line": 196
+    },
+    {
+      "coverage": 100.0,
+      "crap": 7.0,
+      "cyclomatic": 7.0,
+      "file": "./crates/cargo-tops/src/gate/report.rs",
+      "function": "print_summary",
+      "line": 103
+    },
+    {
+      "coverage": 92.85714285714286,
+      "crap": 6.01,
+      "cyclomatic": 6.0,
+      "file": "./crates/cargo-tops/src/gate/plan.rs",
+      "function": "GatePlan::argv_of",
+      "line": 249,
+      "uncovered": [
+        {
+          "end": 251,
+          "start": 251
+        }
+      ]
     }
   ],
   "try_weight": 0.0,

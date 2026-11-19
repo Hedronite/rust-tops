@@ -222,6 +222,12 @@ fn init_with(name: &str, class: &str, extra: &[&str]) -> Fixture {
         "init: {}",
         String::from_utf8_lossy(&init.stderr)
     );
+    // `cargo metadata` is asked about a project with a manifest.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
     stub(&fixture.bin, "cargo", CARGO_STUB);
     for plugin in PLUGINS {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
@@ -428,6 +434,8 @@ fn cargo_ran(fixture: &Fixture, sub: &str) -> bool {
 fn nextest_runs(fixture: &Fixture) -> Vec<String> {
     cargo_log(fixture)
         .lines()
+        // `--version` asks are the report's tool versions, not test runs.
+        .filter(|line| !line.ends_with("--version"))
         .filter(|line| {
             let mut words = line.split_whitespace();
             match words.next() {
@@ -954,7 +962,7 @@ fn a_layer_that_runs_no_command_makes_the_count_short() {
     adopt(&fixture, Origin::Pushed);
     fs::remove_file(fixture.bin.join("cargo-llvm-cov")).expect("remove stub");
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
         text.contains("  - count: 3 command(s) ran; 1 of 2 enabled layer(s) at tier <= 1 ran one; none ran for: coverage"),
         "{text}"
@@ -981,6 +989,76 @@ fn the_bend_run_is_the_laws_layer_s_command() {
         "{text}"
     );
     assert!(text.contains("fail: 1 problem(s)"), "{text}");
+}
+
+/// `doc` at a JSON pointer; `Null` when it is not there.
+fn at(doc: &serde_json::Value, pointer: &str) -> serde_json::Value {
+    doc.pointer(pointer)
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// Every law of `report.json` says what the same law of `cases.json` says.
+fn expect_laws_match_cases(cases: &serde_json::Value, report: &serde_json::Value) {
+    let (from_cases, in_report) = (at(cases, "/laws"), at(report, "/laws"));
+    let (from_cases, in_report) = (
+        from_cases.as_array().expect("cases laws"),
+        in_report.as_array().expect("report laws"),
+    );
+    assert_eq!(in_report.len(), from_cases.len());
+    for (mine, theirs) in in_report.iter().zip(from_cases) {
+        for key in ["law", "status", "verdict", "reason_code", "reason"] {
+            let pointer = format!("/{key}");
+            assert_eq!(at(mine, &pointer), at(theirs, &pointer), "{key}: {theirs}");
+        }
+    }
+    assert_eq!(
+        at(report, "/laws_total"),
+        serde_json::json!(from_cases.len())
+    );
+    let checked = from_cases
+        .iter()
+        .filter(|law| at(law, "/status") == "checked")
+        .count();
+    assert_eq!(at(report, "/laws_checked"), serde_json::json!(checked));
+    assert!(
+        checked > 0 && checked < from_cases.len(),
+        "the fixture should hold both checked and unchecked laws: {cases}"
+    );
+}
+
+#[test]
+fn the_report_carries_the_laws_cases_json_holds_and_cases_json_is_unchanged() {
+    let fixture = fixture_with("laws-report", &["laws"]);
+    adopt(&fixture, Origin::None);
+    stub_bend(&fixture);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    let cases = cases_json(&fixture);
+    let raw =
+        fs::read_to_string(fixture.repo.join("target/rust-tops/report.json")).expect("report.json");
+    let report: serde_json::Value = serde_json::from_str(&raw).expect("report.json is json");
+    expect_laws_match_cases(&cases, &report);
+    let rows = at(&report, "/layers");
+    let row = rows
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| at(row, "/id") == "laws"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(at(&row, "/verdict"), "fail", "{row}");
+    assert_eq!(at(&row, "/tool_version"), at(&cases, "/bend"), "{row}");
+    assert_eq!(at(&report, "/exit_code"), 1);
+    // The Bend input keeps its shape: the keys the laws path always wrote.
+    for key in [
+        "protocol_layer",
+        "bend",
+        "program",
+        "bend_exit",
+        "passed",
+        "laws",
+    ] {
+        assert!(cases.get(key).is_some(), "cases.json lost {key}");
+    }
 }
 
 #[test]
@@ -1253,7 +1331,7 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
     let missing = fixture_with("one-run-missing", &TEST_LAYERS);
     fs::remove_file(missing.bin.join("cargo-llvm-cov")).expect("remove stub");
     let (out, text) = gate(&missing, path_with_only_stubs(&missing.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(nextest_runs(&missing).is_empty(), "{}", cargo_log(&missing));
     for layer in ["unit", "integration", "property"] {
         assert!(
@@ -1401,7 +1479,7 @@ fn a_path_bend_runs_only_when_opted_in_and_the_log_names_it() {
     let mut cmd = gate_command(&fixture, path_without_bend(&fixture.bin), None);
     cmd.env_remove("CARGO_TOPS_BEND_PATH");
     let (out, text) = run_gate(cmd);
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
         text.contains("laws: scripts/fetch-bend.sh failed"),
         "{text}"
@@ -1428,7 +1506,7 @@ fn a_failed_fetch_fails_the_gate() {
     let fixture = fixture("fetch");
     stub(&fixture.bin, "curl", "#!/bin/sh\nexit 22\n");
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
         text.contains(
             "sh scripts/fetch-bend.sh (Bend 2.0.36 from laws/bend.lock is not installed)"
@@ -1471,7 +1549,12 @@ fn a_disabled_laws_layer_never_calls_bend() {
         !fixture.root.join("bend.log").exists(),
         "bend was called with laws off"
     );
-    assert!(!fixture.repo.join("target/rust-tops").exists());
+    // The gate still writes its report; nothing of the laws layer is there.
+    let report = fixture.repo.join("target/rust-tops");
+    assert!(report.join("report.json").is_file());
+    for laws_file in ["cases.bend", "cases.json", "LAWS.bend"] {
+        assert!(!report.join(laws_file).exists(), "{laws_file}");
+    }
 }
 
 #[test]
@@ -1578,7 +1661,9 @@ fn a_custom_cargo_target_dir_holds_lcov_crap_and_the_laws_report() {
     ] {
         assert!(log.lines().any(|line| line == run), "{run}: {log}");
     }
-    assert_eq!(metadata_runs(&fixture), 0, "CARGO_TARGET_DIR is set: {log}");
+    // The variable names where the report goes; it does not stand in for
+    // the manifest check, so `cargo metadata` runs once either way.
+    assert_eq!(metadata_runs(&fixture), 1, "CARGO_TARGET_DIR is set: {log}");
     // H-35 and H-43 read the artifacts where this gate wrote them.
     let cases: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(report.join("cases.json")).expect("read"))
@@ -1633,7 +1718,7 @@ fn a_missing_coverage_tool_is_not_on_path_and_does_not_pass() {
     stub_bend(&fixture);
     fs::remove_file(fixture.bin.join("cargo-llvm-cov")).expect("remove stub");
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
         text.contains("coverage: `cargo-llvm-cov` not on PATH"),
         "{text}"
@@ -1656,7 +1741,7 @@ fn a_missing_mutants_tool_is_not_on_path_even_when_the_diff_is_empty() {
     stub_bend(&fixture);
     fs::remove_file(fixture.bin.join("cargo-mutants")).expect("remove stub");
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
         text.contains("mutation: `cargo-mutants` not on PATH"),
         "{text}"
@@ -1885,7 +1970,7 @@ fn a_missing_cargo_kani_fails_in_range_and_not_at_tier_1() {
         None,
         &["--max-tier", "4"],
     );
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(
         text.contains("formal-kani: `cargo-kani` not on PATH"),
         "{text}"
@@ -1980,7 +2065,12 @@ fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
             "{dry}"
         );
         assert!(dry.contains(&must), "{dry}");
-        assert!(cargo_log(&fixture).is_empty(), "a dry run ran cargo");
+        assert!(
+            cargo_log(&fixture)
+                .lines()
+                .all(|line| line.starts_with("metadata ")),
+            "a dry run ran a layer"
+        );
         let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
         assert_eq!(out.status.code(), Some(0), "{text}");
         assert!(text.contains(&must), "{text}");
@@ -2031,7 +2121,7 @@ fn a_pinned_cargo_crap_that_is_not_installed_is_missing_not_a_version_miss() {
     pin_crap(&fixture, "0.9.0");
     fs::remove_file(fixture.bin.join("cargo-crap")).expect("remove stub");
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
-    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(text.contains("crap: `cargo-crap` not on PATH"), "{text}");
     assert!(!text.contains("Failed [crap]"), "{text}");
     let log = cargo_log(&fixture);
