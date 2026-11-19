@@ -14,7 +14,6 @@ Spec, schema, class gates, and a thin orchestrator for the Cargo tools you alrea
   <a href="laws/README.md"><img alt="Bend 2.0.36" src="https://img.shields.io/badge/bend-2.0.36-B06038?style=flat-square&labelColor=1A1A1A" /></a>
   <br/>
   <a href="https://crates.io/crates/cargo-tops"><img alt="crates.io: cargo-tops" src="https://img.shields.io/crates/v/cargo-tops?style=flat-square&label=crates.io&labelColor=1A1A1A&color=B06038" /></a>
-  <a href="https://docs.rs/cargo-tops"><img alt="docs.rs: cargo-tops" src="https://img.shields.io/docsrs/cargo-tops?style=flat-square&label=docs.rs&labelColor=1A1A1A&color=B06038" /></a>
   <a href="https://github.com/Hedronite/rust-tops/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Hedronite/rust-tops?style=flat-square&label=release&labelColor=1A1A1A&color=C9A227" /></a>
   <a href="#pins"><img alt="MSRV 1.99.1" src="https://img.shields.io/badge/msrv-1.99.1-B06038?style=flat-square&labelColor=1A1A1A" /></a>
   <a href="LICENSE"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-C9A227?style=flat-square&labelColor=1A1A1A" /></a>
@@ -52,7 +51,7 @@ Protocol 1.3.0 fixes each layer's tier by its id and has `cargo tops check` hold
 | Protocol | 1.3.0 | [`PROTOCOL.md`](PROTOCOL.md), [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json) |
 | Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Current tag [`v0.4.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.4.0) (protocol 1.2.0). Previous tag [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) at commit `91417b5`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
-| Crate page | [crates.io/crates/cargo-tops](https://crates.io/crates/cargo-tops) 0.4.0 | [docs.rs/cargo-tops](https://docs.rs/cargo-tops) |
+| Crate page | 0.4.0 | [crates.io/crates/cargo-tops](https://crates.io/crates/cargo-tops). A binary crate: `cargo install cargo-tops` |
 | Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18.9, nushell 0.108.0 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
