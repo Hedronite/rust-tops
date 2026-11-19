@@ -19,7 +19,7 @@ fn fixture_src() -> PathBuf {
 }
 
 fn nu_bin() -> Option<PathBuf> {
-    let found = Command::new("sh")
+    Command::new("sh")
         .args(["-c", "command -v nu"])
         .output()
         .ok()
@@ -27,12 +27,7 @@ fn nu_bin() -> Option<PathBuf> {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    if found.is_some() {
-        return found;
-    }
-    let local = PathBuf::from("/tmp/nu/nu");
-    local.is_file().then_some(local)
+        .map(PathBuf::from)
 }
 
 /// The nu binary, or `None` to skip. `RUST_TOPS_REQUIRE_NU` makes a missing one fail.
@@ -450,4 +445,99 @@ fn a_denied_warnings_group_still_reports_findings() {
         .expect("the catalog has a clippy::unwrap_used rule");
     assert!(ids.contains(&"IDIOM-1".to_string()), "{ids:?}");
     assert!(ids.contains(&unwrap_id), "{ids:?}");
+}
+
+/// The `- `ID`: text` lines of the SKILL.md judgment list.
+fn skill_judgment_lines(skill: &str) -> Vec<(String, String)> {
+    skill
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("- `")?;
+            let (id, text) = rest.split_once("`: ")?;
+            let looks_like_id = id.split_once('-').is_some_and(|(head, tail)| {
+                !head.is_empty()
+                    && head.chars().all(|ch| ch.is_ascii_uppercase())
+                    && tail.chars().all(|ch| ch.is_ascii_digit())
+                    && !tail.is_empty()
+            });
+            looks_like_id.then(|| (id.to_owned(), text.to_owned()))
+        })
+        .collect()
+}
+
+/// Every way the SKILL.md judgment list disagrees with the style judgment
+/// rules of the catalog: an ID or text the catalog lacks, or an ID it misses.
+fn judgment_drift(skill: &str, rules: &[toml::Value]) -> Vec<String> {
+    let lines = skill_judgment_lines(skill);
+    let judgment: Vec<(&str, &str)> = rules
+        .iter()
+        .filter(|rule| rule_str(rule, "kind") == "judgment" && for_style(rule))
+        .map(|rule| (rule_str(rule, "id"), rule_str(rule, "rule")))
+        .collect();
+    let mut problems = Vec::new();
+    for (id, text) in &lines {
+        match judgment.iter().find(|(known, _)| known == id) {
+            None => problems.push(format!("SKILL.md names {id}, which the catalog lacks")),
+            Some((_, rule)) if rule != text => {
+                problems.push(format!("SKILL.md text for {id} differs from the catalog"));
+            }
+            Some(_) => {}
+        }
+    }
+    for (id, _) in &judgment {
+        if !lines.iter().any(|(listed, _)| listed == id) {
+            problems.push(format!("SKILL.md misses the style judgment {id}"));
+        }
+    }
+    problems
+}
+
+fn style_skill() -> String {
+    let path = manifest().join("templates/skills/rust-tops-style/SKILL.md");
+    fs::read_to_string(path).expect("style SKILL.md")
+}
+
+#[test]
+fn the_style_skill_judgment_list_matches_the_catalog() {
+    let skill = style_skill();
+    assert!(
+        skill_judgment_lines(&skill).len() >= 10,
+        "the judgment list was not found in SKILL.md"
+    );
+    assert_eq!(judgment_drift(&skill, &catalog()), Vec::<String>::new());
+}
+
+#[test]
+fn a_planted_judgment_drift_is_reported() {
+    let skill = style_skill();
+    let rules = catalog();
+    let (id, text) = skill_judgment_lines(&skill).remove(0);
+    let renamed = skill.replace(
+        &format!("- `{id}`: {text}"),
+        "- `ZZZ-9`: invented rule text",
+    );
+    let drift = judgment_drift(&renamed, &rules);
+    assert!(drift.iter().any(|p| p.contains("ZZZ-9")), "{drift:?}");
+    assert!(
+        drift
+            .iter()
+            .any(|p| p.contains(&format!("misses the style judgment {id}"))),
+        "{drift:?}"
+    );
+    let reworded = skill.replace(&text, &format!("{text} Changed."));
+    let drift = judgment_drift(&reworded, &rules);
+    assert!(
+        drift
+            .iter()
+            .any(|p| p.contains(&format!("text for {id} differs"))),
+        "{drift:?}"
+    );
+    let dropped = skill.replace(&format!("- `{id}`: {text}\n"), "");
+    let drift = judgment_drift(&dropped, &rules);
+    assert!(
+        drift
+            .iter()
+            .any(|p| p.contains(&format!("misses the style judgment {id}"))),
+        "{drift:?}"
+    );
 }

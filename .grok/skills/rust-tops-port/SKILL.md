@@ -5,14 +5,14 @@ description: Port code from C, C++, Python, Go, JavaScript or TypeScript to Rust
 
 # rust-tops-port
 
-Nushell (`nu`) is required. Run the script; do not re-derive its lists by hand. Each command prints one JSON object with `ok`, `command` and `data` or `error`. The script never prints a verdict.
+Nushell (`nu`) is required. Run the script; do not re-derive its lists by hand. Each command prints one JSON object with `ok`, `command` and `data` or `error`. The script never prints a verdict. `command` is the exact argv of each external command run, in order, joined by ` && `, with paths relative to `--path`; a command that runs none gives the script's own invocation.
 
 ```bash
 nu rust-tops-port.nu inventory --from <dir> --lang <c|cpp|python|go|js|ts> [--write port-map.toml]
 nu rust-tops-port.nu verify --map port-map.toml [--path .]
 ```
 
-`inventory` finds original tests with fixed patterns per language and sorts them. `--write` writes a map skeleton with one entry per test, and refuses to overwrite a file. Keep the map beside the Rust crate and give `from` as a path relative to the map.
+`inventory` finds original tests with fixed patterns per language and sorts them. For C and C++ it reads files under a `tests` directory and any `test_*.c`, `*_test.c`, `test_*.cpp` or `*_test.cpp` file at any depth. `--write` writes a map skeleton with one entry per test, and refuses to overwrite a file. Keep the map beside the Rust crate and give `from` as a path relative to the map.
 
 `verify` runs in the crate at `--path`. It fails when an original test has no entry or an empty `rust` name, when a mapped name is missing from `cargo test -- --list`, or when `cargo test` fails. Each finding carries a catalog `rule` and `fix`. `ok` is true only when all of that passes.
 

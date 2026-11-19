@@ -52,7 +52,7 @@ Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with 
 | Package | 0.4.0 | workspace [`Cargo.toml`](Cargo.toml). Previous tag [`v0.3.0`](https://github.com/Hedronite/rust-tops/releases/tag/v0.3.0) at commit `91417b5`. |
 | This package | edition 2021, MSRV 1.99.1 | [`Cargo.toml`](Cargo.toml); the `msrv` job uses Rust 1.99.1. Compiling this package needs Rust 1.99.1, and Cargo stops on an older compiler before the build. |
 | Crate page | not published yet | 0.4.0 has no [docs.rs/cargo-tops](https://docs.rs/cargo-tops) page until it is published |
-| Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18.9 | [`rust-tops.lock`](rust-tops.lock) |
+| Tool lock | rustc 1.99.1, cargo-nextest 0.9.145, cargo-crap 0.9.0, cargo-deny 0.18.9, nushell 0.108.0 | [`rust-tops.lock`](rust-tops.lock) |
 | Bend | 2.0.36 TOFU | [`laws/bend.lock`](laws/bend.lock). The upstream release is mutable and unsigned (no checksum file, no signatures, no attestations). |
 | Lean | 4.34.0 TOFU | [`laws/bend.lock`](laws/bend.lock) archive `lean-4.34.0-linux.tar.zst`, used by `bend PROOF.bend --verdict`. |
 

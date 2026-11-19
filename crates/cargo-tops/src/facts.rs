@@ -569,10 +569,11 @@ fn class_jobs(ctx: &Ctx) -> Choice {
 /// H-22. `static-lint` is an enabled tier-0 layer with `fmt_check`, and every
 /// workflow set, when there is one, runs `cargo fmt --check`.
 fn fmt_is_tier0(ctx: &Ctx) -> Choice {
-    let tier0 =
-        ctx.cfg.layers.iter().any(|layer| {
-            layer.id == "static-lint" && layer.enabled && layer.tier.unwrap_or(0) == 0
-        });
+    let tier0 = ctx.cfg.layers.iter().any(|layer| {
+        layer.id == "static-lint"
+            && layer.enabled
+            && crate::profile_data::tiers::tier_of(&layer.id) == Some(0)
+    });
     let fmt_check =
         yaml_at(&ctx.yaml, &["gates", "lint", "fmt_check"]).and_then(Value::as_bool) != Some(false);
     let mut read = vec!["rust-tops.yaml".to_string()];
@@ -926,7 +927,10 @@ fn perf_runner(ctx: &Ctx) -> Choice {
         .cfg
         .layers
         .iter()
-        .filter(|layer| layer.enabled && layer.tier.unwrap_or(0) <= ctx.max_tier)
+        .filter(|layer| {
+            layer.enabled
+                && crate::profile_data::tiers::tier_of(&layer.id).is_some_and(|t| t <= ctx.max_tier)
+        })
         .map(|layer| layer.id.as_str())
         .filter(|id| PERF_LAYERS.contains(id))
         .collect();
