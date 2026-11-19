@@ -23,13 +23,13 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - `rust-tops-review` ([#45](https://github.com/Hedronite/rust-tops/pull/45)): the new `style` command gives the style findings on the review range, and `answers` checks that every judgment rule was answered. `files` and `diff` are unchanged byte for byte.
   - Eval regression ([#46](https://github.com/Hedronite/rust-tops/pull/46)): fixtures that check the skills against upstream's eval cases.
 
-- Verdict pack (protocol 1.3.0, package unreleased). Draft: the G5 PR number is filled in when it opens.
+- Verdict pack (protocol 1.3.0, package unreleased). Protocol file rename and wiring: [#53](https://github.com/Hedronite/rust-tops/pull/53).
   - Tidy-up ([#49](https://github.com/Hedronite/rust-tops/pull/49), [#48](https://github.com/Hedronite/rust-tops/pull/48)): `port inventory` finds C and C++ tests outside `tests/`, `answers` prints relative paths, the skills share one `command` rule and one golden variable (`RUST_TOPS_BLESS`), the README pin table names Nushell and `xtask docs` guards it, the adopter `nextest.toml` carries no kit-only overrides, the `init` unsafe note is exact for the `forbid` fallback, and the toolchain-pin search walks up to the workspace or git root.
   - One report ([#51](https://github.com/Hedronite/rust-tops/pull/51)): every `cargo tops gate` run writes `<target>/rust-tops/report.json` (schema `schema/gate-report.schema.json`) with per-layer verdicts, commands, tool versions and seconds, and the law verdicts. `cases.json` is still written for Bend.
   - Exit codes ([#51](https://github.com/Hedronite/rust-tops/pull/51)): 0 pass; 1 the gate ran and failed (including a dry run and the short-command rule); 2 the config is invalid; 3 the environment (a required tool, or `cargo metadata`, is unavailable). Any non-zero exit still fails CI; the codes only say which kind.
   - Gate skill ([#52](https://github.com/Hedronite/rust-tops/pull/52)): `rust-tops-gate` reads `report.json`, not `cases.json`.
   - Fixed tiers ([#50](https://github.com/Hedronite/rust-tops/pull/50)): a layer's tier comes from its id (§3), and `security-advisory` moved from tier 5 to tier 0 so the default `--max-tier 1` gate runs the advisory check. `cargo tops check` now fails an instance whose layer tier differs from the table, whose floor is looser than its class profile, or that disables a layer its class requires.
-  - Protocol file rename: `RUST_TOPS.md` is now `PROTOCOL.md` (§14.4 still requires each repo's root `RUST-TOPS.md`). A test fails if a tracked file other than this changelog names the old file.
+  - Protocol file rename ([#53](https://github.com/Hedronite/rust-tops/pull/53)): `RUST_TOPS.md` is now `PROTOCOL.md` (§14.4 still requires each repo's root `RUST-TOPS.md`). A test fails if a tracked file other than this changelog names the old file.
 
 ### Changed
 
