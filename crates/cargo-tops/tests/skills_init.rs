@@ -50,7 +50,7 @@ const PHRASES: &[&str] = &[
     "profile, then algorithm",
     "the recorder never ran",
     "honor CARGO_BIN_EXE_*",
-    "read that law in rust-tops/cases.json and fix the fact it read",
+    "read that law in rust-tops/report.json and fix the fact it read",
     "the law was not checked. It is not a pass.",
     "does not vendor engines",
 ];
@@ -219,6 +219,11 @@ fn skill_text_is_portable_and_the_gate_remedies_match_agents_md() {
     assert!(gate.contains("Ack"));
     assert!(gate.contains("not-evaluated"));
     assert!(gate.contains("gate_green"));
+    assert!(gate.contains("report.json"));
+    assert!(
+        !gate.contains("cases.json"),
+        "the gate skill reads report.json only"
+    );
     assert!(gate.contains("no_fact_reader"));
     assert!(
         !gate.contains("^rm"),
@@ -309,6 +314,11 @@ fn nu_bin() -> Option<PathBuf> {
         .map(|text| text.trim().to_string())
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
+}
+
+/// The value at a JSON pointer, or null.
+fn at<'a>(doc: &'a serde_json::Value, pointer: &str) -> &'a serde_json::Value {
+    doc.pointer(pointer).unwrap_or(&serde_json::Value::Null)
 }
 
 fn parse_json(stdout: &[u8]) -> serde_json::Value {
@@ -496,8 +506,8 @@ fn smoke_gate(nu: &Path) {
 
     fs::create_dir_all(target.join("rust-tops")).unwrap();
     fs::write(
-        target.join("rust-tops/cases.json"),
-        r#"{"passed":true,"laws":[{"law":"old","status":"checked","verdict":"Allow"}]}"#,
+        target.join("rust-tops/report.json"),
+        r#"{"exit_code":0,"ok":true,"layers":[],"laws":[{"law":"old","status":"checked","verdict":"Allow"}]}"#,
     )
     .unwrap();
     let stale = run("missing");
@@ -520,7 +530,7 @@ fn smoke_gate(nu: &Path) {
     let stale_error = stale["error"].as_str().unwrap();
     assert!(stale_error.contains("exited"), "{stale}");
     assert!(
-        !stale_error.contains("cases.json is missing"),
+        !stale_error.contains("report.json is missing"),
         "a failed command was reported as a missing report: {stale}"
     );
 
@@ -544,7 +554,7 @@ fn smoke_gate(nu: &Path) {
     let no_tops_error = no_tops["error"].as_str().unwrap();
     assert!(no_tops_error.contains("no such command"), "{no_tops}");
     assert!(
-        !no_tops_error.contains("cases.json is missing"),
+        !no_tops_error.contains("report.json is missing"),
         "{no_tops}"
     );
 
@@ -588,6 +598,34 @@ fn smoke_gate(nu: &Path) {
         .as_str()
         .unwrap()
         .contains("specified missing branch"));
+    assert_eq!(at(cov, "/seconds"), 2.25);
+    assert_eq!(at(cov, "/tier"), 1);
+
+    let config = run("config-invalid");
+    assert_eq!(at(&config, "/ok"), false, "{config}");
+    assert_eq!(at(&config, "/exit"), 2, "{config}");
+    assert!(
+        at(&config, "/error")
+            .as_str()
+            .unwrap()
+            .contains("the config is invalid"),
+        "{config}"
+    );
+    let env = run("tool-missing");
+    assert_eq!(at(&env, "/ok"), false, "{env}");
+    assert_eq!(at(&env, "/exit"), 3, "{env}");
+    assert!(
+        at(&env, "/error")
+            .as_str()
+            .unwrap()
+            .contains("environment lacks a required tool"),
+        "{env}"
+    );
+    assert_eq!(at(&env, "/data/layers/0/verdict"), "tool-missing", "{env}");
+    assert!(at(&env, "/data/layers/0/remedy")
+        .as_str()
+        .unwrap()
+        .contains("install it"));
 
     let empty = root.join("no-bins");
     fs::create_dir_all(&empty).unwrap();
@@ -634,8 +672,8 @@ fn smoke_gate(nu: &Path) {
     // must still delete the previous report and print JSON.
     fs::create_dir_all(target.join("rust-tops")).unwrap();
     fs::write(
-        target.join("rust-tops/cases.json"),
-        r#"{"laws":[{"law":"stale-sentinel"}]}"#,
+        target.join("rust-tops/report.json"),
+        r#"{"exit_code":0,"layers":[],"laws":[{"law":"stale-sentinel"}]}"#,
     )
     .unwrap();
     let mut narrow = std::ffi::OsString::from(&bin);
@@ -663,10 +701,10 @@ fn smoke_gate(nu: &Path) {
     )]
     let tops_idx_627_16 = no_rm_json["ok"].clone();
     assert_eq!(tops_idx_627_16, true, "{no_rm_json}");
-    let leftover = fs::read_to_string(target.join("rust-tops/cases.json")).unwrap_or_default();
+    let leftover = fs::read_to_string(target.join("rust-tops/report.json")).unwrap_or_default();
     assert!(
         !leftover.contains("stale-sentinel"),
-        "previous cases.json survived: {leftover}"
+        "previous report.json survived: {leftover}"
     );
     #[expect(
         clippy::let_underscore_must_use,
