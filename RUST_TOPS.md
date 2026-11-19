@@ -187,7 +187,7 @@ Set `crate.class` in the instance file. Defaults below are the starting gate set
 | `workspace-root` | inherits per-package | | | | | | | | |
 
 **`check` holds an instance to its class (since 1.3.0).** `cargo tops check` fails an instance when:
-- a floor is looser than the class profile in `profiles/`: `gates.coverage.line_min_pct` and `region_min_pct`, the CRAP thresholds (a minimum may not drop, a maximum may not rise), and `gates.mutation.kill_rate_min_pct` and `unexplained_survivors_max`. A floor that is missing counts as looser. A live, dated exemption (§19) for the floor's layer (`coverage`, `crap` or `mutation`) lifts the failure; an expired one does not.
+- a floor is looser than the class profile in `profiles/`: `gates.coverage.line_min_pct` and `region_min_pct`, the CRAP thresholds (a minimum may not drop, a maximum may not rise), and `gates.mutation.kill_rate_min_pct` and `unexplained_survivors_max`. A floor that is missing counts as looser. A live, dated exemption (§19) for the floor's layer (`coverage`, `crap` or `mutation`) whose `path` covers the whole crate (`**`) lifts the failure; an exemption for part of the crate does not; an expired one does not.
 - a layer the class requires is disabled or absent: `security-advisory` for every class, and each layer a class profile marks `required` (§4 table).
 
 Each message names the file, the key, the class value and the one-line fix.

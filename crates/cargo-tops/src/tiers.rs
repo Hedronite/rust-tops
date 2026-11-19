@@ -223,7 +223,13 @@ fn floor_problem(
 fn live_exemption(doc: &Value, layer: &str, today: &str) -> bool {
     exemptions::for_layer(doc.get("exemptions"), layer)
         .iter()
-        .any(|record| record.live(today))
+        .any(|record| record.live(today) && covers_crate(&record.path))
+}
+
+/// Whether an exemption path covers the whole crate, the only reach that may
+/// lift a floor (VD-R7). A narrower glob exempts files, not the floor.
+fn covers_crate(path: &str) -> bool {
+    matches!(path, "**" | "./**" | "**/*" | "." | "./")
 }
 
 fn required_problems(
@@ -436,7 +442,11 @@ mod tests {
     }
 
     fn exemption(layer: &str, expires: &str) -> Value {
-        json!([{"path": "src/**", "layer": layer, "expires": expires,
+        exemption_at("**", layer, expires)
+    }
+
+    fn exemption_at(path: &str, layer: &str, expires: &str) -> Value {
+        json!([{"path": path, "layer": layer, "expires": expires,
                 "reason": "legacy module under rewrite", "owner": "team"}])
     }
 
@@ -448,6 +458,26 @@ mod tests {
         assert_eq!(check("f.yaml", &doc, TODAY), Vec::<String>::new());
         set(&mut doc, "/exemptions", exemption("coverage", "2026-11-19"));
         assert!(one(&doc).contains("gates.coverage.line_min_pct is 50"));
+    }
+
+    #[test]
+    fn an_exemption_for_part_of_the_crate_does_not_lift_a_floor() {
+        let mut doc = golden("library-core");
+        set(&mut doc, "/gates/coverage/line_min_pct", json!(50));
+        for path in ["src/**", "src/gen/*.rs", "tests/**"] {
+            set(
+                &mut doc,
+                "/exemptions",
+                exemption_at(path, "coverage", "2030-01-01"),
+            );
+            assert!(one(&doc).contains("gates.coverage.line_min_pct"), "{path}");
+        }
+        set(
+            &mut doc,
+            "/exemptions",
+            exemption_at("./**", "coverage", "2030-01-01"),
+        );
+        assert_eq!(check("f.yaml", &doc, TODAY), Vec::<String>::new());
     }
 
     #[test]
