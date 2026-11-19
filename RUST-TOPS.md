@@ -2,12 +2,12 @@
 
 This repository is the source of the Rust-TOPS protocol and of `cargo-tops`,
 and it adopts the protocol for its own code
-([Hedronite/rust-tops](https://github.com/Hedronite/rust-tops), RUST_TOPS.md §14.4).
+([Hedronite/rust-tops](https://github.com/Hedronite/rust-tops), PROTOCOL.md §14.4).
 
 | Item | Value |
 | --- | --- |
 | Protocol version | `1.2.0` |
-| Spec | [`RUST_TOPS.md`](RUST_TOPS.md) in this tree |
+| Spec | [`PROTOCOL.md`](PROTOCOL.md) in this tree |
 | cargo-tops | built from this checkout (`cargo install --path crates/cargo-tops --locked`), package 0.4.0 |
 
 ## Crates and thresholds

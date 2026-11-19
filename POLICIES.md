@@ -1,6 +1,6 @@
 # Rust-TOPS policies (gates / checks)
 
-This is the **practice layer**. It does not amend [`RUST_TOPS.md`](RUST_TOPS.md).
+This is the **practice layer**. It does not amend [`PROTOCOL.md`](PROTOCOL.md).
 Protocol 1.1.0 added the `laws` layer. Protocol 1.2.0 says how `cargo tops gate`
 judges the coverage floors and the CRAP threshold and ratchet of
 `rust-tops.yaml` (§2.1, §7.5, §16). The floors in this file are unchanged.
@@ -92,4 +92,4 @@ threshold. A refresh that lets a score rise is a loosened gate.
 ## Agent standing orders
 
 See [`AGENTS.md`](AGENTS.md). Coding agents fail closed on the gates above.
-The `laws` layer is protocol 1.1.0 ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md). Pack: [`laws/LAWS.bend`](laws/LAWS.bend).
+The `laws` layer is protocol 1.1.0 ([`PROTOCOL.md`](PROTOCOL.md) §3.1). Catalog: [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md). Pack: [`laws/LAWS.bend`](laws/LAWS.bend).

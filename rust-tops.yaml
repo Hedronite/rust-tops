@@ -5,7 +5,7 @@
 protocol:
   id: rust-tops
   version: "1.2.0"
-  spec_uri: "./RUST_TOPS.md"
+  spec_uri: "./PROTOCOL.md"
   adopted: "2026-09-25"
 
 crate:

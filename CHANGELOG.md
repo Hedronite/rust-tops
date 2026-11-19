@@ -6,7 +6,7 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 
 | Plane | What | Where |
 | --- | --- | --- |
-| Protocol | rust-tops contract | `RUST_TOPS.md` header (`1.2.0`) and `schema/` |
+| Protocol | rust-tops contract | `PROTOCOL.md` header (`1.2.0`) and `schema/` |
 | Package | `cargo-tops` and git tag | `v0.4.0`, Cargo `0.4.0` |
 
 Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0.
@@ -23,10 +23,27 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - `rust-tops-review` ([#45](https://github.com/Hedronite/rust-tops/pull/45)): the new `style` command gives the style findings on the review range, and `answers` checks that every judgment rule was answered. `files` and `diff` are unchanged byte for byte.
   - Eval regression ([#46](https://github.com/Hedronite/rust-tops/pull/46)): fixtures that check the skills against upstream's eval cases.
 
+- Verdict pack (protocol 1.3.0, package unreleased). Draft: the G2 and G4 PR numbers are filled in when they open.
+  - Tidy-up ([#49](https://github.com/Hedronite/rust-tops/pull/49), [#48](https://github.com/Hedronite/rust-tops/pull/48)): `port inventory` finds C and C++ tests outside `tests/`, `answers` prints relative paths, the skills share one `command` rule and one golden variable (`RUST_TOPS_BLESS`), the README pin table names Nushell and `xtask docs` guards it, the adopter `nextest.toml` carries no kit-only overrides, the `init` unsafe note is exact for the `forbid` fallback, and the toolchain-pin search walks up to the workspace or git root.
+  - One report (#TBD G2): every `cargo tops gate` run writes `<target>/rust-tops/report.json` (schema `schema/gate-report.schema.json`) with per-layer verdicts, commands, tool versions and seconds, and the law verdicts. `cases.json` is still written for Bend.
+  - Exit codes (#TBD G2): 0 pass; 1 the gate ran and failed (including a dry run and the short-command rule); 2 the config is invalid; 3 the environment (a required tool, or `cargo metadata`, is unavailable). Any non-zero exit still fails CI; the codes only say which kind.
+  - Gate skill (#TBD G4): `rust-tops-gate` reads `report.json`, not `cases.json`.
+  - Fixed tiers ([#50](https://github.com/Hedronite/rust-tops/pull/50)): a layer's tier comes from its id (§3), and `security-advisory` moved from tier 5 to tier 0 so the default `--max-tier 1` gate runs the advisory check. `cargo tops check` now fails an instance whose layer tier differs from the table, whose floor is looser than its class profile, or that disables a layer its class requires.
+  - Protocol file rename: `RUST_TOPS.md` is now `PROTOCOL.md` (§14.4 still requires each repo's root `RUST-TOPS.md`). A test fails if a tracked file other than this changelog names the old file.
+
 ### Changed
 
 - The `AGENTS.md` template (and its copies) no longer calls the upstream review skill an optional style pass; `rust-tops-review` runs it.
 - `.gitignore` lists `/mutants.out*`, the output the gate's mutation layer leaves in the repository root.
+
+### Upgrade to protocol 1.3.0
+
+Set `protocol.version: "1.3.0"`. `cargo tops check` now fails these, each with a message naming the file, key, class value and fix:
+
+- `layers[id=<layer>].tier` that differs from §3: set the table's tier or delete the key.
+- A floor looser than the class profile (`gates.coverage.line_min_pct`, `region_min_pct`, `gates.crap.threshold_agent`, `threshold_human`, `gates.mutation.kill_rate_min_pct`, `unexplained_survivors_max`) or a missing one: set the class value, or add a dated exemption for that layer with `path: "**"` and no `symbol`.
+- A disabled or absent `security-advisory` layer, or a layer your class requires: add it with `enabled: true`.
+- Links to `RUST_TOPS.md` break: use `PROTOCOL.md`.
 
 ## [0.4.0] - 2026-11-17
 

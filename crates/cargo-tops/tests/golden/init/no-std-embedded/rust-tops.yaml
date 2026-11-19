@@ -241,5 +241,5 @@ performance:
 protocol:
   adopted: "2026-09-24"
   id: "rust-tops"
-  spec_uri: "./RUST_TOPS.md"
+  spec_uri: "./PROTOCOL.md"
   version: "1.2.0"

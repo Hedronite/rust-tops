@@ -18,7 +18,7 @@ pub(crate) const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest
 pub(crate) const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml");
 pub(crate) const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
 pub(crate) const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
-/// The adoption record template (RUST_TOPS.md §14.4), with `{{mark}}`s.
+/// The adoption record template (PROTOCOL.md §14.4), with `{{mark}}`s.
 pub(crate) const RUST_TOPS_MD: &str = include_str!("../templates/drop-in/RUST-TOPS.md");
 
 /// Each `{{mark}}` in [`RUST_TOPS_MD`], the instance key that fills it, and

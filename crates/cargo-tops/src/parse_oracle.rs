@@ -158,7 +158,7 @@ fn with_acceptance_restored(mut value: serde_json::Value) -> serde_json::Value {
 }
 
 /// The profiles pack writes each class's CRAP numbers from `profiles/`. Of
-/// the oracle classes only binary-cli moved: agent 6 to 8 (RUST_TOPS.md §4).
+/// the oracle classes only binary-cli moved: agent 6 to 8 (PROTOCOL.md §4).
 /// Check that, then undo it so the rest still compares to the `968c390` oracle.
 fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::Value {
     if class == "binary-cli" {
