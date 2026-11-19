@@ -120,6 +120,8 @@ const FLOORS: [Floor; 6] = [
 ];
 
 /// A class profile key, and the layer a `required...` value switches on.
+/// `acceptance` (`binary-cli`: `required-on-binary`) is left out on purpose:
+/// it has no runner yet, so an enabled one fails the gate.
 const REQUIRED_BY_PROFILE: [(&str, &str); 5] = [
     ("property", "property"),
     ("fuzz", "fuzz"),
@@ -215,7 +217,7 @@ fn floor_problem(
     };
     Some(format!(
         "{file}: gates.{}.{key} is {have}, class {class} sets {wanted}; {verb} it to {wanted} \
-         or add a dated exemption for layer {} that has not expired (§19)",
+         or add a dated exemption for layer {} with path \"**\" and no symbol that has not expired (§19)",
         floor.section, floor.layer
     ))
 }
@@ -223,11 +225,12 @@ fn floor_problem(
 fn live_exemption(doc: &Value, layer: &str, today: &str) -> bool {
     exemptions::for_layer(doc.get("exemptions"), layer)
         .iter()
-        .any(|record| record.live(today) && covers_crate(&record.path))
+        .any(|record| record.live(today) && record.symbol.is_none() && covers_crate(&record.path))
 }
 
 /// Whether an exemption path covers the whole crate, the only reach that may
-/// lift a floor (VD-R7). A narrower glob exempts files, not the floor.
+/// lift a floor (VD-R7). A narrower glob exempts files, not the floor. A record
+/// that names a symbol exempts one function, so it never lifts a floor.
 fn covers_crate(path: &str) -> bool {
     matches!(path, "**" | "./**" | "**/*" | "." | "./")
 }
@@ -255,20 +258,22 @@ fn required_problem(file: &str, doc: &Value, layer: &str, who: &str) -> Option<S
     let entry = layers(doc)
         .iter()
         .find(|l| l.get("id").and_then(Value::as_str) == Some(layer));
-    let on = entry
-        .and_then(|l| l.get("enabled"))
-        .and_then(Value::as_bool);
-    (on != Some(true)).then(|| {
-        let state = if entry.is_some() {
-            "is false"
-        } else {
-            "is missing"
-        };
-        format!(
-            "{file}: layers[id={layer}].enabled {state}, {who} requires the {layer} layer (§4); \
-             set enabled: true"
-        )
-    })
+    let Some(entry) = entry else {
+        return Some(format!(
+            "{file}: layers has no entry with id {layer}, {who} requires the {layer} layer (§4); \
+             add an entry with id: {layer} and enabled: true"
+        ));
+    };
+    let on = entry.get("enabled").and_then(Value::as_bool);
+    let state = match on {
+        Some(true) => return None,
+        Some(false) => "is false",
+        None => "is not true or false",
+    };
+    Some(format!(
+        "{file}: layers[id={layer}].enabled {state}, {who} requires the {layer} layer (§4); \
+         set enabled: true"
+    ))
 }
 
 #[cfg(test)]
@@ -386,7 +391,8 @@ mod tests {
         assert_eq!(
             one(&doc),
             "rust-tops.yaml: gates.coverage.line_min_pct is 50, class library-core sets 95; \
-             raise it to 95 or add a dated exemption for layer coverage that has not expired (§19)"
+             raise it to 95 or add a dated exemption for layer coverage with path \"**\" and no symbol \
+             that has not expired (§19)"
         );
     }
 
@@ -446,7 +452,11 @@ mod tests {
     }
 
     fn exemption_at(path: &str, layer: &str, expires: &str) -> Value {
-        json!([{"path": path, "layer": layer, "expires": expires,
+        exemption_for(path, None, layer, expires)
+    }
+
+    fn exemption_for(path: &str, symbol: Option<&str>, layer: &str, expires: &str) -> Value {
+        json!([{"path": path, "symbol": symbol, "layer": layer, "expires": expires,
                 "reason": "legacy module under rewrite", "owner": "team"}])
     }
 
@@ -478,6 +488,47 @@ mod tests {
             exemption_at("./**", "coverage", "2030-01-01"),
         );
         assert_eq!(check("f.yaml", &doc, TODAY), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_exemption_for_one_symbol_does_not_lift_a_crate_floor() {
+        let cases = [
+            ("crap", "/gates/crap/threshold_agent", json!(100), "run"),
+            (
+                "mutation",
+                "/gates/mutation/kill_rate_min_pct",
+                json!(10),
+                "encode_legacy_v1",
+            ),
+        ];
+        for (layer, pointer, loose, symbol) in cases {
+            let mut doc = golden("library-core");
+            set(&mut doc, pointer, loose);
+            let narrow = exemption_for("**", Some(symbol), layer, "2030-01-01");
+            set(&mut doc, "/exemptions", narrow);
+            assert!(
+                one(&doc).contains(&pointer[1..].replace('/', ".")),
+                "{layer}"
+            );
+            set(
+                &mut doc,
+                "/exemptions",
+                exemption_at("**", layer, "2030-01-01"),
+            );
+            assert_eq!(
+                check("f.yaml", &doc, TODAY),
+                Vec::<String>::new(),
+                "{layer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_required_layer_with_a_bad_enabled_key_is_not_called_false() {
+        let mut doc = golden("library-core");
+        let at = layer_index(&doc, "security-advisory");
+        remove(&mut doc, &format!("/layers/{at}"), "enabled");
+        assert!(one(&doc).contains("enabled is not true or false"));
     }
 
     #[test]
@@ -523,7 +574,7 @@ mod tests {
             .and_then(Value::as_array_mut)
             .expect("layers")
             .remove(at);
-        assert!(one(&doc).contains("layers[id=security-advisory].enabled is missing"));
+        assert!(one(&doc).contains("layers has no entry with id security-advisory"));
     }
 
     #[test]
