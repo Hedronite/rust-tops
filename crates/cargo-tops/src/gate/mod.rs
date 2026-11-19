@@ -490,4 +490,12 @@ mod tests {
         assert!(!Outcome::Vacuous.fails_the_gate());
         assert!(!Outcome::Vacuous.counts_for_a_law());
     }
+
+    #[test]
+    fn only_a_fault_the_run_already_printed_is_announced() {
+        let said = super::Fault::announced("said".to_string());
+        assert!(said.announced && !said.config);
+        assert!(!super::Fault::env(anyhow::anyhow!("x")).announced);
+        assert!(!super::Fault::config(anyhow::anyhow!("x")).announced);
+    }
 }

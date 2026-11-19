@@ -61,13 +61,7 @@ const CARGO_BUILTINS: [&str; 6] = ["test", "build", "check", "doc", "run", "benc
 /// not answer. A `cargo` subcommand asks itself; a built-in asks `cargo`.
 fn version_of(argv: &[String], cache: &mut HashMap<String, Option<String>>) -> Option<String> {
     let (program, rest) = argv.split_first()?;
-    let asks: Vec<&str> = match (program.as_str(), rest.first().map(String::as_str)) {
-        ("cargo", Some(sub)) if !sub.starts_with('-') && !CARGO_BUILTINS.contains(&sub) => {
-            vec!["cargo", sub, "--version"]
-        }
-        ("cargo", _) => vec!["cargo", "--version"],
-        (other, _) => vec![other, "--version"],
-    };
+    let asks = version_ask(program, rest.first().map(String::as_str));
     cache
         .entry(asks.join(" "))
         .or_insert_with(|| {
@@ -82,6 +76,17 @@ fn version_of(argv: &[String], cache: &mut HashMap<String, Option<String>>) -> O
             })?
         })
         .clone()
+}
+
+/// The argv that asks `program` for its version, given its first argument.
+fn version_ask<'a>(program: &'a str, first: Option<&'a str>) -> Vec<&'a str> {
+    match (program, first) {
+        ("cargo", Some(sub)) if !sub.starts_with('-') && !CARGO_BUILTINS.contains(&sub) => {
+            vec!["cargo", sub, "--version"]
+        }
+        ("cargo", _) => vec!["cargo", "--version"],
+        (other, _) => vec![other, "--version"],
+    }
 }
 
 /// The first tool step of `chain`: the command whose version names the layer.
@@ -428,5 +433,78 @@ pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
             Ok(Outcome::ToolMissing)
         }
         Err(err) => Err(err).with_context(|| format!("spawn: {}", step.display())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_step, version_ask, Executed, Timing};
+    use crate::facts::Outcome;
+    use crate::steps::Step;
+    use std::fs;
+    use std::path::Path;
+    use std::time::SystemTime;
+
+    #[test]
+    fn a_plugin_asks_itself_and_a_built_in_asks_cargo() {
+        assert_eq!(
+            version_ask("cargo", Some("deny")),
+            ["cargo", "deny", "--version"]
+        );
+        for built_in in ["test", "build", "check", "doc", "run", "bench"] {
+            assert_eq!(
+                version_ask("cargo", Some(built_in)),
+                ["cargo", "--version"],
+                "{built_in}"
+            );
+        }
+        assert_eq!(
+            version_ask("cargo", Some("--version")),
+            ["cargo", "--version"]
+        );
+        assert_eq!(version_ask("cargo", None), ["cargo", "--version"]);
+        assert_eq!(version_ask("bend", Some("run")), ["bend", "--version"]);
+    }
+
+    fn timing(layer: &str, seconds: f64) -> Timing {
+        Timing {
+            layer: layer.to_string(),
+            seconds,
+            tool_version: None,
+        }
+    }
+
+    #[test]
+    fn a_layer_is_timed_over_its_own_commands_only() {
+        let done = Executed {
+            started: SystemTime::now(),
+            runs: Vec::new(),
+            timing: vec![timing("a", 1.5), timing("b", 4.0), timing("a", 2.0)],
+            shared: Vec::new(),
+            not_run: Vec::new(),
+            listed: 0,
+        };
+        assert!((done.seconds("a") - 3.5).abs() < 1e-9);
+        assert!((done.seconds("b") - 4.0).abs() < 1e-9);
+        assert!(done.seconds("c").abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_missing_program_is_a_missing_tool_and_any_other_spawn_error_is_not() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-exec-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let missing = Step::command([dir.join("no-such-program").display().to_string()]);
+        assert_eq!(
+            run_step(Path::new("."), &missing).expect("a missing program is an outcome"),
+            Outcome::ToolMissing
+        );
+        // A file with no execute bit exists but cannot be spawned.
+        let plain = dir.join("plain");
+        fs::write(&plain, "x").expect("write");
+        let blocked = Step::command([plain.display().to_string()]);
+        let err = run_step(Path::new("."), &blocked).expect_err("not spawnable");
+        assert!(format!("{err:#}").contains("spawn"), "{err:#}");
+        fs::remove_dir_all(&dir).ok();
     }
 }

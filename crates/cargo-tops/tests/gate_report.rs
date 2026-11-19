@@ -404,3 +404,105 @@ fn help_names_the_four_exit_codes_and_the_report() {
         assert!(text.contains(want), "help lacks {want:?}: {text}");
     }
 }
+
+/// Turns `ids` on, in addition to what the fixture has on.
+fn enable(fixture: &Fixture, ids: &[&str]) {
+    edit(fixture, |doc| {
+        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
+        for layer in layers.expect("layers") {
+            if ids.iter().any(|id| at(layer, "/id") == *id) {
+                set(layer, "enabled", Value::Bool(true));
+            }
+        }
+    });
+}
+
+#[test]
+fn the_report_names_the_head_commit_of_a_repo_and_nothing_otherwise() {
+    let fixture = fixture("sha");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        report(&fixture).get("git_sha").is_none(),
+        "the fixture is no repo"
+    );
+
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(&fixture.repo)
+            .output()
+            .expect("spawn git");
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "t"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(at(&report(&fixture), "/git_sha"), &json!(head));
+
+    // A git that prints something and fails names no commit.
+    stub(&fixture.bin, "git", "#!/bin/sh\necho abc123\nexit 1\n");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(report(&fixture).get("git_sha").is_none());
+}
+
+#[test]
+fn a_cargo_that_cannot_say_where_the_target_is_exits_3() {
+    let fixture = fixture("metadata");
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write");
+    let (out, text) = gate(&fixture, &[], Some("metadata"));
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(text.contains("cargo metadata is unavailable"), "{text}");
+}
+
+#[test]
+fn a_layer_at_the_max_tier_is_judged_and_the_one_above_is_not() {
+    let fixture = fixture("at-max");
+    enable(&fixture, &["integration"]);
+    let (out, text) = gate(&fixture, &["--max-tier", "0"], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let report = report(&fixture);
+    assert_eq!(at(layer(&report, "static-lint"), "/verdict"), "pass");
+    assert_eq!(
+        at(layer(&report, "integration"), "/verdict"),
+        "not-evaluated"
+    );
+}
+
+#[test]
+fn only_the_layer_with_no_command_carries_the_detail() {
+    let fixture = fixture("unmapped");
+    enable(&fixture, &["fuzz"]);
+    let (out, text) = gate(&fixture, &["--max-tier", "3"], None);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    let report = report(&fixture);
+    let coverage = layer(&report, "fuzz");
+    assert_eq!(at(coverage, "/verdict"), "not-run", "{coverage}");
+    assert_eq!(
+        at(coverage, "/detail"),
+        "enabled and no command is mapped",
+        "{coverage}"
+    );
+    assert!(layer(&report, "static-lint").get("detail").is_none());
+}
+
+#[test]
+fn a_dry_run_counts_the_mutation_commands_it_lists() {
+    let fixture = fixture("dry-mutation");
+    enable(&fixture, &["mutation"]);
+    let (out, text) = gate(&fixture, &["--dry-run"], None);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("dry-run: 4 command(s) listed, 0 run"),
+        "{text}"
+    );
+}

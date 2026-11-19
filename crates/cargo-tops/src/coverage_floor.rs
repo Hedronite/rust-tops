@@ -165,7 +165,7 @@ fn below(count: Count, floor: Option<f64>) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{judge, production_files, Count, FileCoverage};
+    use super::{judge, percents, production_files, Count, FileCoverage};
     use crate::config::CoverageGate;
     use crate::exemptions::Exemption;
     use crate::scope::Scope;
@@ -267,5 +267,12 @@ mod tests {
             judge(&[], &gate(None, None, None), &[]),
             ["coverage: no production file of this crate is in the coverage report, so its floors cannot be judged"]
         );
+    }
+
+    #[test]
+    fn percents_are_the_line_and_region_percent_of_the_whole_crate() {
+        let files = [file("a.rs", (1, 4), (2, 4)), file("b.rs", (3, 4), (0, 4))];
+        assert_eq!(percents(&files), (Some(50.0), Some(25.0)));
+        assert_eq!(percents(&[]), (None, None));
     }
 }

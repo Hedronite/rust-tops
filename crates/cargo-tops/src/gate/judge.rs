@@ -330,3 +330,52 @@ pub(crate) fn run_failure(run: &Run) -> Option<String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::clear_cases;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-judge-{name}-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        dir
+    }
+
+    #[test]
+    fn a_cases_file_from_an_earlier_gate_is_removed() {
+        let dir = scratch("cases-old");
+        let cases = dir.join("cases.json");
+        fs::write(&cases, "{}").expect("write");
+        assert!(clear_cases(&cases).is_ok());
+        assert!(!cases.exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_cases_file_is_nothing_to_clear() {
+        let dir = scratch("cases-none");
+        assert!(clear_cases(&dir.join("cases.json")).is_ok());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_cases_path_that_cannot_be_removed_is_an_environment_fault() {
+        let dir = scratch("cases-stuck");
+        let cases = dir.join("cases.json");
+        fs::create_dir_all(cases.join("inside")).expect("mkdir");
+        let Err(fault) = clear_cases(&cases) else {
+            panic!("a directory is not a report");
+        };
+        assert!(!fault.config && !fault.announced);
+        assert!(
+            format!("{:#}", fault.error).contains("remove"),
+            "{:#}",
+            fault.error
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+}

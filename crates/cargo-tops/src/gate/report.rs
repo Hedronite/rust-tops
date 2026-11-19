@@ -469,3 +469,20 @@ fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, usize) {
         .count();
     (rows, checked, list.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{clear, REPORT};
+    use std::fs;
+
+    #[test]
+    fn a_report_an_earlier_gate_left_is_cleared() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-clear-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        fs::write(dir.join(REPORT), "{}").expect("write");
+        clear(&dir);
+        assert!(!dir.join(REPORT).exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+}

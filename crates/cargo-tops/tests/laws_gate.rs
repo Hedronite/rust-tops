@@ -1010,6 +1010,15 @@ fn expect_laws_match_cases(cases: &serde_json::Value, report: &serde_json::Value
         at(report, "/laws_total"),
         serde_json::json!(from_cases.len())
     );
+    let checked = from_cases
+        .iter()
+        .filter(|law| at(law, "/status") == "checked")
+        .count();
+    assert_eq!(at(report, "/laws_checked"), serde_json::json!(checked));
+    assert!(
+        checked > 0 && checked < from_cases.len(),
+        "the fixture should hold both checked and unchecked laws: {cases}"
+    );
 }
 
 #[test]
