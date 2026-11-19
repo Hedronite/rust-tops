@@ -19,6 +19,7 @@ MIT. Rules distilled from BeautifulRust v1.5.0 (40db61c6), rewritten. Copyright 
 
 One JSON object: `ok`, `command` (the exact argv) and either `data` or `error`.
 
+- `command`: the exact argv of each external command run, in order, joined by ` && `, with paths relative to `--path`; a command that runs none gives the script's own invocation.
 - `data.findings`: `{rule, kind, file, line, col, message, fix}`, sorted by file, line, column, rule. `rule` is an ID in `rules.toml`, beside this file. `fix` is the catalog's fix for that rule.
 - `data.judgment`: the rules no tool can decide, as `{id, rule}`.
 - `ok` is true only when the script ran and found nothing. A failed build is `ok: false` with an `error`. A wrong Nushell minor is `ok: false` with `nu <lock> required, found <version>`.

@@ -6,7 +6,7 @@
 //! commit; `rust-tops.yaml` there differs from this branch in `msrv` and in
 //! what [`without_kit_drop_in`] checks and undoes.
 //!
-//! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
+//! `RUST_TOPS_BLESS` rewrites these files for a local re-record.
 //! CI does not set it.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 use std::fs;
@@ -247,7 +247,7 @@ fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
 
 fn expect_value(name: &str, value: serde_json::Value) {
     let path = golden_dir().join(format!("{name}.json"));
-    if std::env::var_os("RUST_TOPS_RECORD_GOLDEN").is_some() {
+    if std::env::var_os("RUST_TOPS_BLESS").is_some() {
         fs::create_dir_all(golden_dir()).unwrap_or_else(|err| panic!("mkdir golden: {err}"));
         #[expect(
             clippy::string_add,

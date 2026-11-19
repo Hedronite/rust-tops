@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "command": "nu rust-tops-port.nu inventory --from tests --lang c",
+  "command": "nu rust-tops-port.nu inventory --from c --lang c",
   "data": {
     "lang": "c",
     "count": 7,
