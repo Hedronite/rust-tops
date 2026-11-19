@@ -98,14 +98,20 @@ fn fixture(name: &str) -> Fixture {
     edit(&fixture, |doc| {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
-            let on = matches!(
-                layer.get("id").and_then(Value::as_str),
-                Some("static-lint" | "security-advisory" | "property")
-            );
+            let on = stays_on(layer);
             set(layer, "enabled", Value::Bool(on));
         }
     });
     fixture
+}
+
+/// Whether the fixture leaves a layer on: `static-lint`, plus the layers
+/// protocol 1.3.0 requires of a library-core instance.
+fn stays_on(layer: &Value) -> bool {
+    matches!(
+        layer.get("id").and_then(Value::as_str),
+        Some("static-lint" | "security-advisory" | "property")
+    )
 }
 
 /// Sets `key` in an object.

@@ -86,6 +86,12 @@ fn fixture(name: &str) -> Fixture {
     fixture_with(name, &["coverage", "crap"])
 }
 
+/// The layers protocol 1.3.0 requires of a library-core instance, which no
+/// fixture may turn off.
+fn required(id: &str) -> bool {
+    matches!(id, "security-advisory" | "property")
+}
+
 /// A library-core instance named `fixture` with only the `on` layers enabled.
 fn fixture_with(name: &str, on: &[&str]) -> Fixture {
     let root =
@@ -124,9 +130,7 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
             let id = layer.get("id").and_then(Value::as_str);
-            let enabled = id.is_some_and(|id| {
-                on.contains(&id) || matches!(id, "security-advisory" | "property")
-            });
+            let enabled = id.is_some_and(|id| on.contains(&id) || required(id));
             set(layer, "", "enabled", Some(Value::Bool(enabled)));
         }
     });
