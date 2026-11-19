@@ -242,7 +242,17 @@ def main [
   let verdict = (gate-verdict $report)
   let stderr_tail = ($r.stderr | str trim)
   let stdout_tail = ($r.stdout | str trim)
-  let command_tail = if not ($stderr_tail | is-empty) { $stderr_tail } else { $stdout_tail }
+  let process_tail = if not ($stderr_tail | is-empty) { $stderr_tail } else { $stdout_tail }
+  # The report names why the gate stopped; the process tail varies with the
+  # cargo cache, so it is only the fallback when there is no report.
+  let report_problems = if $report == null { [] } else { $report.problems? | default [] }
+  let command_tail = if $report != null and (($report.error? | default "") != "") {
+    $report.error
+  } else if not ($report_problems | is-empty) {
+    $report_problems | str join "; "
+  } else {
+    $process_tail
+  }
   let report_exit = if $report == null { null } else { $report.exit_code? | default null }
   mut error = ""
   if $r.exit_code in [2 3] {
