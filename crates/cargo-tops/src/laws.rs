@@ -119,13 +119,11 @@ fn display_under(project: &Path, out: &Path) -> String {
         .unwrap_or_else(|| out.display().to_string())
 }
 
-/// A project with a `Cargo.toml` whose `cargo metadata` could not run or
-/// exited with an error, with no `CARGO_TARGET_DIR` to stand in for it. The
-/// answer is the one [`artifact_dir`] already looked up.
+/// A project `cargo metadata` cannot answer for: no `Cargo.toml` at all, or
+/// one whose `cargo metadata` could not run or exited with an error. It does
+/// not depend on `CARGO_TARGET_DIR`: the same tree gets the same answer.
 pub(crate) fn metadata_unavailable(project: &Path) -> bool {
-    project.join("Cargo.toml").is_file()
-        && nonempty(std::env::var("CARGO_TARGET_DIR").ok().as_deref()).is_none()
-        && metadata_cached(project).1
+    !project.join("Cargo.toml").is_file() || metadata_cached(project).1
 }
 
 #[cfg(test)]

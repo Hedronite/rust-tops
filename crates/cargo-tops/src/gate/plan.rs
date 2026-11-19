@@ -135,14 +135,15 @@ pub(crate) fn tool(argv: &[&str]) -> Vec<Step> {
     vec![Step::tool(argv.iter().copied())]
 }
 
-/// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
-/// and the mutation diff are written there.
-#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
-pub(crate) fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
-    let chains = match layer.id.as_str() {
-        "static-lint" => vec![
-            tool(&["cargo", "fmt", "--all", "--", "--check"]),
-            tool(&[
+/// The layers whose commands do not depend on where the report goes: each
+/// is a list of chains of one tool step. `security-advisory` runs
+/// `advisories`; `static-lint` runs the other kinds, so each kind runs once.
+const TOOL_LAYERS: &[(&str, &[&[&str]])] = &[
+    (
+        "static-lint",
+        &[
+            &["cargo", "fmt", "--all", "--", "--check"],
+            &[
                 "cargo",
                 "clippy",
                 "--workspace",
@@ -151,46 +152,19 @@ pub(crate) fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
                 "--",
                 "-D",
                 "warnings",
-            ]),
-            // `security-advisory` runs `advisories`; each kind runs once.
-            tool(&["cargo", "deny", "check", "bans", "licenses", "sources"]),
+            ],
+            &["cargo", "deny", "check", "bans", "licenses", "sources"],
         ],
-        "unit" | "integration" => vec![tool(&[
-            "cargo",
-            "nextest",
-            "run",
-            "--workspace",
-            "--all-features",
-            "--profile",
-            "ci",
-        ])],
-        "doc" => vec![tool(&[
-            "cargo",
-            "test",
-            "--doc",
-            "--workspace",
-            "--all-features",
-        ])],
-        "coverage" => vec![steps::coverage_steps(report)],
-        "crap" => {
-            let lcov = report.join(steps::LCOV).display().to_string();
-            let crap = report.join(steps::CRAP).display().to_string();
-            vec![vec![
-                Step::tool([
-                    "cargo",
-                    "crap",
-                    "--lcov",
-                    lcov.as_str(),
-                    "--format",
-                    "json",
-                    "--output",
-                    crap.as_str(),
-                ]),
-                Step::artifact(crap),
-            ]]
-        }
-        "mutation" => return Some(Plan::Mutation(MutationPlan::new(report))),
-        "property" => vec![tool(&[
+    ),
+    ("unit", &[&NEXTEST]),
+    ("integration", &[&NEXTEST]),
+    (
+        "doc",
+        &[&["cargo", "test", "--doc", "--workspace", "--all-features"]],
+    ),
+    (
+        "property",
+        &[&[
             "cargo",
             "nextest",
             "run",
@@ -200,12 +174,58 @@ pub(crate) fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
             "ci",
             "--no-tests=fail",
             "property",
-        ])],
-        "security-advisory" => vec![tool(&["cargo", "deny", "check", "advisories"])],
-        "formal-kani" => vec![tool(&["cargo", "kani", "--workspace"])],
-        _ => return None,
-    };
-    Some(Plan::Chains(chains))
+        ]],
+    ),
+    (
+        "security-advisory",
+        &[&["cargo", "deny", "check", "advisories"]],
+    ),
+    ("formal-kani", &[&["cargo", "kani", "--workspace"]]),
+];
+
+/// The test run `unit` and `integration` share.
+const NEXTEST: [&str; 7] = [
+    "cargo",
+    "nextest",
+    "run",
+    "--workspace",
+    "--all-features",
+    "--profile",
+    "ci",
+];
+
+/// `cargo crap` over the LCOV, then a check that its report is not empty.
+fn crap_steps(report: &Path) -> Vec<Step> {
+    let lcov = report.join(steps::LCOV).display().to_string();
+    let crap = report.join(steps::CRAP).display().to_string();
+    vec![
+        Step::tool([
+            "cargo",
+            "crap",
+            "--lcov",
+            lcov.as_str(),
+            "--format",
+            "json",
+            "--output",
+            crap.as_str(),
+        ]),
+        Step::artifact(crap),
+    ]
+}
+
+/// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
+/// and the mutation diff are written there.
+pub(crate) fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
+    let id = layer.id.as_str();
+    match id {
+        "mutation" => Some(Plan::Mutation(MutationPlan::new(report))),
+        "coverage" => Some(Plan::Chains(vec![steps::coverage_steps(report)])),
+        "crap" => Some(Plan::Chains(vec![crap_steps(report)])),
+        _ => TOOL_LAYERS
+            .iter()
+            .find(|(layer_id, _)| *layer_id == id)
+            .map(|(_, chains)| Plan::Chains(chains.iter().map(|argv| tool(argv)).collect())),
+    }
 }
 
 /// What one enabled layer does in this gate.
@@ -324,8 +344,8 @@ fn units_of<'a>(
 }
 
 /// The plan for `cfg` at `max_tier`. A config the gate cannot plan from is
-/// a [`Fault::Config`]; a project whose Cargo metadata cannot be read, or
-/// whose report directory cannot be resolved, is a [`Fault::Env`].
+/// a [`Fault::config`]; a project whose Cargo metadata cannot be read, or
+/// whose report directory cannot be resolved, is a [`Fault::env`].
 pub(crate) fn build<'a>(
     dir: &Path,
     cfg: &'a TopsConfig,
@@ -358,4 +378,31 @@ pub(crate) fn build<'a>(
         tests,
         crap_pin,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GatePlan, TestCommands};
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_layer_with_no_unit_in_the_plan_has_no_commands() {
+        let plan = GatePlan {
+            max_tier: 0,
+            enabled: Vec::new(),
+            above: Vec::new(),
+            disabled: Vec::new(),
+            laws_on: false,
+            report: PathBuf::new(),
+            tests: TestCommands {
+                coverage_in_range: false,
+                coverage: Vec::new(),
+                unit: Vec::new(),
+                integration: Vec::new(),
+            },
+            crap_pin: None,
+            units: Vec::new(),
+        };
+        assert!(plan.argv_of("static-lint").is_empty());
+    }
 }

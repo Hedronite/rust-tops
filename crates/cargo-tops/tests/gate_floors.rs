@@ -113,6 +113,12 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         .output()
         .expect("spawn init");
     assert!(init.status.success(), "init failed");
+    // `cargo metadata` is asked about a project with a manifest.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
     stub_tools(&fixture.bin);
     edit(&fixture, |doc| {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);

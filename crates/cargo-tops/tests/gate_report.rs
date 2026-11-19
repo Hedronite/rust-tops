@@ -86,6 +86,12 @@ fn fixture(name: &str) -> Fixture {
         .output()
         .expect("spawn init");
     assert!(init.status.success(), "init failed");
+    // `cargo metadata` is asked about a project with a manifest.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
     stub(&fixture.bin, "cargo", CARGO_STUB);
     stub(&fixture.bin, "cargo-deny", "#!/bin/sh\nexit 0\n");
     edit(&fixture, |doc| {
@@ -454,11 +460,6 @@ fn the_report_names_the_head_commit_of_a_repo_and_nothing_otherwise() {
 #[test]
 fn a_cargo_that_cannot_say_where_the_target_is_exits_3() {
     let fixture = fixture("metadata");
-    fs::write(
-        fixture.repo.join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write");
     let (out, text) = gate(&fixture, &[], Some("metadata"));
     assert_eq!(out.status.code(), Some(3), "{text}");
     assert!(text.contains("cargo metadata is unavailable"), "{text}");
@@ -505,4 +506,94 @@ fn a_dry_run_counts_the_mutation_commands_it_lists() {
         text.contains("dry-run: 4 command(s) listed, 0 run"),
         "{text}"
     );
+}
+
+/// `gate`, with `CARGO_TARGET_DIR` set to a directory under the fixture.
+fn gate_with_target_dir(fixture: &Fixture, fail: Option<&str>) -> (Output, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-tops"));
+    cmd.arg("gate")
+        .arg("--path")
+        .arg(&fixture.repo)
+        .env("PATH", path(fixture))
+        .env("CARGO_TARGET_DIR", fixture.root.join("elsewhere"))
+        .env_remove("CARGO_STUB_FAIL");
+    if let Some(pattern) = fail {
+        cmd.env("CARGO_STUB_FAIL", pattern);
+    }
+    let out = cmd.output().expect("spawn cargo-tops gate");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out, text)
+}
+
+#[test]
+fn a_broken_manifest_exits_3_whether_or_not_the_target_dir_is_set() {
+    let fixture = fixture("manifest-env");
+    let (out, text) = gate_with_target_dir(&fixture, Some("metadata"));
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(text.contains("cargo metadata is unavailable"), "{text}");
+    // The same tree with the variable set and a cargo that answers passes.
+    let (out, text) = gate_with_target_dir(&fixture, None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+}
+
+#[test]
+fn a_directory_with_no_manifest_is_an_unavailable_cargo_metadata() {
+    let fixture = fixture("no-manifest");
+    fs::remove_file(fixture.repo.join("Cargo.toml")).expect("remove the manifest");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(text.contains("cargo metadata is unavailable"), "{text}");
+    let report = report(&fixture);
+    expect_consistent(&report, 3);
+    assert_eq!(at(&report, "/kind"), "environment");
+}
+
+#[test]
+fn a_tool_version_is_asked_from_the_crate_directory() {
+    let fixture = fixture("version-dir");
+    stub(
+        &fixture.bin,
+        "cargo",
+        "#!/bin/sh\ncase \"$*\" in *--version) echo \"asked in $(basename \"$PWD\")\"; exit 0 ;; esac\nexit 0\n",
+    );
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let report = report(&fixture);
+    assert_eq!(
+        at(layer(&report, "static-lint"), "/tool_version"),
+        "asked in repo"
+    );
+}
+
+#[test]
+fn a_missing_mutation_tool_has_no_version_and_a_layer_that_never_ran_took_zero_seconds() {
+    let fixture = fixture("mutation-missing");
+    enable(&fixture, &["mutation"]);
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let report = report(&fixture);
+    let mutation = layer(&report, "mutation");
+    assert_eq!(at(mutation, "/verdict"), "tool-missing", "{mutation}");
+    assert!(at(mutation, "/tool_version").is_null(), "{mutation}");
+
+    let (_, _) = gate(&fixture, &["--dry-run"], None);
+    let raw = fs::read_to_string(report_path(&fixture)).expect("report");
+    assert!(!raw.contains("-0.0"), "{raw}");
+}
+
+#[test]
+fn the_law_total_is_left_out_when_no_judgement_counted_it() {
+    let fixture = fixture("laws-total");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    // The pack is counted even with the laws off.
+    assert!(at(&report(&fixture), "/laws_total").is_u64());
+    fs::write(fixture.repo.join("rust-tops.yaml"), "crate: [unclosed\n").expect("write");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(report(&fixture).get("laws_total").is_none());
 }
