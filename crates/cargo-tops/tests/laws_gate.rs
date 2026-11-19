@@ -1374,52 +1374,41 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
 fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself() {
     // Coverage off: no coverage run. (Tiers are fixed since 1.3.0, so an
     // instance can no longer lift coverage above --max-tier.)
-    for name in ["off"] {
-        let fixture = fixture_with(&format!("one-run-{name}"), &TEST_LAYERS);
-        edit_yaml(&fixture, |doc| {
-            for layer in doc["layers"].as_array_mut().expect("layers") {
-                if layer["id"] == "coverage" {
-                    layer["enabled"] = serde_json::Value::Bool(false);
-                }
+    let fixture = fixture_with("one-run-off", &TEST_LAYERS);
+    edit_yaml(&fixture, |doc| {
+        for layer in doc["layers"].as_array_mut().expect("layers") {
+            if layer["id"] == "coverage" {
+                layer["enabled"] = serde_json::Value::Bool(false);
             }
-        });
-        let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
-        assert_eq!(out.status.code(), Some(0), "{name}: {text}");
-        assert_eq!(
-            nextest_runs(&fixture),
-            [UNIT_RUN, PROPERTY_RUN],
-            "{name}: {text}"
-        );
-        assert!(
-            text.contains(
-                "\n==> [unit] cargo nextest run --workspace --all-features --profile ci\n"
-            ),
-            "{name}: {text}"
-        );
-        assert!(
-            text.contains(
-                "\n==> [integration] no command of its own: it takes the unit run's outcome\n"
-            ),
-            "{name}: {text}"
-        );
-        assert!(
-            text.contains("\n[integration] took the unit run's outcome: passed\n"),
-            "{name}: {text}"
-        );
-        assert!(
-            text.contains("\n==> [property] cargo nextest run --workspace --all-features --profile ci --no-tests=fail property\n"),
-            "{name}: {text}"
-        );
-        assert!(!text.contains("==> [coverage]"), "{name}: {text}");
-        assert!(
-            text.contains("\ncount: 3 command(s) ran; 4 of 4 enabled layer(s) at tier <= 1 ran one; integration took the unit run\n"),
-            "{name}: {text}"
-        );
-        assert!(
-            text.contains("not run (enabled: false): "),
-            "{name}: {text}"
-        );
-    }
+        }
+    });
+    let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(nextest_runs(&fixture), [UNIT_RUN, PROPERTY_RUN], "{text}");
+    assert!(
+        text.contains("\n==> [unit] cargo nextest run --workspace --all-features --profile ci\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "\n==> [integration] no command of its own: it takes the unit run's outcome\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n[integration] took the unit run's outcome: passed\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n==> [property] cargo nextest run --workspace --all-features --profile ci --no-tests=fail property\n"),
+        "{text}"
+    );
+    assert!(!text.contains("==> [coverage]"), "{text}");
+    assert!(
+        text.contains("\ncount: 3 command(s) ran; 4 of 4 enabled layer(s) at tier <= 1 ran one; integration took the unit run\n"),
+        "{text}"
+    );
+    assert!(text.contains("not run (enabled: false): "), "{text}");
 
     // --max-tier below coverage's tier: only unit is in range, and it runs.
     let fixture = fixture_with("one-run-tier-0", &TEST_LAYERS);
