@@ -5,10 +5,11 @@
 mode=${CARGO_STUB_MODE:-pass}
 target=${CARGO_TARGET_DIR:?}
 report="$target/rust-tops/report.json"
-LINT='{"id":"static-lint","tier":0,"verdict":"pass","argv":["cargo fmt --all -- --check"],"tool_version":"1.99.1","seconds":0.5}'
+LINT='{"id":"static-lint","tier":0,"verdict":"pass","argv":[["cargo","fmt","--all","--","--check"]],"tool_version":null,"seconds":0.5}'
 write_report() {
   mkdir -p "$target/rust-tops"
-  printf '{"protocol_version":"1.3.0","crate":"stub","max_tier":1,"exit_code":%s,"ok":%s,"layers":[%s],"laws":[%s]}\n' "$1" "$2" "$3" "$4" > "$report"
+  case "$1" in 0) kind=pass;; 1) kind=fail;; 2) kind=config-invalid;; *) kind=environment;; esac
+  printf '{"protocol_version":"1.3.0","crate":"stub","max_tier":1,"dry_run":false,"kind":"%s","exit_code":%s,"ok":%s,"problems":[],"layers":[%s],"laws":[%s]}\n' "$kind" "$1" "$2" "$3" "$4" > "$report"
 }
 case "$mode" in
   pass)
@@ -46,14 +47,14 @@ case "$mode" in
     exit 0
     ;;
   coverage)
-    COV='{"id":"coverage","tier":1,"verdict":"fail","argv":["cargo llvm-cov nextest"],"tool_version":"0.9.1","seconds":2.25}'
+    COV='{"id":"coverage","tier":1,"verdict":"fail","argv":[["cargo","llvm-cov","nextest"]],"tool_version":null,"seconds":2.25}'
     write_report 1 false "$LINT,$COV" '{"law":"fmt_is_tier0","status":"checked","verdict":"Allow"}'
     printf '%s\n' 'fail: 1 problem(s), 2 command(s) run'
     printf '%s\n' '  - coverage: `cargo llvm-cov nextest` failed'
     exit 1
     ;;
   tool-missing)
-    MUT='{"id":"mutation","tier":1,"verdict":"tool-missing","argv":["cargo mutants"],"tool_version":"","seconds":0}'
+    MUT='{"id":"mutation","tier":1,"verdict":"tool-missing","argv":[["cargo","mutants"]],"tool_version":null,"seconds":0}'
     write_report 3 false "$MUT" ''
     printf '%s\n' 'error: cargo-mutants: command not found' >&2
     exit 3

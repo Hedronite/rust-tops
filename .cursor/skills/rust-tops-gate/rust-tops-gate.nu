@@ -203,7 +203,7 @@ def report-layers [report: record] {
       tier: ($layer.tier? | default null)
       verdict: $verdict
       seconds: ($layer.seconds? | default 0)
-      command: ($layer.argv? | default [] | str join " && ")
+      command: ($layer.argv? | default [] | each {|c| $c | str join " "} | str join " && ")
       ok: $passed
       remedy: (if $passed or $verdict in ["not-run" "not-evaluated"] { "" } else { remedy-problem $hint })
     }

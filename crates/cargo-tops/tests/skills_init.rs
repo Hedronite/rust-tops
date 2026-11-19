@@ -352,6 +352,7 @@ fn nu_scripts_honor_the_envelope_when_nu_is_installed() {
         );
     }
     smoke_gate(&nu);
+    smoke_real_report(&nu);
     smoke_adopt(&nu);
     smoke_review(&nu);
 }
@@ -711,6 +712,48 @@ fn smoke_gate(nu: &Path) {
         reason = "already in this crate when the strict table was turned on"
     )]
     let _ = fs::remove_dir_all(&root);
+}
+
+/// The gate script against the real `cargo-tops`, not the test double: a broken
+/// config makes the real binary write a real `report.json` (exit 2), and the
+/// script must read that file and name the code's meaning.
+fn smoke_real_report(nu: &Path) {
+    let (dir, _out, _err, ok) = run_init("real-report", &[]);
+    assert!(ok, "init for the real-report smoke");
+    fs::write(dir.join("rust-tops.yaml"), "crate: [broken\n").expect("break the config");
+    let mut path = std::ffi::OsString::from(
+        Path::new(env!("CARGO_BIN_EXE_cargo-tops"))
+            .parent()
+            .expect("binary dir"),
+    );
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    let out = Command::new(nu)
+        .arg(manifest().join("templates/skills/rust-tops-gate/rust-tops-gate.nu"))
+        .args(["--path", ".", "--max-tier", "0"])
+        .current_dir(&dir)
+        .env("PATH", &path)
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("nu gate against the real binary");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = parse_json(&out.stdout);
+    let report: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(dir.join("target/rust-tops/report.json")).expect("real report.json"),
+    )
+    .expect("report.json is JSON");
+    assert_eq!(at(&report, "/kind"), "config-invalid", "{report}");
+    assert_eq!(at(&report, "/exit_code"), 2, "{report}");
+    assert_eq!(at(&body, "/ok"), false, "{body}");
+    assert_eq!(at(&body, "/exit"), 2, "{body}");
+    assert_eq!(at(&body, "/data/gate_green"), false, "{body}");
+    let error = at(&body, "/error").as_str().unwrap_or_default();
+    assert!(error.contains("the config is invalid"), "{body}");
+    fs::remove_dir_all(&dir).expect("remove the real-report fixture");
 }
 
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
