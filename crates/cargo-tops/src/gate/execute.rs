@@ -1,0 +1,520 @@
+//! Run a plan: each command in order, timed. A dry run lists the commands
+//! and runs none.
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::Command;
+use std::time::{Instant, SystemTime};
+
+use anyhow::{Context, Result};
+
+use super::plan::{GatePlan, Unit, What, CRAP_VERSION};
+use super::{Fault, Mode};
+use crate::config::Layer;
+use crate::facts::{Outcome, Run};
+use crate::steps::{self, Kind, MutationPlan, Step};
+use crate::{laws, TOOL_LOCK};
+
+/// What the laws layer needs before any work starts.
+pub(crate) struct Prepared {
+    /// The pinned Bend, when the laws layer is on and this is not a dry run.
+    pub(crate) judge: Option<laws::Judge>,
+}
+
+/// Wall time and tool version of one layer's commands.
+pub(crate) struct Timing {
+    pub(crate) layer: String,
+    pub(crate) seconds: f64,
+    pub(crate) tool_version: Option<String>,
+}
+
+/// What the commands did.
+pub(crate) struct Executed<'a> {
+    pub(crate) started: SystemTime,
+    pub(crate) runs: Vec<Run>,
+    pub(crate) timing: Vec<Timing>,
+    /// Layers that add no command, each with the layer whose run it takes.
+    pub(crate) shared: Vec<(&'a str, &'static str)>,
+    /// Enabled, in range, and no plan: a skip is never a pass (H-37).
+    pub(crate) not_run: Vec<String>,
+    /// Commands named, whether or not they ran.
+    pub(crate) listed: usize,
+}
+
+/// The pinned Bend is fetched first: a missing Bend fails before any work.
+pub(crate) fn prepare(dir: &Path, plan: &GatePlan<'_>, mode: Mode) -> Result<Prepared, Fault> {
+    if !plan.laws_on || mode == Mode::DryRun {
+        return Ok(Prepared { judge: None });
+    }
+    match laws::ensure_bend(dir) {
+        Ok(judge) => Ok(Prepared { judge: Some(judge) }),
+        Err(msg) => {
+            println!("\nfail: {msg}");
+            Err(Fault::announced(msg))
+        }
+    }
+}
+
+/// `cargo` subcommands that have no `--version` of their own.
+const CARGO_BUILTINS: [&str; 6] = ["test", "build", "check", "doc", "run", "bench"];
+
+/// The first line `<tool> --version` prints, or `None` when the tool does
+/// not answer. A `cargo` subcommand asks itself; a built-in asks `cargo`.
+fn version_of(
+    dir: &Path,
+    argv: &[String],
+    cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    let (program, rest) = argv.split_first()?;
+    let asks = version_ask(program, rest.first().map(String::as_str));
+    cache
+        .entry(asks.join(" "))
+        .or_insert_with(|| {
+            let (head, tail) = asks.split_first()?;
+            let out = Command::new(head)
+                .args(tail)
+                .current_dir(dir)
+                .output()
+                .ok()?;
+            out.status.success().then(|| {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(str::to_string)
+            })?
+        })
+        .clone()
+}
+
+/// The argv that asks `program` for its version, given its first argument.
+fn version_ask<'a>(program: &'a str, first: Option<&'a str>) -> Vec<&'a str> {
+    match (program, first) {
+        ("cargo", Some(sub)) if !sub.starts_with('-') && !CARGO_BUILTINS.contains(&sub) => {
+            vec!["cargo", sub, "--version"]
+        }
+        ("cargo", _) => vec!["cargo", "--version"],
+        (other, _) => vec![other, "--version"],
+    }
+}
+
+/// The first tool step of `chain`: the command whose version names the layer.
+fn first_tool(chain: &[Step]) -> Option<&[String]> {
+    chain
+        .iter()
+        .find(|step| step.kind == Kind::Tool)
+        .map(|step| step.argv.as_slice())
+}
+
+/// Execute `plan`. Every command prints its `==>` line first, then runs.
+pub(crate) fn run<'a>(dir: &Path, plan: &GatePlan<'a>, mode: Mode) -> Result<Executed<'a>, Fault> {
+    let mut runner = Runner {
+        dir,
+        plan,
+        live: mode == Mode::Run,
+        done: Executed {
+            started: SystemTime::now(),
+            runs: Vec::new(),
+            timing: Vec::new(),
+            shared: Vec::new(),
+            not_run: Vec::new(),
+            listed: 0,
+        },
+        versions: HashMap::new(),
+    };
+    for unit in &plan.units {
+        runner.unit(unit)?;
+    }
+    if runner.live {
+        runner.take_shared();
+    } else {
+        runner.list_laws();
+    }
+    Ok(runner.done)
+}
+
+/// The state of one execution.
+struct Runner<'p, 'a> {
+    dir: &'p Path,
+    plan: &'p GatePlan<'a>,
+    /// `false` for a dry run: commands are listed, never run.
+    live: bool,
+    done: Executed<'a>,
+    versions: HashMap<String, Option<String>>,
+}
+
+impl<'a> Runner<'_, 'a> {
+    fn unit(&mut self, unit: &Unit<'a>) -> Result<(), Fault> {
+        let layer = unit.layer;
+        match &unit.what {
+            What::Shared(from) => self.shared(layer, from),
+            What::NotRun => self.not_run(layer),
+            What::Mutation(mutation) => self.mutation(layer, mutation)?,
+            What::Chains(chains) => {
+                for chain in chains {
+                    self.chain(layer, chain)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn shared(&mut self, layer: &'a Layer, from: &'static str) {
+        println!(
+            "\n==> [{}] no command of its own: it takes the {from} run's outcome",
+            layer.id
+        );
+        self.done.shared.push((&layer.id, from));
+    }
+
+    fn not_run(&mut self, layer: &Layer) {
+        let tier = crate::tiers::tier_for(layer);
+        println!(
+            "\nNotRun [{}]: enabled at tier {tier} (<= --max-tier {}) and no command is mapped",
+            layer.id, self.plan.max_tier
+        );
+        self.done.not_run.push(format!(
+            "{}: NotRun (enabled at tier {tier}, no command mapped; disable it or lower --max-tier)",
+            layer.id
+        ));
+    }
+
+    fn mutation(&mut self, layer: &Layer, mutation: &MutationPlan) -> Result<(), Fault> {
+        println!(
+            "\n==> [{}] {} && {}",
+            layer.id,
+            mutation.diff.display(),
+            mutation.mutants.display()
+        );
+        self.done.listed += 1;
+        if self.live {
+            let clock = Instant::now();
+            let run = run_mutation(self.dir, &layer.id, mutation).map_err(Fault::env)?;
+            // The tool is asked for its version only when it ran: a vacuous
+            // or failed diff runs no `cargo mutants`.
+            let version = (run.outcome != Outcome::ToolMissing
+                && run.cmd.contains(&mutation.mutants.display()))
+            .then(|| version_of(self.dir, &mutation.mutants.argv, &mut self.versions))
+            .flatten();
+            self.done.record(run, clock, version);
+        }
+        Ok(())
+    }
+
+    fn chain(&mut self, layer: &Layer, chain: &[Step]) -> Result<(), Fault> {
+        let pin = self.plan.crap_pin.as_deref().filter(|_| layer.id == "crap");
+        let mut shown: Vec<String> = pin.map(|_| CRAP_VERSION.join(" ")).into_iter().collect();
+        shown.extend(chain.iter().map(Step::display));
+        println!("\n==> [{}] {}", layer.id, shown.join(" && "));
+        if let Some(pin) = pin {
+            println!(
+                "    `{}` must print `cargo-crap {pin}`, the {TOOL_LOCK} pin",
+                CRAP_VERSION.join(" ")
+            );
+        }
+        self.done.listed += 1;
+        if !self.live {
+            return Ok(());
+        }
+        let clock = Instant::now();
+        let run = match pin {
+            Some(pin) => run_pinned_crap(self.dir, &layer.id, chain, pin),
+            None => run_chain(self.dir, &layer.id, chain),
+        }
+        .map_err(Fault::env)?;
+        let version = match pin {
+            // The version the gate already verified against the lock.
+            Some(pin) => run
+                .cmd
+                .starts_with(&format!("{} && ", CRAP_VERSION.join(" ")))
+                .then(|| format!("cargo-crap {pin}")),
+            None if layer.id == "crap" => None,
+            // A tool that is not there has no version to ask for.
+            None => first_tool(chain)
+                .filter(|_| run.outcome != Outcome::ToolMissing)
+                .and_then(|argv| version_of(self.dir, argv, &mut self.versions)),
+        };
+        self.done.record(run, clock, version);
+        Ok(())
+    }
+
+    /// A dry run names what the laws layer would run.
+    fn list_laws(&self) {
+        if self.plan.laws_on {
+            println!(
+                "\n==> [laws] sh {} (only if Bend from {} is not installed)",
+                laws::FETCH,
+                laws::LOCK
+            );
+            println!(
+                "\n==> [laws] bend {}/cases.bend",
+                laws::report_display(self.dir)
+            );
+        }
+    }
+
+    /// A layer that adds no command records its source's run.
+    fn take_shared(&mut self) {
+        for (layer, from) in self.done.shared.clone() {
+            let run = self.plan.tests.take(layer, from, &self.done.runs);
+            println!("[{layer}] took the {from} run's outcome: {}", run.outcome);
+            self.done.runs.push(run);
+            self.done.timing.push(Timing {
+                layer: layer.to_string(),
+                seconds: 0.0,
+                tool_version: None,
+            });
+        }
+    }
+}
+
+impl Executed<'_> {
+    /// Keep `run` with the time since `clock` and the tool's version.
+    fn record(&mut self, run: Run, clock: Instant, tool_version: Option<String>) {
+        self.timing.push(Timing {
+            layer: run.layer.clone(),
+            seconds: clock.elapsed().as_secs_f64(),
+            tool_version,
+        });
+        self.runs.push(run);
+    }
+
+    /// Seconds spent on `layer`, over all its commands.
+    pub(crate) fn seconds(&self, layer: &str) -> f64 {
+        self.timing
+            .iter()
+            .filter(|timing| timing.layer == layer)
+            .map(|timing| timing.seconds)
+            .sum::<f64>()
+            // An empty float sum is -0.0; a layer that never ran took 0.0.
+            + 0.0
+    }
+
+    /// The tool versions seen for `layer`, once each, joined.
+    pub(crate) fn tool_version(&self, layer: &str) -> Option<String> {
+        let mut seen: Vec<&str> = Vec::new();
+        for version in self
+            .timing
+            .iter()
+            .filter(|timing| timing.layer == layer)
+            .filter_map(|timing| timing.tool_version.as_deref())
+        {
+            if !seen.contains(&version) {
+                seen.push(version);
+            }
+        }
+        (!seen.is_empty()).then(|| seen.join("; "))
+    }
+}
+
+/// The steps that ran, joined, and the outcome of the last one.
+pub(crate) fn finish(layer: &str, ran: &[String], outcome: Outcome) -> Run {
+    Run {
+        layer: layer.to_string(),
+        cmd: ran.join(" && "),
+        step: ran.last().cloned().unwrap_or_default(),
+        outcome,
+    }
+}
+
+pub(crate) fn run_chain(dir: &Path, layer: &str, chain: &[Step]) -> Result<Run> {
+    let mut ran = Vec::new();
+    let mut outcome = Outcome::Passed;
+    for step in chain {
+        ran.push(step.display());
+        outcome = run_step(dir, step)?;
+        if !steps::chain_continues(outcome) {
+            break;
+        }
+    }
+    Ok(finish(layer, &ran, outcome))
+}
+
+/// The crap chain, run only when `cargo crap --version` prints
+/// `cargo-crap <pin>`. It asks the binary that `cargo crap` runs, so another
+/// version earlier on `PATH` fails the layer before a report is written. A
+/// cargo-crap that is not there is left to the chain, which reports it
+/// missing.
+pub(crate) fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str) -> Result<Run> {
+    let version = CRAP_VERSION.join(" ");
+    let argv = CRAP_VERSION.map(String::from);
+    if steps::check_tool(&argv).is_err() {
+        return run_chain(dir, layer, chain);
+    }
+    let output = Command::new(CRAP_VERSION[0])
+        .args(&CRAP_VERSION[1..])
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("spawn: {version}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let printed = stdout.lines().next().unwrap_or_default().trim();
+    let want = format!("cargo-crap {pin}");
+    if !output.status.success() || printed != want {
+        println!(
+            "Failed [{layer}]: `{version}` printed `{printed}`, not `{want}` from {TOOL_LOCK}"
+        );
+        return Ok(finish(layer, &[version], Outcome::Failed));
+    }
+    let mut run = run_chain(dir, layer, chain)?;
+    run.cmd = format!("{version} && {}", run.cmd);
+    Ok(run)
+}
+
+/// `cargo-mutants` is looked up before the diff, so an empty diff cannot
+/// hide a missing tool. A failed diff is `Failed`; nothing waives it. An
+/// empty one is `Vacuous` and `cargo mutants` does not run.
+pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
+    if let Err(missing) = steps::check_tool(&plan.mutants.argv) {
+        println!("{missing}");
+        return Ok(finish(
+            layer,
+            &[plan.mutants.display()],
+            Outcome::ToolMissing,
+        ));
+    }
+    let mut ran = vec![plan.diff.display()];
+    let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
+    let diff = steps::judge_diff(diff_ok, &plan.diff_path);
+    let Some(mutants) = plan.after_diff(diff) else {
+        if diff == Outcome::Vacuous && has_origin_main(dir) {
+            println!(
+                "Vacuous: the diff from `git merge-base origin/main HEAD` is empty; \
+                 cargo mutants did not run and no law counts this layer"
+            );
+        } else if diff == Outcome::Vacuous {
+            println!(
+                "Vacuous: no origin/main; the mutation diff is empty; \
+                 cargo mutants did not run and no law counts this layer"
+            );
+        } else {
+            println!("Failed: the mutation diff did not succeed; a failed diff is never waived");
+        }
+        return Ok(finish(layer, &ran, diff));
+    };
+    ran.push(mutants.display());
+    let outcome = run_step(dir, mutants)?;
+    Ok(finish(layer, &ran, outcome))
+}
+
+/// Whether `refs/remotes/origin/main` exists, for the Vacuous wording only.
+pub(crate) fn has_origin_main(dir: &Path) -> bool {
+    Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/remotes/origin/main",
+        ])
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
+    match step.kind {
+        Kind::Artifact => {
+            return Ok(step.artifact_path().map_or(Outcome::Failed, |path| {
+                steps::artifact_outcome(&dir.join(path))
+            }));
+        }
+        Kind::Tool => {
+            if let Err(missing) = steps::check_tool(&step.argv) {
+                println!("{missing}");
+                return Ok(Outcome::ToolMissing);
+            }
+        }
+        Kind::Command => {}
+    }
+    let Some((program, args)) = step.program() else {
+        return Ok(Outcome::Failed);
+    };
+    match Command::new(program).args(args).current_dir(dir).status() {
+        Ok(status) if status.success() => Ok(Outcome::Passed),
+        Ok(_) => Ok(Outcome::Failed),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "{}",
+                steps::MissingTool {
+                    binary: program.to_string()
+                }
+            );
+            Ok(Outcome::ToolMissing)
+        }
+        Err(err) => Err(err).with_context(|| format!("spawn: {}", step.display())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_step, version_ask, Executed, Timing};
+    use crate::facts::Outcome;
+    use crate::steps::Step;
+    use std::fs;
+    use std::path::Path;
+    use std::time::SystemTime;
+
+    #[test]
+    fn a_plugin_asks_itself_and_a_built_in_asks_cargo() {
+        assert_eq!(
+            version_ask("cargo", Some("deny")),
+            ["cargo", "deny", "--version"]
+        );
+        for built_in in ["test", "build", "check", "doc", "run", "bench"] {
+            assert_eq!(
+                version_ask("cargo", Some(built_in)),
+                ["cargo", "--version"],
+                "{built_in}"
+            );
+        }
+        assert_eq!(
+            version_ask("cargo", Some("--version")),
+            ["cargo", "--version"]
+        );
+        assert_eq!(version_ask("cargo", None), ["cargo", "--version"]);
+        assert_eq!(version_ask("bend", Some("run")), ["bend", "--version"]);
+    }
+
+    fn timing(layer: &str, seconds: f64) -> Timing {
+        Timing {
+            layer: layer.to_string(),
+            seconds,
+            tool_version: None,
+        }
+    }
+
+    #[test]
+    fn a_layer_is_timed_over_its_own_commands_only() {
+        let done = Executed {
+            started: SystemTime::now(),
+            runs: Vec::new(),
+            timing: vec![timing("a", 1.5), timing("b", 4.0), timing("a", 2.0)],
+            shared: Vec::new(),
+            not_run: Vec::new(),
+            listed: 0,
+        };
+        assert!((done.seconds("a") - 3.5).abs() < 1e-9);
+        assert!((done.seconds("b") - 4.0).abs() < 1e-9);
+        // A layer that never ran took 0.0, not -0.0.
+        assert!(done.seconds("c").abs() < 1e-9 && done.seconds("c").is_sign_positive());
+    }
+
+    #[test]
+    fn a_missing_program_is_a_missing_tool_and_any_other_spawn_error_is_not() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-exec-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let missing = Step::command([dir.join("no-such-program").display().to_string()]);
+        assert_eq!(
+            run_step(Path::new("."), &missing).expect("a missing program is an outcome"),
+            Outcome::ToolMissing
+        );
+        // A file with no execute bit exists but cannot be spawned.
+        let plain = dir.join("plain");
+        fs::write(&plain, "x").expect("write");
+        let blocked = Step::command([plain.display().to_string()]);
+        let err = run_step(Path::new("."), &blocked).expect_err("not spawnable");
+        assert!(format!("{err:#}").contains("spawn"), "{err:#}");
+        fs::remove_dir_all(&dir).ok();
+    }
+}

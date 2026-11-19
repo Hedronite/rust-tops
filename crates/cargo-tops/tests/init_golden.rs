@@ -15,7 +15,7 @@
 //! crate is a 2021-edition package with `rust-version = "1.95"` that forbids
 //! unsafe code.
 //!
-//! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
+//! `RUST_TOPS_BLESS` rewrites these files for a local re-record.
 //! CI does not set it.
 #![expect(clippy::panic, reason = "this crate already violates the strict table")]
 use std::fs;
@@ -54,6 +54,8 @@ const SHARED: &[&str] = &[
 /// The Bend kit, written only by `init --laws`.
 const KIT: &[&str] = &["LAWS.bend", "laws/bend.lock", "scripts/fetch-bend.sh"];
 
+const CRATE_2021: &str =
+    "[package]\nname = \"k\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.95\"\n";
 const GOLDEN_MANIFEST: &str = "[package]\nname = \"golden-crate\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.95\"\n\n[lints.rust]\nunsafe_code = \"forbid\"\n";
 
 fn golden_root() -> PathBuf {
@@ -61,7 +63,7 @@ fn golden_root() -> PathBuf {
 }
 
 fn recording() -> bool {
-    std::env::var_os("RUST_TOPS_RECORD_GOLDEN").is_some()
+    std::env::var_os("RUST_TOPS_BLESS").is_some()
 }
 
 /// A package at `dir` with `manifest` as its `Cargo.toml`.
@@ -321,11 +323,44 @@ fn a_toolchain_pin_above_the_workspace_root_is_not_a_pin_for_this_crate() {
         "[toolchain]\nchannel = \"1.96.0\"\n",
     )
     .expect("pin");
-    let krate = outer.join("k");
-    write_crate(&krate, "[package]\nname = \"k\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.95\"\n");
+    let root = outer.join("ws");
+    fs::create_dir_all(&root).expect("mkdir");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"k\"]\nresolver = \"2\"\n",
+    )
+    .expect("ws");
+    let krate = root.join("k");
+    write_crate(&krate, CRATE_2021);
     let (ok, out, err) = tops(&["init"], &krate);
     assert!(ok, "{out}{err}");
     assert!(krate.join("rust-toolchain.toml").is_file());
+    fs::remove_dir_all(&outer).ok();
+}
+
+#[test]
+fn a_toolchain_pin_two_levels_above_a_crate_with_no_workspace_is_honoured() {
+    let outer = scratch("pin-two-up");
+    fs::create_dir_all(&outer).expect("mkdir");
+    let pin = b"[toolchain]\nchannel = \"1.96.0\"\n";
+    fs::write(outer.join("rust-toolchain.toml"), pin).expect("pin");
+    // The git root fences the walk, so a pin outside the scratch tree
+    // cannot reach this fixture.
+    fs::create_dir_all(outer.join(".git")).expect("git");
+    let krate = outer.join("a/k");
+    write_crate(&krate, CRATE_2021);
+    let (ok, out, err) = tops(&["init"], &krate);
+    assert!(ok, "{out}{err}");
+    assert!(!krate.join("rust-toolchain.toml").exists());
+    assert!(!outer.join("a/rust-toolchain.toml").exists());
+    assert_eq!(
+        fs::read(outer.join("rust-toolchain.toml")).expect("read"),
+        pin
+    );
+    assert!(
+        out.contains("note: rust-toolchain.toml not written"),
+        "{out}"
+    );
     fs::remove_dir_all(&outer).ok();
 }
 

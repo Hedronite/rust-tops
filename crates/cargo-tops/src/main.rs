@@ -18,8 +18,7 @@ use clap::{Parser, Subcommand};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
-use std::time::SystemTime;
+use std::process::ExitCode;
 
 mod config;
 mod coverage_floor;
@@ -28,6 +27,7 @@ mod credit;
 mod exemptions;
 mod facts;
 mod floors;
+mod gate;
 mod init_meta;
 mod laws;
 mod profile_data;
@@ -37,13 +37,12 @@ mod scope;
 mod skills;
 mod steps;
 mod strict_lints;
+mod tiers;
 
 #[cfg(test)]
 mod parse_oracle;
 
 use config::TopsConfig;
-use facts::{Outcome, Run};
-use steps::{Kind, MutationPlan, Step};
 
 #[derive(Parser)]
 #[command(
@@ -90,6 +89,11 @@ enum Commands {
         path: PathBuf,
     },
     /// Run enabled Tier 0–1 tools in protocol order, then the Bend laws layer
+    #[command(after_help = "Writes <target>/rust-tops/report.json on every run.\n\
+Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
+2  the config is invalid (rust-tops.yaml unreadable or failing check)\n  \
+3  the environment: a required tool or cargo metadata is missing\n\
+Where more than one applies, 2 wins over 3, and 3 over 1.")]
     Gate {
         #[arg(long, default_value = ".")]
         path: PathBuf,
@@ -110,7 +114,7 @@ enum Commands {
 }
 
 /// The protocol version this build implements.
-const PROTOCOL_VERSION: &str = "1.2.0";
+const PROTOCOL_VERSION: &str = "1.3.0";
 
 /// What `cargo tops version` prints: package, protocol, then the `[tools]`
 /// pins of the lock text, or one line saying why there are none.
@@ -184,11 +188,13 @@ fn run() -> Result<ExitCode> {
             path,
             max_tier,
             dry_run,
-        } => {
-            let cfg = load_config(&path)?;
-            check(&cfg)?;
-            gate(&path, &cfg, max_tier, dry_run)
-        }
+        } => Ok(run_gate(
+            &path,
+            gate::Options {
+                max_tier,
+                mode: dry_run.into(),
+            },
+        )),
         Commands::CrapBaseline { path } => {
             let cfg = load_config(&path)?;
             floors::record_baseline(&path, &cfg)?;
@@ -201,9 +207,18 @@ fn run() -> Result<ExitCode> {
     }
 }
 
+/// `cargo tops gate`: a config that does not load, or fails `check`, is exit
+/// 2 with a report; anything else is the gate's own verdict.
+fn run_gate(path: &Path, opts: gate::Options) -> ExitCode {
+    match load_config(path).and_then(|cfg| check(&cfg).map(|()| cfg)) {
+        Ok(cfg) => gate::run(path, &cfg, opts),
+        Err(err) => gate::config_error(path, &err, opts),
+    }
+}
+
 /// `rust-tops.yaml` under `path`, typed, with a class profile, and valid
-/// against `schema/rust-tops.schema.json`. Any of the three failing is a
-/// `check` failure.
+/// against `schema/rust-tops.schema.json`, with tiers and floors that hold the
+/// class (`tiers::check`). Any of the four failing is a `check` failure.
 fn load_config(path: &Path) -> Result<TopsConfig> {
     let file = config_path(path);
     let raw = fs::read_to_string(&file)
@@ -222,6 +237,10 @@ fn load_config(path: &Path) -> Result<TopsConfig> {
             file.display(),
             errors.join("\n  ")
         ));
+    }
+    let problems = tiers::check(&file.display().to_string(), &doc, &exemptions::today());
+    if !problems.is_empty() {
+        return Err(anyhow!("{}", problems.join("\n")));
     }
     Ok(cfg)
 }
@@ -259,11 +278,6 @@ fn check(cfg: &TopsConfig) -> Result<()> {
         .is_some_and(|agent| agent < 1.0)
     {
         return Err(anyhow!("gates.crap.threshold_agent must be >= 1"));
-    }
-    if cfg.gates.mutation.unexplained_survivors_max != 0 && cfg.crate_.class == "library-core" {
-        return Err(anyhow!(
-            "library-core cannot raise unexplained_survivors_max above 0"
-        ));
     }
     Ok(())
 }
@@ -376,7 +390,7 @@ fn print_init_notes(plan: &init_meta::Plan, yaml: &str) {
         println!("{note}");
     }
     if !plan.write_toolchain {
-        println!("note: rust-toolchain.toml not written; the crate or a directory above it, up to the workspace root, already pins a toolchain");
+        println!("note: rust-toolchain.toml not written; the crate or a directory above it, up to the workspace, git or filesystem root, already pins a toolchain");
     }
 }
 
@@ -588,705 +602,9 @@ fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// What a layer runs.
-enum Plan {
-    /// Each chain runs on its own. Inside a chain only a pass continues.
-    Chains(Vec<Vec<Step>>),
-    /// The diff, judged, then `cargo mutants` on a non-empty diff.
-    Mutation(MutationPlan),
-}
-
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "already in this crate when the strict table was turned on"
-)]
-#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
-fn gate(dir: &Path, cfg: &TopsConfig, max_tier: u8, dry_run: bool) -> Result<ExitCode> {
-    // A gate resolves `cargo metadata` afresh, once per project.
-    laws::begin_gate();
-    let enabled: Vec<&config::Layer> = cfg
-        .layers
-        .iter()
-        .filter(|l| l.enabled && l.tier.unwrap_or(0) <= max_tier)
-        .collect();
-
-    if enabled.is_empty() {
-        return Err(anyhow!("no enabled layers at or below tier {max_tier}"));
-    }
-
-    println!(
-        "rust-tops gate: {} ({}) max-tier={max_tier}",
-        cfg.crate_.name, cfg.crate_.class
-    );
-
-    // The laws layer reads the reports the other layers write, so it runs
-    // last. Its judge is fetched first: a missing Bend fails before work.
-    let laws_on = enabled.iter().any(|l| l.id == "laws");
-    let judge = if laws_on && !dry_run {
-        match laws::ensure_bend(dir) {
-            Ok(judge) => Some(judge),
-            Err(msg) => {
-                println!("\nfail: {msg}");
-                return Ok(ExitCode::from(1));
-            }
-        }
-    } else {
-        None
-    };
-
-    // The laws report, the mutation diff, the LCOV and the CRAP report share
-    // one directory, which a nonempty `CARGO_TARGET_DIR` moves. Steps run
-    // with `dir` as the working directory, so it must not be relative to the
-    // caller's.
-    let report = std::path::absolute(laws::artifact_dir(dir))
-        .with_context(|| format!("resolve the report dir of {}", dir.display()))?;
-    // Enabled layers above the range are not judged, so they cannot fail
-    // the gate. Name them so the run says what it left out.
-    let above: Vec<&str> = cfg
-        .layers
-        .iter()
-        .filter(|l| l.enabled && l.tier.unwrap_or(0) > max_tier)
-        .map(|l| l.id.as_str())
-        .collect();
-    if !above.is_empty() {
-        println!(
-            "above --max-tier {max_tier}, not judged: {}",
-            above.join(", ")
-        );
-    }
-    // A layer turned off still shows in the run: it is not run, not omitted.
-    let disabled: Vec<&str> = cfg
-        .layers
-        .iter()
-        .filter(|l| !l.enabled)
-        .map(|l| l.id.as_str())
-        .collect();
-    if !disabled.is_empty() {
-        println!("not run (enabled: false): {}", disabled.join(", "));
-    }
-
-    let started = SystemTime::now();
-    let mut runs: Vec<Run> = Vec::new();
-    // Enabled, in range, and no plan: a skip is never a pass (H-37).
-    let mut not_run: Vec<String> = Vec::new();
-    let mut listed = 0;
-    let tests = TestCommands::new(&enabled, &report);
-    let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
-        tool_pin(dir, "cargo-crap")?
-    } else {
-        None
-    };
-    // Layers that add no command, each with the layer whose run it takes.
-    let mut shared: Vec<(&str, &str)> = Vec::new();
-    for layer in enabled.iter().filter(|l| l.id != "laws") {
-        if let Some(from) = tests.shared_from(&layer.id) {
-            println!(
-                "\n==> [{}] no command of its own: it takes the {from} run's outcome",
-                layer.id
-            );
-            shared.push((&layer.id, from));
-            continue;
-        }
-        let Some(plan) = plan_for(layer, &report) else {
-            let tier = layer.tier.unwrap_or(0);
-            println!(
-                "\nNotRun [{}]: enabled at tier {tier} (<= --max-tier {max_tier}) and no command is mapped",
-                layer.id
-            );
-            not_run.push(format!(
-                "{}: NotRun (enabled at tier {tier}, no command mapped; disable it or lower --max-tier)",
-                layer.id
-            ));
-            continue;
-        };
-        let chains = match plan {
-            Plan::Chains(chains) => chains,
-            Plan::Mutation(plan) => {
-                println!(
-                    "\n==> [{}] {} && {}",
-                    layer.id,
-                    plan.diff.display(),
-                    plan.mutants.display()
-                );
-                listed += 1;
-                if !dry_run {
-                    runs.push(run_mutation(dir, &layer.id, &plan)?);
-                }
-                continue;
-            }
-        };
-        let pin = crap_pin.as_deref().filter(|_| layer.id == "crap");
-        for chain in chains {
-            let mut shown: Vec<String> = pin.map(|_| CRAP_VERSION.join(" ")).into_iter().collect();
-            shown.extend(chain.iter().map(Step::display));
-            println!("\n==> [{}] {}", layer.id, shown.join(" && "));
-            if let Some(pin) = pin {
-                println!(
-                    "    `{}` must print `cargo-crap {pin}`, the {TOOL_LOCK} pin",
-                    CRAP_VERSION.join(" ")
-                );
-            }
-            listed += 1;
-            if !dry_run {
-                runs.push(match pin {
-                    Some(pin) => run_pinned_crap(dir, &layer.id, &chain, pin)?,
-                    None => run_chain(dir, &layer.id, &chain)?,
-                });
-            }
-        }
-    }
-
-    let total = fs::read_to_string(dir.join(laws::PACK))
-        .map(|pack| facts::pack_law_count(&pack))
-        .unwrap_or_else(|_| facts::pack_law_count(profiles::LAWS_BEND));
-
-    if dry_run {
-        if laws_on {
-            println!(
-                "\n==> [laws] sh {} (only if Bend from {} is not installed)",
-                laws::FETCH,
-                laws::LOCK
-            );
-            println!("\n==> [laws] bend {}/cases.bend", laws::report_display(dir));
-        }
-        println!();
-        println!("laws evaluated: 0/{total} (dry run: bend did not run)");
-        // Nothing ran, so the count is short for every layer: a dry run
-        // lists the commands and is never a pass.
-        let (count, _) = command_count(0, &enabled, &[], false, max_tier, &shared);
-        println!("{count}");
-        if not_run.is_empty() {
-            println!("dry-run: {listed} command(s) listed, 0 run; a dry run is not a pass");
-        } else {
-            println!(
-                "dry-run: {listed} command(s) listed, 0 run; {} layer(s) NotRun, so the gate would fail",
-                not_run.len()
-            );
-        }
-        for n in not_run.iter().chain([&count]) {
-            println!("  - {n}");
-        }
-        return Ok(ExitCode::from(1));
-    }
-
-    for &(layer, from) in &shared {
-        let run = tests.take(layer, from, &runs);
-        println!("[{layer}] took the {from} run's outcome: {}", run.outcome);
-        runs.push(run);
-    }
-    let mut failed: Vec<String> = not_run;
-    failed.extend(runs.iter().filter_map(|run| {
-        match shared.iter().find(|(layer, _)| *layer == run.layer) {
-            Some((_, from)) => run.outcome.fails_the_gate().then(|| {
-                format!(
-                    "{}: no command of its own; the {from} run it took is {}",
-                    run.layer, run.outcome
-                )
-            }),
-            None => run_failure(run),
-        }
-    }));
-    // The coverage floors and the CRAP ratchet, on the reports just written.
-    failed.extend(floors::judge(dir, cfg, &runs, &report));
-    let mut bend_ran = false;
-    let evaluated = match judge {
-        Some(judge) => {
-            // A report from an earlier gate must not be counted for this one.
-            let cases = report.join("cases.json");
-            match fs::remove_file(&cases) {
-                Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(err).with_context(|| format!("remove {}", cases.display()));
-                }
-                _ => {}
-            }
-            let ctx = facts::Ctx {
-                dir,
-                cfg,
-                yaml: fs::read_to_string(config_path(dir))
-                    .ok()
-                    .and_then(|raw| facts::parse_yaml(&raw).ok())
-                    .unwrap_or_default(),
-                max_tier,
-                runs: &runs,
-                artifacts: &report,
-                started,
-                workflows: facts::load_workflows(dir),
-            };
-            failed.extend(laws::run(&judge, &ctx)?);
-            // `cases.json` was removed above, so one here means bend ran.
-            let report = laws_evaluated(&cases);
-            bend_ran = report.is_some();
-            let (checked, of) = report.unwrap_or((0, total));
-            format!("laws evaluated: {checked}/{of}")
-        }
-        None => format!("laws evaluated: 0/{total} (laws layer off)"),
-    };
-
-    // A layer that took another's run ran no command of its own.
-    let ran = runs.len() - shared.len();
-    let vacuous = runs
-        .iter()
-        .filter(|run| run.outcome == Outcome::Vacuous)
-        .count();
-    let (count, short) = command_count(
-        ran_commands(&runs, bend_ran, &shared),
-        &enabled,
-        &runs,
-        bend_ran,
-        max_tier,
-        &shared,
-    );
-    if short {
-        failed.push(count.clone());
-    }
-    println!();
-    println!("{evaluated}");
-    println!("{count}");
-    if failed.is_empty() {
-        if vacuous == 0 {
-            println!("ok: {ran} command(s) passed");
-        } else {
-            println!(
-                "ok: {} command(s) passed, {vacuous} vacuous (counted for no law)",
-                ran - vacuous
-            );
-        }
-        Ok(ExitCode::SUCCESS)
-    } else {
-        println!("fail: {} problem(s), {ran} command(s) run", failed.len());
-        for f in &failed {
-            println!("  - {f}");
-        }
-        Ok(ExitCode::from(1))
-    }
-}
-
-/// Commands that ran: each run whose tool was found, and `bend` once when it
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "already in this crate when the strict table was turned on"
-)]
-/// judged the laws layer. A layer that took another layer's run ran none.
-fn ran_commands(runs: &[Run], bend_ran: bool, shared: &[(&str, &str)]) -> usize {
-    runs.iter()
-        .filter(|run| run.outcome != Outcome::ToolMissing)
-        .filter(|run| !shared.iter().any(|(layer, _)| *layer == run.layer))
-        .count()
-        + usize::from(bend_ran)
-}
-
-/// The test commands of the enabled layers in range, which decide whether a
-/// layer runs its own or takes another layer's run ([`credit`]). A layer
-/// that is off or above the range has no command here, so nothing takes its
-/// run.
-struct TestCommands {
-    coverage_in_range: bool,
-    coverage: Vec<String>,
-    unit: Vec<String>,
-    integration: Vec<String>,
-}
-
-impl TestCommands {
-    fn new(enabled: &[&config::Layer], report: &Path) -> Self {
-        let argv = |id: &str| {
-            enabled
-                .iter()
-                .find(|layer| layer.id == id)
-                .and_then(|layer| plan_for(layer, report))
-                .and_then(|plan| match plan {
-                    Plan::Chains(chains) => chains
-                        .into_iter()
-                        .flatten()
-                        .find(|step| step.kind == Kind::Tool),
-                    Plan::Mutation(_) => None,
-                })
-                .map(|step| step.argv)
-                .unwrap_or_default()
-        };
-        Self {
-            coverage_in_range: enabled.iter().any(|layer| layer.id == "coverage"),
-            coverage: argv("coverage"),
-            unit: argv("unit"),
-            integration: argv("integration"),
-        }
-    }
-
-    fn query<'a>(&'a self, layer: &'a str, runs: &[Run]) -> credit::Query<'a> {
-        let outcome = |id: &str| {
-            runs.iter()
-                .find(|run| run.layer == id)
-                .map(|run| match run.outcome {
-                    Outcome::Passed => credit::Outcome::Passed,
-                    Outcome::ToolMissing => credit::Outcome::ToolMissing,
-                    // A test run is never Vacuous; if one were, it is no pass.
-                    Outcome::Failed | Outcome::Vacuous => credit::Outcome::Failed,
-                })
-        };
-        credit::Query {
-            layer,
-            coverage_in_range: self.coverage_in_range,
-            coverage_argv: &self.coverage,
-            coverage_outcome: outcome("coverage"),
-            unit_argv: &self.unit,
-            integration_argv: &self.integration,
-            unit_outcome: outcome("unit"),
-        }
-    }
-
-    /// The layer whose run `layer` takes, or `None` when it runs its own.
-    /// Credit from coverage is only possible in range, and from `unit` only
-    /// out of it, so the range names the source.
-    fn shared_from(&self, layer: &str) -> Option<&'static str> {
-        if credit::runs_itself(&self.query(layer, &[])) {
-            None
-        } else if self.coverage_in_range {
-            Some("coverage")
-        } else {
-            Some("unit")
-        }
-    }
-
-    /// The run `layer` records once `from` has run: `from`'s command, and the
-    /// outcome [`credit::recorded_outcome`] gives. A source that did not run
-    /// is not a pass.
-    fn take(&self, layer: &str, from: &str, runs: &[Run]) -> Run {
-        let outcome = match credit::recorded_outcome(&self.query(layer, runs)) {
-            Some(credit::Outcome::Passed) => Outcome::Passed,
-            Some(credit::Outcome::ToolMissing) => Outcome::ToolMissing,
-            Some(credit::Outcome::Failed) | None => Outcome::Failed,
-        };
-        let source = runs.iter().find(|run| run.layer == from);
-        Run {
-            layer: layer.to_string(),
-            cmd: source.map(|run| run.cmd.clone()).unwrap_or_default(),
-            step: source.map(|run| run.step.clone()).unwrap_or_default(),
-            outcome,
-        }
-    }
-}
-
-/// The `count:` line, and whether it is short: an enabled layer in range
-/// ran no command (NotRun, a missing tool, or a dry run). Every run belongs
-/// to one enabled layer, so fewer commands than layers is always short. A
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "already in this crate when the strict table was turned on"
-)]
-/// short count fails the gate.
-fn command_count(
-    ran: usize,
-    enabled: &[&config::Layer],
-    runs: &[Run],
-    bend_ran: bool,
-    max_tier: u8,
-    shared: &[(&str, &str)],
-) -> (String, bool) {
-    let none: Vec<&str> = enabled
-        .iter()
-        .map(|layer| layer.id.as_str())
-        .filter(|id| match *id {
-            "laws" => !bend_ran,
-            _ => !runs
-                .iter()
-                .any(|run| run.layer == *id && run.outcome != Outcome::ToolMissing),
-        })
-        .collect();
-    let mut line = format!(
-        "count: {ran} command(s) ran; {} of {} enabled layer(s) at tier <= {max_tier} ran one",
-        enabled.len() - none.len(),
-        enabled.len()
-    );
-    // A layer that took another's run is counted when that run happened,
-    // with the run named.
-    for from in ["coverage", "unit"] {
-        let took: Vec<&str> = shared
-            .iter()
-            .filter(|(_, source)| *source == from)
-            .map(|(layer, _)| *layer)
-            .collect();
-        if !took.is_empty() {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "already in this crate when the strict table was turned on"
-            )]
-            let _ = write!(line, "; {} took the {from} run", took.join(", "));
-        }
-    }
-    if none.is_empty() {
-        (line, false)
-    } else {
-        (format!("{line}; none ran for: {}", none.join(", ")), true)
-    }
-}
-
-/// `(checked, total)` from the `cases.json` the laws layer just wrote. A law
-/// is evaluated when `bend` got a case for it.
-fn laws_evaluated(cases: &Path) -> Option<(usize, usize)> {
-    let raw = fs::read_to_string(cases).ok()?;
-    let report: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "already in this crate when the strict table was turned on"
-    )]
-    let laws = report["laws"].as_array()?;
-    let checked = laws.iter().filter(|law| law["status"] == "checked").count();
-    Some((checked, laws.len()))
-}
-
-fn run_failure(run: &Run) -> Option<String> {
-    match run.outcome {
-        Outcome::Passed | Outcome::Vacuous => None,
-        Outcome::Failed => Some(format!("{}: `{}` failed", run.layer, run.step)),
-        Outcome::ToolMissing => {
-            let missing = steps::MissingTool {
-                binary: steps::tool_binary(std::slice::from_ref(&run.step))
-                    .unwrap_or_else(|| run.step.clone()),
-            };
-            Some(format!("{}: {missing}", run.layer))
-        }
-    }
-}
-
-/// The steps that ran, joined, and the outcome of the last one.
-fn finish(layer: &str, ran: &[String], outcome: Outcome) -> Run {
-    Run {
-        layer: layer.to_string(),
-        cmd: ran.join(" && "),
-        step: ran.last().cloned().unwrap_or_default(),
-        outcome,
-    }
-}
-
-fn run_chain(dir: &Path, layer: &str, chain: &[Step]) -> Result<Run> {
-    let mut ran = Vec::new();
-    let mut outcome = Outcome::Passed;
-    for step in chain {
-        ran.push(step.display());
-        outcome = run_step(dir, step)?;
-        if !steps::chain_continues(outcome) {
-            break;
-        }
-    }
-    Ok(finish(layer, &ran, outcome))
-}
-
 /// The tool pins a repo keeps at its root, beside `rust-tops.yaml`. `init`
 /// does not write one. Adopters copy `config/rust-tops.lock.example`.
 pub(crate) const TOOL_LOCK: &str = "rust-tops.lock";
-
-/// The command whose first line must name the pinned cargo-crap.
-const CRAP_VERSION: [&str; 3] = ["cargo", "crap", "--version"];
-
-/// The `[tools]` version that `dir/rust-tops.lock` pins for `tool`. No lock,
-/// or no line for `tool`, is `None`. A lock that does not parse is an error.
-fn tool_pin(dir: &Path, tool: &str) -> Result<Option<String>> {
-    let path = dir.join(TOOL_LOCK);
-    let raw = match fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
-    };
-    let lock: toml::Table =
-        toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    Ok(lock
-        .get("tools")
-        .and_then(|tools| tools.get(tool))
-        .and_then(toml::Value::as_str)
-        .map(str::to_string))
-}
-
-/// The crap chain, run only when `cargo crap --version` prints
-/// `cargo-crap <pin>`. It asks the binary that `cargo crap` runs, so another
-/// version earlier on `PATH` fails the layer before a report is written. A
-/// cargo-crap that is not there is left to the chain, which reports it
-/// missing.
-fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str) -> Result<Run> {
-    let version = CRAP_VERSION.join(" ");
-    let argv = CRAP_VERSION.map(String::from);
-    if steps::check_tool(&argv).is_err() {
-        return run_chain(dir, layer, chain);
-    }
-    let output = Command::new(CRAP_VERSION[0])
-        .args(&CRAP_VERSION[1..])
-        .current_dir(dir)
-        .output()
-        .with_context(|| format!("spawn: {version}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let printed = stdout.lines().next().unwrap_or_default().trim();
-    let want = format!("cargo-crap {pin}");
-    if !output.status.success() || printed != want {
-        println!(
-            "Failed [{layer}]: `{version}` printed `{printed}`, not `{want}` from {TOOL_LOCK}"
-        );
-        return Ok(finish(layer, &[version], Outcome::Failed));
-    }
-    let mut run = run_chain(dir, layer, chain)?;
-    run.cmd = format!("{version} && {}", run.cmd);
-    Ok(run)
-}
-
-/// `cargo-mutants` is looked up before the diff, so an empty diff cannot
-/// hide a missing tool. A failed diff is `Failed`; nothing waives it. An
-/// empty one is `Vacuous` and `cargo mutants` does not run.
-fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
-    if let Err(missing) = steps::check_tool(&plan.mutants.argv) {
-        println!("{missing}");
-        return Ok(finish(
-            layer,
-            &[plan.mutants.display()],
-            Outcome::ToolMissing,
-        ));
-    }
-    let mut ran = vec![plan.diff.display()];
-    let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
-    let diff = steps::judge_diff(diff_ok, &plan.diff_path);
-    let Some(mutants) = plan.after_diff(diff) else {
-        if diff == Outcome::Vacuous && has_origin_main(dir) {
-            println!(
-                "Vacuous: the diff from `git merge-base origin/main HEAD` is empty; \
-                 cargo mutants did not run and no law counts this layer"
-            );
-        } else if diff == Outcome::Vacuous {
-            println!(
-                "Vacuous: no origin/main; the mutation diff is empty; \
-                 cargo mutants did not run and no law counts this layer"
-            );
-        } else {
-            println!("Failed: the mutation diff did not succeed; a failed diff is never waived");
-        }
-        return Ok(finish(layer, &ran, diff));
-    };
-    ran.push(mutants.display());
-    let outcome = run_step(dir, mutants)?;
-    Ok(finish(layer, &ran, outcome))
-}
-
-/// Whether `refs/remotes/origin/main` exists, for the Vacuous wording only.
-fn has_origin_main(dir: &Path) -> bool {
-    Command::new("git")
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            "refs/remotes/origin/main",
-        ])
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
-    match step.kind {
-        Kind::Artifact => {
-            return Ok(step.artifact_path().map_or(Outcome::Failed, |path| {
-                steps::artifact_outcome(&dir.join(path))
-            }));
-        }
-        Kind::Tool => {
-            if let Err(missing) = steps::check_tool(&step.argv) {
-                println!("{missing}");
-                return Ok(Outcome::ToolMissing);
-            }
-        }
-        Kind::Command => {}
-    }
-    let Some((program, args)) = step.program() else {
-        return Ok(Outcome::Failed);
-    };
-    match Command::new(program).args(args).current_dir(dir).status() {
-        Ok(status) if status.success() => Ok(Outcome::Passed),
-        Ok(_) => Ok(Outcome::Failed),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            println!(
-                "{}",
-                steps::MissingTool {
-                    binary: program.to_string()
-                }
-            );
-            Ok(Outcome::ToolMissing)
-        }
-        Err(err) => Err(err).with_context(|| format!("spawn: {}", step.display())),
-    }
-}
-
-fn tool(argv: &[&str]) -> Vec<Step> {
-    vec![Step::tool(argv.iter().copied())]
-}
-
-/// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
-/// and the mutation diff are written there.
-#[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
-fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
-    let chains = match layer.id.as_str() {
-        "static-lint" => vec![
-            tool(&["cargo", "fmt", "--all", "--", "--check"]),
-            tool(&[
-                "cargo",
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--",
-                "-D",
-                "warnings",
-            ]),
-            // `security-advisory` runs `advisories`; each kind runs once.
-            tool(&["cargo", "deny", "check", "bans", "licenses", "sources"]),
-        ],
-        "unit" | "integration" => vec![tool(&[
-            "cargo",
-            "nextest",
-            "run",
-            "--workspace",
-            "--all-features",
-            "--profile",
-            "ci",
-        ])],
-        "doc" => vec![tool(&[
-            "cargo",
-            "test",
-            "--doc",
-            "--workspace",
-            "--all-features",
-        ])],
-        "coverage" => vec![steps::coverage_steps(report)],
-        "crap" => {
-            let lcov = report.join(steps::LCOV).display().to_string();
-            let crap = report.join(steps::CRAP).display().to_string();
-            vec![vec![
-                Step::tool([
-                    "cargo",
-                    "crap",
-                    "--lcov",
-                    lcov.as_str(),
-                    "--format",
-                    "json",
-                    "--output",
-                    crap.as_str(),
-                ]),
-                Step::artifact(crap),
-            ]]
-        }
-        "mutation" => return Some(Plan::Mutation(MutationPlan::new(report))),
-        "property" => vec![tool(&[
-            "cargo",
-            "nextest",
-            "run",
-            "--workspace",
-            "--all-features",
-            "--profile",
-            "ci",
-            "--no-tests=fail",
-            "property",
-        ])],
-        "security-advisory" => vec![tool(&["cargo", "deny", "check", "advisories"])],
-        "formal-kani" => vec![tool(&["cargo", "kani", "--workspace"])],
-        _ => return None,
-    };
-    Some(Plan::Chains(chains))
-}
 
 /// The profile YAML with its `exemptions:` block replaced by
 /// [`steps::init_exemptions`], which is empty. An exemption is a dated choice
@@ -1341,6 +659,37 @@ fn with_init_exemptions(yaml: &str) -> String {
 mod tests {
     use super::*;
 
+    type Plant = fn(&mut TopsConfig);
+
+    /// The library-core golden, typed.
+    fn golden_cfg() -> TopsConfig {
+        let raw = include_str!("../tests/golden/init/library-core/rust-tops.yaml");
+        parse_config(Path::new("rust-tops.yaml"), raw).expect("golden parses")
+    }
+
+    #[test]
+    fn check_accepts_the_golden_and_names_each_typed_fault() {
+        assert!(check(&golden_cfg()).is_ok());
+        let faults: [(&str, Plant); 4] = [
+            ("protocol.id must be rust-tops", |c| {
+                c.protocol.id = "other".into();
+            }),
+            ("protocol.version is required", |c| {
+                c.protocol.version.clear();
+            }),
+            ("crate.name is required", |c| c.crate_.name.clear()),
+            ("gates.crap.threshold_agent must be >= 1", |c| {
+                c.gates.crap.threshold_agent = Some(0.5);
+            }),
+        ];
+        for (message, plant) in faults {
+            let mut cfg = golden_cfg();
+            plant(&mut cfg);
+            let err = check(&cfg).expect_err(message);
+            assert_eq!(err.to_string(), message);
+        }
+    }
+
     /// Every file in `profiles/`.
     const PROFILE_CLASSES: [&str; 8] = [
         "library-core",
@@ -1355,27 +704,6 @@ mod tests {
 
     fn init_yaml(class: &str) -> String {
         with_init_exemptions(&profiles::profile_yaml(class, "x").expect("profile merges"))
-    }
-
-    fn layer(id: &str) -> config::Layer {
-        serde_saphyr::from_str(&format!(
-            "{{ id: {id}, enabled: true, tier: 0, runner: x }}"
-        ))
-        .expect("layer")
-    }
-
-    fn chains(id: &str) -> Vec<Vec<Step>> {
-        match plan_for(&layer(id), Path::new("/r")) {
-            Some(Plan::Chains(chains)) => chains,
-            _ => panic!("{id} has no chains"),
-        }
-    }
-
-    fn tool_step(chain: &[Step]) -> &Step {
-        chain
-            .iter()
-            .find(|step| step.kind == Kind::Tool)
-            .expect("a tool step")
     }
 
     /// Cargo passes the subcommand name; the bare binary does not. The
@@ -1398,323 +726,6 @@ mod tests {
         for (given, want) in cases {
             assert_eq!(subcommand_argv(argv(given)), argv(want), "{given:?}");
         }
-    }
-
-    #[test]
-    fn the_g0_strings_name_the_tool_they_run() {
-        let coverage = "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info";
-        let mutation = "sh -c 'git diff origin/main...HEAD --unified=0 > /tmp/rust-tops.diff; cargo mutants --in-diff /tmp/rust-tops.diff -j 2'";
-        assert_eq!(
-            steps::tool_binary(&[coverage.to_string()]).as_deref(),
-            Some("cargo-llvm-cov")
-        );
-        assert_eq!(
-            steps::tool_binary(&[mutation.to_string()]).as_deref(),
-            Some("cargo-mutants")
-        );
-    }
-
-    #[test]
-    fn coverage_and_crap_check_their_own_binary() {
-        let coverage = chains("coverage");
-        assert_eq!(coverage.len(), 1);
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let tops_idx_1285_44 = coverage[0].clone();
-        assert_eq!(
-            steps::tool_binary(&tool_step(&tops_idx_1285_44).argv).as_deref(),
-            Some("cargo-llvm-cov")
-        );
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let tops_idx_1293_13 = coverage[0].clone();
-        assert_eq!(
-            tops_idx_1293_13.last().map(|step| step.kind),
-            Some(Kind::Artifact)
-        );
-        let crap = chains("crap");
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let tops_idx_1302_44 = crap[0].clone();
-        assert_eq!(
-            steps::tool_binary(&tool_step(&tops_idx_1302_44).argv).as_deref(),
-            Some("cargo-crap")
-        );
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let tops_idx_1310_13 = crap[0].clone();
-        assert_eq!(
-            tops_idx_1310_13.last().and_then(Step::artifact_path),
-            Some(Path::new("/r/crap.json"))
-        );
-    }
-
-    #[test]
-    fn coverage_and_crap_write_under_the_artifact_dir() {
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let coverage: Vec<String> = chains("coverage")[0].iter().map(Step::display).collect();
-        assert_eq!(
-            coverage,
-            [
-                "mkdir -p /r",
-                "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path /r/lcov.info",
-                "test -s /r/lcov.info",
-                "cargo llvm-cov report --json --summary-only --output-path /r/coverage.json",
-                "test -s /r/coverage.json",
-            ]
-        );
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let crap: Vec<String> = chains("crap")[0].iter().map(Step::display).collect();
-        assert_eq!(
-            crap,
-            [
-                "cargo crap --lcov /r/lcov.info --format json --output /r/crap.json",
-                "test -s /r/crap.json",
-            ]
-        );
-    }
-
-    fn argv(words: &str) -> Vec<String> {
-        words.split_whitespace().map(str::to_string).collect()
-    }
-
-    const COVERAGE: &str = "cargo llvm-cov nextest --workspace --all-features --profile ci --lcov";
-    const UNIT: &str = "cargo nextest run --workspace --all-features --profile ci";
-
-    #[expect(
-        clippy::fn_params_excessive_bools,
-        reason = "already in this crate when the strict table was turned on"
-    )]
-    fn tests_with(in_range: bool, coverage: &str, integration: &str) -> TestCommands {
-        TestCommands {
-            coverage_in_range: in_range,
-            coverage: argv(coverage),
-            unit: argv(UNIT),
-            integration: argv(integration),
-        }
-    }
-
-    fn run(layer: &str, outcome: Outcome) -> Run {
-        Run {
-            layer: layer.to_string(),
-            cmd: format!("{layer} cmd"),
-            step: format!("{layer} step"),
-            outcome,
-        }
-    }
-
-    #[test]
-    fn the_shipped_test_commands_share_one_coverage_run() {
-        let layers: Vec<config::Layer> = ["unit", "integration", "coverage", "property"]
-            .into_iter()
-            .map(layer)
-            .collect();
-        let enabled: Vec<&config::Layer> = layers.iter().collect();
-        let tests = TestCommands::new(&enabled, Path::new("/r"));
-        assert!(tests.coverage_in_range);
-        assert!(
-            credit::coverage_grants_credit(&tests.coverage),
-            "{:?}",
-            tests.coverage
-        );
-        assert_eq!(tests.unit, tests.integration);
-        for id in ["unit", "integration", "property"] {
-            assert_eq!(tests.shared_from(id), Some("coverage"), "{id}");
-        }
-        for id in ["coverage", "doc", "static-lint", "crap"] {
-            assert_eq!(tests.shared_from(id), None, "{id}");
-        }
-        // Out of range, nothing names a coverage command and none is shared.
-        let unit_only: Vec<&config::Layer> = enabled
-            .iter()
-            .copied()
-            .filter(|l| l.id != "coverage")
-            .collect();
-        let tests = TestCommands::new(&unit_only, Path::new("/r"));
-        assert!(!tests.coverage_in_range);
-        assert!(tests.coverage.is_empty());
-        assert_eq!(tests.shared_from("integration"), Some("unit"));
-        assert_eq!(tests.shared_from("unit"), None);
-        assert_eq!(tests.shared_from("property"), None);
-    }
-
-    #[test]
-    fn a_coverage_command_missing_a_flag_shares_nothing() {
-        for missing in ["--workspace", "--all-features", "--profile ci"] {
-            let coverage = COVERAGE.replace(&format!(" {missing}"), "");
-            let tests = tests_with(true, &coverage, UNIT);
-            for id in ["unit", "integration", "property"] {
-                assert_eq!(tests.shared_from(id), None, "{missing}: {id}");
-            }
-        }
-        let tests = tests_with(
-            true,
-            &COVERAGE.replace("--profile ci", "--profile default"),
-            UNIT,
-        );
-        assert_eq!(tests.shared_from("unit"), None);
-    }
-
-    #[test]
-    fn integration_takes_unit_only_when_its_command_is_unit_s() {
-        let tests = tests_with(false, COVERAGE, UNIT);
-        assert_eq!(tests.shared_from("integration"), Some("unit"));
-        let tests = tests_with(false, COVERAGE, &format!("{UNIT} --test it"));
-        assert_eq!(tests.shared_from("integration"), None);
-        // Unit off or out of range: no unit command, so integration runs.
-        let mut tests = tests_with(false, COVERAGE, UNIT);
-        tests.unit.clear();
-        assert_eq!(tests.shared_from("integration"), None);
-    }
-
-    #[test]
-    fn a_shared_layer_records_its_source_run_and_no_source_is_no_pass() {
-        let tests = tests_with(true, COVERAGE, UNIT);
-        for outcome in [Outcome::Passed, Outcome::Failed, Outcome::ToolMissing] {
-            let took = tests.take("unit", "coverage", &[run("coverage", outcome)]);
-            assert_eq!(took.outcome, outcome);
-            assert_eq!(took.layer, "unit");
-            assert_eq!(took.cmd, "coverage cmd");
-            assert_eq!(took.step, "coverage step");
-        }
-        let took = tests.take("unit", "coverage", &[run("coverage", Outcome::Vacuous)]);
-        assert_eq!(took.outcome, Outcome::Failed);
-        let took = tests.take("property", "coverage", &[run("unit", Outcome::Passed)]);
-        assert_eq!(took.outcome, Outcome::Failed);
-        assert_eq!(took.cmd, "");
-        let tests = tests_with(false, COVERAGE, UNIT);
-        let took = tests.take("integration", "unit", &[run("unit", Outcome::Failed)]);
-        assert_eq!(took.outcome, Outcome::Failed);
-        assert_eq!(took.cmd, "unit cmd");
-    }
-
-    #[test]
-    fn a_shared_run_is_not_a_command_and_its_source_is_named() {
-        let runs = [
-            run("coverage", Outcome::Passed),
-            run("unit", Outcome::Passed),
-            run("doc", Outcome::ToolMissing),
-        ];
-        assert_eq!(ran_commands(&runs, false, &[("unit", "coverage")]), 1);
-        assert_eq!(ran_commands(&runs, true, &[]), 3);
-        let layers: Vec<config::Layer> =
-            ["coverage", "unit", "doc"].into_iter().map(layer).collect();
-        let enabled: Vec<&config::Layer> = layers.iter().collect();
-        let (line, short) = command_count(1, &enabled, &runs, false, 1, &[("unit", "coverage")]);
-        assert!(short);
-        assert_eq!(
-            line,
-            "count: 1 command(s) ran; 2 of 3 enabled layer(s) at tier <= 1 ran one; unit took the coverage run; none ran for: doc"
-        );
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let (line, short) =
-            command_count(2, &enabled[..2], &runs, false, 1, &[("unit", "coverage")]);
-        assert!(!short);
-        assert!(
-            line.ends_with("ran one; unit took the coverage run"),
-            "{line}"
-        );
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let (line, _) = command_count(2, &enabled[..2], &runs, false, 1, &[("unit", "unit")]);
-        assert!(line.ends_with("ran one; unit took the unit run"), "{line}");
-    }
-
-    #[test]
-    fn the_mutation_diff_uses_merge_base_and_the_report_dir() {
-        let report = Path::new("/work/target/rust-tops");
-        let Some(Plan::Mutation(plan)) = plan_for(&layer("mutation"), report) else {
-            panic!("mutation has no plan");
-        };
-        assert_eq!(plan.diff_path, report.join("rust-tops.diff"));
-        let script = plan.diff.argv.join(" ");
-        assert!(
-            script.contains("git merge-base origin/main HEAD"),
-            "{script}"
-        );
-        assert!(script.contains("refs/remotes/origin/main"), "{script}");
-        assert!(script.contains("&& git diff"), "{script}");
-        assert!(!script.contains("mutants"), "{script}");
-        assert!(!script.contains("/tmp"), "{script}");
-        assert!(plan
-            .mutants
-            .argv
-            .contains(&"/work/target/rust-tops/rust-tops.diff".to_string()));
-        assert_eq!(
-            steps::tool_binary(&plan.mutants.argv).as_deref(),
-            Some("cargo-mutants")
-        );
-    }
-
-    #[test]
-    fn no_mapped_layer_writes_under_tmp() {
-        for id in [
-            "static-lint",
-            "unit",
-            "integration",
-            "doc",
-            "coverage",
-            "crap",
-            "property",
-            "security-advisory",
-        ] {
-            for chain in chains(id) {
-                for step in chain {
-                    assert!(!step.display().contains("/tmp"), "{id}: {}", step.display());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn unmapped_layers_have_no_plan() {
-        for id in [
-            "acceptance",
-            "fuzz",
-            "miri",
-            "sanitizer",
-            "bench-criterion",
-            "bench-callgrind",
-            "density-audit",
-            "laws",
-        ] {
-            assert!(plan_for(&layer(id), Path::new("/r")).is_none(), "{id}");
-        }
-    }
-
-    #[test]
-    fn formal_kani_runs_cargo_kani() {
-        let kani = chains("formal-kani");
-        assert_eq!(kani.len(), 1);
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let step = tool_step(&kani[0]);
-        assert_eq!(step.argv, ["cargo", "kani", "--workspace"]);
-        assert_eq!(
-            steps::tool_binary(&step.argv).as_deref(),
-            Some("cargo-kani")
-        );
     }
 
     #[test]
@@ -1752,31 +763,6 @@ mod tests {
             let tops_idx_1603_24 = layer("laws")["enabled"].clone();
             assert_eq!(tops_idx_1603_24, false, "{class}");
         }
-    }
-
-    #[test]
-    fn a_failed_diff_is_failed_even_over_a_stale_diff() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-diff-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("mkdir");
-        let stale = dir.join("stale.diff");
-        fs::write(&stale, "+changed\n").expect("write");
-        let empty = dir.join("empty.diff");
-        fs::write(&empty, "").expect("write");
-        assert_eq!(steps::judge_diff(false, &stale), Outcome::Failed);
-        assert_eq!(steps::judge_diff(false, &empty), Outcome::Failed);
-        assert_eq!(steps::judge_diff(true, &empty), Outcome::Vacuous);
-        assert_eq!(steps::judge_diff(true, &stale), Outcome::Passed);
-        assert_eq!(
-            steps::judge_diff(true, &dir.join("absent")),
-            Outcome::Failed
-        );
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let _ = fs::remove_dir_all(&dir);
-        assert!(!Outcome::Vacuous.fails_the_gate());
-        assert!(!Outcome::Vacuous.counts_for_a_law());
     }
 
     #[test]
@@ -1965,13 +951,13 @@ mod tests {
         let pkg = env!("CARGO_PKG_VERSION");
         assert_eq!(
             version_text(None),
-            format!("cargo-tops {pkg}\nprotocol 1.2.0\ntool pins: none (no ./rust-tops.lock)\n")
+            format!("cargo-tops {pkg}\nprotocol 1.3.0\ntool pins: none (no ./rust-tops.lock)\n")
         );
         let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
         assert_eq!(
             version_text(Some(lock)),
             format!(
-                "cargo-tops {pkg}\nprotocol 1.2.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+                "cargo-tops {pkg}\nprotocol 1.3.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
             )
         );
         assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));

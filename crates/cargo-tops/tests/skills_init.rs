@@ -50,7 +50,7 @@ const PHRASES: &[&str] = &[
     "profile, then algorithm",
     "the recorder never ran",
     "honor CARGO_BIN_EXE_*",
-    "read that law in rust-tops/cases.json and fix the fact it read",
+    "read that law in rust-tops/report.json and fix the fact it read",
     "the law was not checked. It is not a pass.",
     "does not vendor engines",
 ];
@@ -219,6 +219,11 @@ fn skill_text_is_portable_and_the_gate_remedies_match_agents_md() {
     assert!(gate.contains("Ack"));
     assert!(gate.contains("not-evaluated"));
     assert!(gate.contains("gate_green"));
+    assert!(gate.contains("report.json"));
+    assert!(
+        !gate.contains("cases.json"),
+        "the gate skill reads report.json only"
+    );
     assert!(gate.contains("no_fact_reader"));
     assert!(
         !gate.contains("^rm"),
@@ -300,7 +305,7 @@ fn frontmatter(md: &str) -> serde_json::Value {
 }
 
 fn nu_bin() -> Option<PathBuf> {
-    let found = Command::new("sh")
+    Command::new("sh")
         .args(["-c", "command -v nu"])
         .output()
         .ok()
@@ -308,12 +313,12 @@ fn nu_bin() -> Option<PathBuf> {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    if let Some(path) = found {
-        return Some(path);
-    }
-    let local = PathBuf::from("/tmp/nu/nu");
-    local.is_file().then_some(local)
+        .map(PathBuf::from)
+}
+
+/// The value at a JSON pointer, or null.
+fn at<'a>(doc: &'a serde_json::Value, pointer: &str) -> &'a serde_json::Value {
+    doc.pointer(pointer).unwrap_or(&serde_json::Value::Null)
 }
 
 fn parse_json(stdout: &[u8]) -> serde_json::Value {
@@ -347,6 +352,7 @@ fn nu_scripts_honor_the_envelope_when_nu_is_installed() {
         );
     }
     smoke_gate(&nu);
+    smoke_real_report(&nu);
     smoke_adopt(&nu);
     smoke_review(&nu);
 }
@@ -389,6 +395,20 @@ fn smoke_gate(nu: &Path) {
         );
         parse_json(&out.stdout)
     };
+
+    let odd = run("odd-numbers");
+    assert_eq!(at(&odd, "/data/layers/0/seconds"), 0, "{odd}");
+    assert_eq!(at(&odd, "/data/gate_green"), true, "{odd}");
+
+    let ran_empty = run("laws-ran-empty");
+    assert_eq!(at(&ran_empty, "/ok"), false, "{ran_empty}");
+    assert!(
+        at(&ran_empty, "/error")
+            .as_str()
+            .unwrap_or_default()
+            .contains("laws layer ran"),
+        "{ran_empty}"
+    );
 
     let pass = run("pass");
     #[expect(
@@ -501,8 +521,8 @@ fn smoke_gate(nu: &Path) {
 
     fs::create_dir_all(target.join("rust-tops")).unwrap();
     fs::write(
-        target.join("rust-tops/cases.json"),
-        r#"{"passed":true,"laws":[{"law":"old","status":"checked","verdict":"Allow"}]}"#,
+        target.join("rust-tops/report.json"),
+        r#"{"exit_code":0,"ok":true,"layers":[],"laws":[{"law":"old","status":"checked","verdict":"Allow"}]}"#,
     )
     .unwrap();
     let stale = run("missing");
@@ -525,7 +545,7 @@ fn smoke_gate(nu: &Path) {
     let stale_error = stale["error"].as_str().unwrap();
     assert!(stale_error.contains("exited"), "{stale}");
     assert!(
-        !stale_error.contains("cases.json is missing"),
+        !stale_error.contains("report.json is missing"),
         "a failed command was reported as a missing report: {stale}"
     );
 
@@ -549,7 +569,7 @@ fn smoke_gate(nu: &Path) {
     let no_tops_error = no_tops["error"].as_str().unwrap();
     assert!(no_tops_error.contains("no such command"), "{no_tops}");
     assert!(
-        !no_tops_error.contains("cases.json is missing"),
+        !no_tops_error.contains("report.json is missing"),
         "{no_tops}"
     );
 
@@ -593,6 +613,34 @@ fn smoke_gate(nu: &Path) {
         .as_str()
         .unwrap()
         .contains("specified missing branch"));
+    assert_eq!(at(cov, "/seconds"), 2.25);
+    assert_eq!(at(cov, "/tier"), 1);
+
+    let config = run("config-invalid");
+    assert_eq!(at(&config, "/ok"), false, "{config}");
+    assert_eq!(at(&config, "/exit"), 2, "{config}");
+    assert!(
+        at(&config, "/error")
+            .as_str()
+            .unwrap()
+            .contains("the config is invalid"),
+        "{config}"
+    );
+    let env = run("tool-missing");
+    assert_eq!(at(&env, "/ok"), false, "{env}");
+    assert_eq!(at(&env, "/exit"), 3, "{env}");
+    assert!(
+        at(&env, "/error")
+            .as_str()
+            .unwrap()
+            .contains("environment lacks a required tool"),
+        "{env}"
+    );
+    assert_eq!(at(&env, "/data/layers/0/verdict"), "tool-missing", "{env}");
+    assert!(at(&env, "/data/layers/0/remedy")
+        .as_str()
+        .unwrap()
+        .contains("install it"));
 
     let empty = root.join("no-bins");
     fs::create_dir_all(&empty).unwrap();
@@ -639,8 +687,8 @@ fn smoke_gate(nu: &Path) {
     // must still delete the previous report and print JSON.
     fs::create_dir_all(target.join("rust-tops")).unwrap();
     fs::write(
-        target.join("rust-tops/cases.json"),
-        r#"{"laws":[{"law":"stale-sentinel"}]}"#,
+        target.join("rust-tops/report.json"),
+        r#"{"exit_code":0,"layers":[],"laws":[{"law":"stale-sentinel"}]}"#,
     )
     .unwrap();
     let mut narrow = std::ffi::OsString::from(&bin);
@@ -668,16 +716,58 @@ fn smoke_gate(nu: &Path) {
     )]
     let tops_idx_627_16 = no_rm_json["ok"].clone();
     assert_eq!(tops_idx_627_16, true, "{no_rm_json}");
-    let leftover = fs::read_to_string(target.join("rust-tops/cases.json")).unwrap_or_default();
+    let leftover = fs::read_to_string(target.join("rust-tops/report.json")).unwrap_or_default();
     assert!(
         !leftover.contains("stale-sentinel"),
-        "previous cases.json survived: {leftover}"
+        "previous report.json survived: {leftover}"
     );
     #[expect(
         clippy::let_underscore_must_use,
         reason = "already in this crate when the strict table was turned on"
     )]
     let _ = fs::remove_dir_all(&root);
+}
+
+/// The gate script against the real `cargo-tops`, not the test double: a broken
+/// config makes the real binary write a real `report.json` (exit 2), and the
+/// script must read that file and name the code's meaning.
+fn smoke_real_report(nu: &Path) {
+    let (dir, _out, _err, ok) = run_init("real-report", &[]);
+    assert!(ok, "init for the real-report smoke");
+    fs::write(dir.join("rust-tops.yaml"), "crate: [broken\n").expect("break the config");
+    let mut path = std::ffi::OsString::from(
+        Path::new(env!("CARGO_BIN_EXE_cargo-tops"))
+            .parent()
+            .expect("binary dir"),
+    );
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    let out = Command::new(nu)
+        .arg(manifest().join("templates/skills/rust-tops-gate/rust-tops-gate.nu"))
+        .args(["--path", ".", "--max-tier", "0"])
+        .current_dir(&dir)
+        .env("PATH", &path)
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("nu gate against the real binary");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = parse_json(&out.stdout);
+    let report: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(dir.join("target/rust-tops/report.json")).expect("real report.json"),
+    )
+    .expect("report.json is JSON");
+    assert_eq!(at(&report, "/kind"), "config-invalid", "{report}");
+    assert_eq!(at(&report, "/exit_code"), 2, "{report}");
+    assert_eq!(at(&body, "/ok"), false, "{body}");
+    assert_eq!(at(&body, "/exit"), 2, "{body}");
+    assert_eq!(at(&body, "/data/gate_green"), false, "{body}");
+    let error = at(&body, "/error").as_str().unwrap_or_default();
+    assert!(error.contains("the config is invalid"), "{body}");
+    fs::remove_dir_all(&dir).expect("remove the real-report fixture");
 }
 
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]

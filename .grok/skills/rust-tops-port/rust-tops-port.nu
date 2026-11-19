@@ -9,9 +9,10 @@
 #
 # Fixed patterns per language. A file is read only when its extension matches.
 #   python  *.py                     a line `def test_<name>(` or `async def test_<name>(`
-#   c       *.c *.h                  under a `tests` directory: `TEST(<suite>, <name>)`,
-#   cpp     *.c *.h *.cc *.cpp         `TEST_F(<suite>, <name>)`, or a function `test_<name>(`
-#                                      with a void, int or bool return type
+#   c       *.c *.h                  in a file under a `tests` directory, or at any depth in a file
+#   cpp     *.c *.h *.cc *.cpp         named `test_*.c`, `*_test.c`, `test_*.cpp` or `*_test.cpp`:
+#                                      `TEST(<suite>, <name>)`, `TEST_F(<suite>, <name>)`, or a
+#                                      function `test_<name>(` with a void, int or bool return type
 #   go      *_test.go                a line `func Test<Name>(`
 #   js      *.js *.jsx *.mjs *.cjs   a line holding `test(` or `it(` followed by a quoted title
 #   ts      *.ts *.tsx *.mts *.cts   (same as js)
@@ -88,12 +89,20 @@ def lang-exts [lang: string] {
   }
 }
 
+# A C or C++ file named like a test, at any depth.
+def test-named [rel: string] {
+  let name = ($rel | path basename)
+  let stem = ($name | path parse | get stem)
+  let ext = ($name | path parse | get extension)
+  $ext in ["c" "cpp"] and (($stem | str starts-with "test_") or ($stem | str ends-with "_test"))
+}
+
 def wants-file [lang: string, rel: string, root: string] {
   let ext = ($rel | path parse | get extension)
   if $ext not-in (lang-exts $lang) { return false }
   match $lang {
     "go" => ($rel | str ends-with "_test.go")
-    "c" | "cpp" => (($rel | path split | drop 1 | any {|p| $p == "tests" }) or (($root | path basename) == "tests"))
+    "c" | "cpp" => (($rel | path split | drop 1 | any {|p| $p == "tests" }) or (($root | path basename) == "tests") or (test-named $rel))
     _ => true
   }
 }
@@ -223,7 +232,7 @@ def "main verify" [--map: string = "", --path: string = "."] {
   }
   # 3. Rust names that cargo does not list.
   let listed = (listed-tests $path)
-  if not $listed.ok { return (fail $command $listed.error) }
+  if not $listed.ok { return (fail "cargo test -- --list" $listed.error) }
   for e in ($entries | enumerate) {
     let rust = ($e.item | get -o rust | default "" | str trim)
     if $rust != "" and $rust not-in $listed.names {
@@ -239,7 +248,7 @@ def "main verify" [--map: string = "", --path: string = "."] {
   let sorted = ($findings | sort-by file line rule message)
   {
     ok: ($sorted | is-empty)
-    command: $command
+    command: "cargo test -- --list && cargo test"
     data: {
       mapped: ($entries | length)
       rust_tests: ($listed.names | length)

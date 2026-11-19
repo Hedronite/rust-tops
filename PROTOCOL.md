@@ -1,7 +1,7 @@
 # Rust Testing and Optimization Protocol Suite (Rust-TOPS)
 
 **Protocol ID:** `rust-tops`  
-**Version:** 1.2.0  
+**Version:** 1.3.0  
 **Status:** Adopted specification  
 **Machine schema:** [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json)  
 **Example instance:** [`config/rust-tops.example.yaml`](config/rust-tops.example.yaml)  
@@ -14,6 +14,8 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 > **Bend laws:** 1.1.0 adds the `laws` layer (§3.1). It checks the crate's own files and gate reports against the Bend law pack `LAWS.bend`. [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) lists the candidate laws and their sources.
 
 > **1.2.0:** states what the CRAP thresholds apply to and how the gate holds existing code (§2.1), when an exhaustive dispatch `match` takes an exemption instead of a split (§2.2), how `max_fn_cc` relates to the CRAP threshold (§5.6), how the gate judges the coverage floors (§7.5) and the CRAP baseline (§16), how exemptions are matched (§19), and the `RUST-TOPS.md` record every adopting repo keeps (§14.4). No default threshold and no part of the CRAP formula changed.
+
+> **1.3.0:** fixes each layer's tier by its id and moves `security-advisory` to tier 0 (§3), makes `cargo tops check` hold an instance to its class floors and required layers (§4), and takes the file name `PROTOCOL.md` (the changelog names the old one). §14.4 still requires each adopting repo's root `RUST-TOPS.md`. No default threshold and no part of the CRAP formula changed.
 
 ## 0. Purpose
 
@@ -138,6 +140,7 @@ Every behavior that ships must be justified by the **lowest layer that can actua
 | 0 | `coverage` | Did tests reach the production regions we claim? | every PR |
 | 0 | `crap` | Is untested complexity leaking in? | every PR |
 | 0 | `laws` | Do the facts in this crate's files and gate reports clear the Bend law pack? | every PR |
+| 0 | `security-advisory` | Did we pick up a known-bad crate? | every PR |
 | 1 | `integration` | Do crate-public seams work together? | every PR |
 | 1 | `acceptance` | Does the named user/oracle behavior hold? | every PR for changed journeys |
 | 1 | `mutation` | Would a small bug in this diff survive the suite? | every PR on the diff |
@@ -151,8 +154,9 @@ Every behavior that ships must be justified by the **lowest layer that can actua
 | 4 | `formal-kani` | Is a bounded kernel free of panic/overflow/UB? | PR on kernels, else scheduled |
 | 4 | `bench-callgrind` | Did instruction/cache counts regress? | PR on `hot_paths` |
 | 5 | `bench-criterion` | What is the wall-clock distribution on this machine? | local / dedicated runner |
-| 5 | `security-advisory` | Did we pick up a known-bad crate? | every PR |
 | 5 | `density-audit` | Did production SLOC grow without capability? | advisory on PR, blocking on release |
+
+**Tiers are fixed (since 1.3.0).** A layer's tier comes from its id, by this table. An instance `tier` must equal the table's value or be absent; `cargo tops check` fails any other value, and a layer id the table does not list. `security-advisory` moved from tier 5 to tier 0 in 1.3.0, so the default `--max-tier 1` gate runs the advisory check.
 
 ### 3.1 The `laws` layer (since 1.1.0)
 
@@ -183,6 +187,12 @@ Set `crate.class` in the instance file. Defaults below are the starting gate set
 | `no-std-embedded` | 90 | 85 | 6 / 4 | 95% / 0 | required | optional | required | kernels | size + cycle |
 | `proc-macro` | 85 + compile-fail | n/a branch | 8 / 6 | trybuild is the mutant analog | optional | no | no | no | no |
 | `workspace-root` | inherits per-package | | | | | | | | |
+
+**`check` holds an instance to its class (since 1.3.0).** `cargo tops check` fails an instance when:
+- a floor is looser than the class profile in `profiles/`: `gates.coverage.line_min_pct` and `region_min_pct`, the CRAP thresholds (a minimum may not drop, a maximum may not rise), and `gates.mutation.kill_rate_min_pct` and `unexplained_survivors_max`. A floor that is missing counts as looser. A live, dated exemption (§19) for the floor's layer (`coverage`, `crap` or `mutation`) whose `path` covers the whole crate lifts the failure. The path is `**`, `./**`, `**/*`, `.` or `./`, and the record names no `symbol`. An exemption for part of the crate, for one symbol, or an expired one does not.
+- a layer the class requires is disabled or absent: `security-advisory` for every class, and each layer a class profile marks `required` (§4 table), except `acceptance`, which no class requires until it has a runner.
+
+Each message names the file, the key, the class value and the one-line fix.
 
 Numbers are *minima*. A 40-line pure codec with a spec should sit at 100% region coverage because anything less is laziness, not philosophy.
 
@@ -800,7 +810,7 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 
 ### 14.3 `AGENTS.md`
 
-`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.2.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
+`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.3.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
 
 ### 14.4 The adoption record `RUST-TOPS.md` (since 1.2.0)
 
@@ -1024,11 +1034,13 @@ cargo bench --bench hot          # local criterion
 
 ## 23. Versioning
 
-This spec is `1.2.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
+This spec is `1.3.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
 
 1.1.0 added the `laws` layer (§3.1). A 1.0.0 instance that does not list `laws` still validates.
 
 1.2.0 states how the thresholds apply to new and changed code and the baseline ratchet (§2.1, §16), the dispatch-match exemption (§2.2), the relation of `max_fn_cc` to CRAP (§5.6), how the floors are judged (§7.5), how exemptions are read (§19), and the adoption record (§14.4). The schema adds the optional `gates.crap.baseline`. A 1.1.0 instance still validates. No default threshold and no part of the formula changed.
+
+1.3.0 fixes the tier of each layer by its id and moves `security-advisory` to tier 0 (§3), makes `check` hold an instance to its class (§4), and takes the file name `PROTOCOL.md`. The schema describes `tier` as fixed by layer id. A 1.2.0 instance with a loose floor or a wrong tier now fails `check` until it is fixed or carries a dated exemption. No default threshold and no part of the formula changed.
 
 ---
 

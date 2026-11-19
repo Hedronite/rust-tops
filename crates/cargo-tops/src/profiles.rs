@@ -18,7 +18,7 @@ pub(crate) const NEXTEST_TOML: &str = include_str!("../templates/drop-in/nextest
 pub(crate) const MUTANTS_TOML: &str = include_str!("../templates/drop-in/mutants.toml");
 pub(crate) const CARGO_CRAP_TOML: &str = include_str!("../templates/drop-in/cargo-crap.toml");
 pub(crate) const DENY_TOML: &str = include_str!("../templates/drop-in/deny.toml");
-/// The adoption record template (RUST_TOPS.md §14.4), with `{{mark}}`s.
+/// The adoption record template (PROTOCOL.md §14.4), with `{{mark}}`s.
 pub(crate) const RUST_TOPS_MD: &str = include_str!("../templates/drop-in/RUST-TOPS.md");
 
 /// Each `{{mark}}` in [`RUST_TOPS_MD`], the instance key that fills it, and
@@ -302,7 +302,7 @@ mod tests {
         let core = super::adoption_record(&super::profile_yaml("library-core", "demo").unwrap());
         assert!(!core.contains("{{"), "{core}");
         for want in [
-            "| Protocol version | `1.2.0` |",
+            "| Protocol version | `1.3.0` |",
             "| `demo` | `library-core` | `rust-tops.yaml` | 95 | 90 | 90 | 6 | 4 |",
             concat!("cargo install cargo-tops --version ", env!("CARGO_PKG_VERSION")),
             "Baseline: `crap-baseline.json` in the Cargo target directory (the default; not tracked)",

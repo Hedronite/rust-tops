@@ -277,12 +277,13 @@ def "main check" [--path: string = ".", --base: string] {
     ["clippy" "--all-targets" "--all-features" "--message-format=json" "--" "--cap-lints" "warn"]
     ++ ($lints | get check | each {|l| ["-W" $l] } | flatten)
   )
-  mut command = (argv-line (["cargo"] ++ $args))
+  mut command = "cargo metadata --no-deps --format-version 1"
   let meta = (do { cd $root; ^cargo metadata --no-deps --format-version 1 | complete })
   if $meta.exit_code != 0 {
     return (fail "cargo metadata --no-deps --format-version 1" $"build failed: ($meta.stderr | str replace --all $root '.')")
   }
   let ws = ($meta.stdout | from json | get workspace_root | path expand)
+  $command = $"($command) && (argv-line (['cargo'] ++ $args))"
   let run = (do { cd $root; ^cargo ...$args | complete })
   let msgs = (
     $run.stdout | lines

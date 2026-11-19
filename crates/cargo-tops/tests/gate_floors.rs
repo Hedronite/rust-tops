@@ -1,5 +1,5 @@
 //! `cargo tops gate` enforces the coverage floors and the CRAP threshold and
-//! ratchet of `rust-tops.yaml` (RUST_TOPS.md §2, §7.3, §16, §19), and
+//! ratchet of `rust-tops.yaml` (PROTOCOL.md §2, §7.3, §16, §19), and
 //! `cargo tops crap-baseline` records the baseline the ratchet reads.
 //!
 //! Cargo and its plugins are stubs. The cargo stub writes the coverage
@@ -86,6 +86,12 @@ fn fixture(name: &str) -> Fixture {
     fixture_with(name, &["coverage", "crap"])
 }
 
+/// The layers protocol 1.3.0 requires of a library-core instance, which no
+/// fixture may turn off.
+fn required(id: &str) -> bool {
+    matches!(id, "security-advisory" | "property")
+}
+
 /// A library-core instance named `fixture` with only the `on` layers enabled.
 fn fixture_with(name: &str, on: &[&str]) -> Fixture {
     let root =
@@ -113,12 +119,18 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         .output()
         .expect("spawn init");
     assert!(init.status.success(), "init failed");
+    // `cargo metadata` is asked about a project with a manifest.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
     stub_tools(&fixture.bin);
     edit(&fixture, |doc| {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
             let id = layer.get("id").and_then(Value::as_str);
-            let enabled = id.is_some_and(|id| on.contains(&id));
+            let enabled = id.is_some_and(|id| on.contains(&id) || required(id));
             set(layer, "", "enabled", Some(Value::Bool(enabled)));
         }
     });
@@ -401,7 +413,13 @@ fn a_live_exemption_exempts_and_an_expired_one_fails() {
     );
     edit(&fixture, |doc| {
         set(doc, "/gates/coverage", "line_min_pct", Some(json!(50)));
-        set(doc, "", "exemptions", Some(exemptions()));
+        // 1.3.0: a floor below the class's needs a live crate-wide exemption.
+        let mut records = exemptions();
+        records.as_array_mut().expect("records").push(json!({
+            "path": "**", "layer": "coverage", "owner": "core",
+            "reason": "the floor is lowered for this test", "expires": "2999-01-01"
+        }));
+        set(doc, "", "exemptions", Some(records));
     });
     let (code, text) = gate(&fixture);
     assert_eq!(code, Some(1), "{text}");
@@ -459,7 +477,7 @@ fn a_workspace_root_instance_judges_only_its_named_member() {
 }
 
 #[test]
-fn no_floor_and_no_threshold_judge_nothing() {
+fn an_unset_floor_is_a_config_error_not_a_gate_with_nothing_to_judge() {
     let fixture = fixture("unset");
     summary(&fixture, &[]);
     crap(&fixture, &[("./src/lib.rs", "big", 99.0)]);
@@ -472,20 +490,15 @@ fn no_floor_and_no_threshold_judge_nothing() {
         }
     });
     let (code, text) = gate(&fixture);
-    assert_eq!(code, Some(0), "{text}");
-    assert!(text.contains("floors for "), "{text}");
-    assert!(
-        text.contains("line not set, region not set, per-file line not set"),
-        "{text}"
-    );
-    assert!(
-        text.contains("no floor is set, so there is nothing to judge"),
-        "{text}"
-    );
-    assert!(
-        text.contains("==> [crap] no threshold_agent or threshold_production: not judged here"),
-        "{text}"
-    );
+    assert_eq!(code, Some(2), "{text}");
+    for key in [
+        "line_min_pct",
+        "region_min_pct",
+        "threshold_agent",
+        "threshold_human",
+    ] {
+        assert!(text.contains(&format!("{key} is not set")), "{key}: {text}");
+    }
 }
 
 #[test]
@@ -496,6 +509,16 @@ fn threshold_production_stands_in_for_a_missing_agent_threshold() {
     edit(&fixture, |doc| {
         set(doc, "/gates/crap", "threshold_agent", None);
         set(doc, "/gates/crap", "threshold_production", Some(json!(8)));
+        // 1.3.0: a threshold above the class's needs a live crate-wide exemption.
+        set(
+            doc,
+            "",
+            "exemptions",
+            Some(json!([{
+                "path": "**", "layer": "crap", "owner": "core",
+                "reason": "the threshold is raised for this test", "expires": "2999-01-01"
+            }])),
+        );
     });
     let (code, text) = gate(&fixture);
     assert_eq!(code, Some(0), "{text}");
@@ -594,7 +617,7 @@ fn deny_runs(log: &Path) -> Vec<String> {
     fs::read_to_string(log)
         .unwrap_or_default()
         .lines()
-        .filter(|line| line.starts_with("deny "))
+        .filter(|line| line.starts_with("deny ") && !line.ends_with("--version"))
         .map(str::to_string)
         .collect()
 }
@@ -633,7 +656,7 @@ fn a_failing_advisory_check_fails_security_advisory() {
         text.contains("  - security-advisory: `cargo deny check advisories` failed"),
         "{text}"
     );
-    assert!(text.contains("count: 4 command(s) ran"), "{text}");
+    assert!(text.contains("count: 5 command(s) ran"), "{text}");
     assert!(text.contains("1 problem(s)"), "{text}");
     assert!(!text.contains("not on PATH"), "{text}");
     assert!(!text.contains("\nok: "), "{text}");
@@ -669,4 +692,102 @@ fn tops_with_log(fixture: &Fixture, log: &Path, fail: Option<&str>) -> (Option<i
         String::from_utf8_lossy(&out.stderr)
     );
     (out.status.code(), text)
+}
+
+/// The report the last gate wrote.
+fn written(fixture: &Fixture) -> Value {
+    let raw = fs::read_to_string(fixture.repo.join("target/rust-tops/report.json"))
+        .expect("report.json was written");
+    serde_json::from_str(&raw).expect("report.json is JSON")
+}
+
+/// A member of `value` by JSON pointer; `Null` when it is not there.
+fn at<'v>(value: &'v Value, pointer: &str) -> &'v Value {
+    static NULL: Value = Value::Null;
+    value.pointer(pointer).unwrap_or(&NULL)
+}
+
+fn row<'v>(report: &'v Value, id: &str) -> &'v Value {
+    at(report, "/layers")
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| at(row, "/id") == id))
+        .unwrap_or_else(|| at(report, "/missing"))
+}
+
+#[test]
+fn the_report_carries_the_numbers_a_passing_floor_was_judged_on() {
+    let fixture = fixture("numbers-pass");
+    good_summary(&fixture);
+    crap(&fixture, &[("./src/lib.rs", "parse", 6.0)]);
+    let (code, text) = tops(&fixture, &["gate", "--max-tier", "0"]);
+    assert_eq!(code, Some(0), "{text}");
+    let report = written(&fixture);
+    let coverage = row(&report, "coverage");
+    assert_eq!(at(coverage, "/verdict"), "pass", "{coverage}");
+    assert_eq!(
+        at(coverage, "/judged"),
+        &json!({
+            "line_pct": 95.0, "region_pct": 90.0,
+            "line_floor": 95.0, "region_floor": 90.0, "per_file_line_floor": 90.0,
+            "files": 1,
+        })
+    );
+    let crap = row(&report, "crap");
+    assert_eq!(at(crap, "/verdict"), "pass", "{crap}");
+    assert_eq!(
+        at(crap, "/judged"),
+        &json!({"threshold": 6.0, "max": 6.0, "functions": 1, "over": 0, "baseline": false})
+    );
+}
+
+#[test]
+fn a_run_that_passed_but_missed_a_floor_is_a_failed_layer_with_its_numbers() {
+    let fixture = fixture("numbers-miss");
+    summary(&fixture, &[("src/a.rs", 80, 100, 80, 100)]);
+    crap(
+        &fixture,
+        &[("./src/lib.rs", "big", 12.0), ("./src/lib.rs", "ok", 2.0)],
+    );
+    let (code, text) = tops(&fixture, &["gate", "--max-tier", "0"]);
+    assert_eq!(code, Some(1), "{text}");
+    let report = written(&fixture);
+    let coverage = row(&report, "coverage");
+    assert_eq!(at(coverage, "/verdict"), "fail", "{coverage}");
+    assert_eq!(at(coverage, "/judged/line_pct"), &json!(80.0));
+    let crap = row(&report, "crap");
+    assert_eq!(at(crap, "/verdict"), "fail", "{crap}");
+    assert_eq!(at(crap, "/judged/max"), &json!(12.0));
+    assert_eq!(at(crap, "/judged/functions"), &json!(2));
+    assert_eq!(at(crap, "/judged/over"), &json!(1));
+}
+
+#[test]
+fn a_layer_that_takes_another_layers_run_says_which_and_shows_its_commands() {
+    let fixture = fixture_with("took", &["coverage", "unit"]);
+    good_summary(&fixture);
+    let (code, text) = tops(&fixture, &["gate", "--max-tier", "0"]);
+    assert_eq!(code, Some(0), "{text}");
+    let report = written(&fixture);
+    let unit = row(&report, "unit");
+    assert_eq!(at(unit, "/took_from"), "coverage", "{unit}");
+    assert_eq!(at(unit, "/argv"), at(row(&report, "coverage"), "/argv"));
+    assert!(row(&report, "coverage").get("took_from").is_none());
+}
+
+#[test]
+fn the_crap_layer_alone_runs_the_pin_check_and_only_with_a_lock() {
+    let pin = json!(["cargo", "crap", "--version"]);
+    let fixture = fixture("pin");
+    good_summary(&fixture);
+    crap(&fixture, &[("./src/lib.rs", "parse", 2.0)]);
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(0), "{text}");
+    let report = written(&fixture);
+    assert_eq!(at(row(&report, "crap"), "/argv/0"), &pin);
+    assert_ne!(at(row(&report, "coverage"), "/argv/0"), &pin);
+
+    fs::remove_file(fixture.repo.join("rust-tops.lock")).expect("remove the lock");
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(0), "{text}");
+    assert_ne!(at(row(&written(&fixture), "crap"), "/argv/0"), &pin);
 }

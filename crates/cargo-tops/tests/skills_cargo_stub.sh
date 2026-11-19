@@ -1,25 +1,29 @@
 #!/bin/sh
 # Test double for `cargo`. Modes are selected by CARGO_STUB_MODE.
+# It writes the report a real `cargo tops gate` writes: report.json under the
+# target directory, with the exit code, the layers and the laws.
 mode=${CARGO_STUB_MODE:-pass}
 target=${CARGO_TARGET_DIR:?}
-report="$target/rust-tops/cases.json"
-write_cases() {
+report="$target/rust-tops/report.json"
+LINT='{"id":"static-lint","tier":0,"verdict":"pass","argv":[["cargo","fmt","--all","--","--check"]],"tool_version":null,"seconds":0.5}'
+write_report() {
   mkdir -p "$target/rust-tops"
-  printf '%s\n' "$1" > "$report"
+  case "$1" in 0) kind=pass;; 1) kind=fail;; 2) kind=config-invalid;; *) kind=environment;; esac
+  printf '{"protocol_version":"1.3.0","crate":"stub","max_tier":1,"dry_run":false,"kind":"%s","exit_code":%s,"ok":%s,"problems":[],"layers":[%s],"laws":[%s]}\n' "$kind" "$1" "$2" "$3" "$4" > "$report"
 }
 case "$mode" in
   pass)
-    write_cases '{"passed":true,"laws":[{"law":"fmt_is_tier0","status":"checked","verdict":"Allow"},{"law":"lock_honesty","status":"checked","verdict":"Ack"}]}'
+    write_report 0 true "$LINT" '{"law":"fmt_is_tier0","status":"checked","verdict":"Allow"},{"law":"lock_honesty","status":"checked","verdict":"Ack"}'
     printf 'ok: 1 command(s) passed\n'
     exit 0
     ;;
   not-evaluated)
-    write_cases '{"passed":true,"laws":[{"law":"evidence_not_self_served","status":"not-evaluated","verdict":null,"reason":"no fact","reason_code":"no_fact_reader"}]}'
+    write_report 0 true "$LINT" '{"law":"evidence_not_self_served","status":"not-evaluated","verdict":null,"reason":"no fact","reason_code":"no_fact_reader"}'
     printf 'ok: 1 command(s) passed\n'
     exit 0
     ;;
   refuse)
-    write_cases '{"passed":true,"laws":[{"law":"lock_honesty","status":"checked","verdict":"Refuse"}]}'
+    write_report 0 true "$LINT" '{"law":"lock_honesty","status":"checked","verdict":"Refuse"}'
     printf 'ok: 1 command(s) passed\n'
     exit 0
     ;;
@@ -32,26 +36,46 @@ case "$mode" in
     exit 1
     ;;
   run-dependent)
-    write_cases '{"passed":true,"laws":[{"law":"perf_without_runner_is_not_gate","status":"not-evaluated","verdict":null,"reason":"no performance layer is enabled at or below this tier","reason_code":"run_dependent"}]}'
+    write_report 0 true "$LINT" '{"law":"perf_without_runner_is_not_gate","status":"not-evaluated","verdict":null,"reason":"no performance layer is enabled at or below this tier","reason_code":"run_dependent"}'
     printf 'ok: 1 command(s) passed\n'
     exit 0
     ;;
   bad-json)
-    write_cases 'not-json'
+    mkdir -p "$target/rust-tops"
+    printf 'not-json\n' > "$report"
     printf 'ok: 1 command(s) passed\n'
     exit 0
     ;;
   coverage)
-    write_cases '{"passed":true,"laws":[{"law":"fmt_is_tier0","status":"checked","verdict":"Allow"}]}'
-    printf '%s\n' '==> [static-lint] cargo fmt --all -- --check'
-    printf '%s\n' '==> [coverage] cargo llvm-cov nextest'
-    printf '%s\n' ''
+    COV='{"id":"coverage","tier":1,"verdict":"fail","argv":[["cargo","llvm-cov","nextest"]],"tool_version":null,"seconds":2.25}'
+    write_report 1 false "$LINT,$COV" '{"law":"fmt_is_tier0","status":"checked","verdict":"Allow"}'
     printf '%s\n' 'fail: 1 problem(s), 2 command(s) run'
     printf '%s\n' '  - coverage: `cargo llvm-cov nextest` failed'
     exit 1
     ;;
+  tool-missing)
+    MUT='{"id":"mutation","tier":1,"verdict":"tool-missing","argv":[["cargo","mutants"]],"tool_version":null,"seconds":0}'
+    write_report 3 false "$MUT" ''
+    printf '%s\n' 'error: cargo-mutants: command not found' >&2
+    exit 3
+    ;;
+  odd-numbers)
+    write_report 0 true '{"id":"static-lint","tier":0,"verdict":"pass","argv":[["cargo","fmt"]],"tool_version":null,"seconds":-1}' ''
+    printf 'ok: 1 command(s) passed\n'
+    exit 0
+    ;;
+  laws-ran-empty)
+    write_report 0 true "$LINT"',{"id":"laws","tier":1,"verdict":"pass","argv":[["cargo","bend"]],"tool_version":null,"seconds":1}' ''
+    printf 'ok: 2 command(s) passed\n'
+    exit 0
+    ;;
+  config-invalid)
+    write_report 2 false '' ''
+    printf '%s\n' 'error: rust-tops.yaml: crate.name is required' >&2
+    exit 2
+    ;;
   *)
     printf 'unknown mode %s\n' "$mode" >&2
-    exit 2
+    exit 64
     ;;
 esac

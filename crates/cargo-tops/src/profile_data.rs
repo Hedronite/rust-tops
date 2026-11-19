@@ -136,6 +136,11 @@ pub(crate) fn merge_profile_with(
     Ok(emit_yaml(&doc))
 }
 
+/// The parsed profile for `class`; `None` for a class with no profile.
+pub(crate) fn class_profile(class: &str) -> Option<Value> {
+    parse_yaml(profile_source(class)?).ok()
+}
+
 fn profile_source(class: &str) -> Option<&'static str> {
     PROFILES
         .iter()

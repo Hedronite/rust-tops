@@ -64,7 +64,7 @@ fn check(repo: &Path) -> (Output, String) {
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 fn init_writes_each_profile_s_numbers() {
     let root = scratch("numbers");
-    // class, line, region, human CRAP, agent CRAP (RUST_TOPS.md §4).
+    // class, line, region, human CRAP, agent CRAP (PROTOCOL.md §4).
     for (class, line, region, human, agent) in [
         ("binary-cli", 80, 75, 6, 8),
         ("library-util", 90, 85, 4, 6),

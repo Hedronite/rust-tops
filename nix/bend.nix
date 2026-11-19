@@ -1,5 +1,5 @@
 # Bend 2.0.36 as pinned in laws/bend.lock: the judge of the `laws` layer
-# (protocol 1.1.0, RUST_TOPS.md §3.1). Linux only, the systems where this
+# (protocol 1.1.0, PROTOCOL.md §3.1). Linux only, the systems where this
 # flake already builds bend for `checks.bend-proof`. Darwin adopters run
 # scripts/fetch-bend.sh. The hashes are the lock's sha256 values in SRI form.
 {
