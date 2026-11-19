@@ -76,7 +76,7 @@ fn a_wrong_tier_fails_check_and_the_gate_calls_it_a_config_error() {
         .expect("advisory layer");
     let tier_at = at + raw[at..].find("tier: 0").expect("its tier");
     let dir = scratch("tier");
-    let mut doc = raw.clone();
+    let mut doc = raw;
     doc.replace_range(tier_at..tier_at + "tier: 0".len(), "tier: 5");
     fs::write(dir.join("rust-tops.yaml"), doc).expect("write");
     let out = tops("check", &dir);
