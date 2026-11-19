@@ -45,7 +45,7 @@ fn no_tracked_file_but_the_changelog_names_the_old_protocol_file() {
 #[test]
 fn the_scan_reads_tracked_files() {
     assert!(
-        tracked_files_naming("zz-no-such-text-zz").is_empty(),
+        tracked_files_naming(&["zz-no-such", "-text-zz"].concat()).is_empty(),
         "an absent string is found nowhere"
     );
     assert!(
