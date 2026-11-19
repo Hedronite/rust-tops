@@ -659,6 +659,37 @@ fn with_init_exemptions(yaml: &str) -> String {
 mod tests {
     use super::*;
 
+    type Plant = fn(&mut TopsConfig);
+
+    /// The library-core golden, typed.
+    fn golden_cfg() -> TopsConfig {
+        let raw = include_str!("../tests/golden/init/library-core/rust-tops.yaml");
+        parse_config(Path::new("rust-tops.yaml"), raw).expect("golden parses")
+    }
+
+    #[test]
+    fn check_accepts_the_golden_and_names_each_typed_fault() {
+        assert!(check(&golden_cfg()).is_ok());
+        let faults: [(&str, Plant); 4] = [
+            ("protocol.id must be rust-tops", |c| {
+                c.protocol.id = "other".into();
+            }),
+            ("protocol.version is required", |c| {
+                c.protocol.version.clear();
+            }),
+            ("crate.name is required", |c| c.crate_.name.clear()),
+            ("gates.crap.threshold_agent must be >= 1", |c| {
+                c.gates.crap.threshold_agent = Some(0.5);
+            }),
+        ];
+        for (message, plant) in faults {
+            let mut cfg = golden_cfg();
+            plant(&mut cfg);
+            let err = check(&cfg).expect_err(message);
+            assert_eq!(err.to_string(), message);
+        }
+    }
+
     /// Every file in `profiles/`.
     const PROFILE_CLASSES: [&str; 8] = [
         "library-core",

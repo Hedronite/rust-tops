@@ -569,9 +569,7 @@ fn class_jobs(ctx: &Ctx) -> Choice {
 /// H-22. `static-lint` is an enabled tier-0 layer with `fmt_check`, and every
 /// workflow set, when there is one, runs `cargo fmt --check`.
 fn fmt_is_tier0(ctx: &Ctx) -> Choice {
-    let tier0 = ctx.cfg.layers.iter().any(|layer| {
-        layer.id == "static-lint" && layer.enabled && crate::tiers::tier_of(&layer.id) == Some(0)
-    });
+    let tier0 = static_lint_is_tier0(ctx);
     let fmt_check =
         yaml_at(&ctx.yaml, &["gates", "lint", "fmt_check"]).and_then(Value::as_bool) != Some(false);
     let mut read = vec!["rust-tops.yaml".to_string()];
@@ -588,6 +586,13 @@ fn fmt_is_tier0(ctx: &Ctx) -> Choice {
         }
     };
     fact(tier0 && fmt_check && in_ci, read)
+}
+
+/// `static-lint` is on, and §3 puts it at tier 0.
+fn static_lint_is_tier0(ctx: &Ctx) -> bool {
+    ctx.cfg.layers.iter().any(|layer| {
+        layer.id == "static-lint" && layer.enabled && crate::tiers::tier_of(&layer.id) == Some(0)
+    })
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<(i32, String)> {
