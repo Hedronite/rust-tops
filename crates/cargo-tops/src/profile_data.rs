@@ -15,11 +15,6 @@ use serde_json::{Map, Number, Value};
 
 use crate::init_meta::{resolve_unsafe_policy, Settings};
 
-// Until `main.rs` declares it (the 1.3.0 wiring), `tiers` hangs off the module
-// that owns the profiles it reads.
-#[path = "tiers.rs"]
-pub(crate) mod tiers;
-
 const TEMPLATE: &str = include_str!("../templates/rust-tops.example.yaml");
 
 /// Every `templates/profiles/*.yaml`, keyed by the class id in the file.

@@ -180,7 +180,7 @@ jobs:
   # The cargo-tops version is pinned; bump it when the kit publishes.
   # Since 0.4.0 the gate enforces the coverage floors and the CRAP threshold
   # and ratchet of rust-tops.yaml. Name a tracked gates.crap.baseline there,
-  # or every function is judged as new (RUST_TOPS.md §16).
+  # or every function is judged as new (PROTOCOL.md §16).
   tops-gate:
     runs-on: ubuntu-latest
     steps:

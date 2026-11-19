@@ -167,7 +167,7 @@ impl<'a> Runner<'_, 'a> {
     }
 
     fn not_run(&mut self, layer: &Layer) {
-        let tier = layer.tier.unwrap_or(0);
+        let tier = crate::tiers::tier_for(layer);
         println!(
             "\nNotRun [{}]: enabled at tier {tier} (<= --max-tier {}) and no command is mapped",
             layer.id, self.plan.max_tier

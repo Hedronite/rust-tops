@@ -94,14 +94,24 @@ fn fixture(name: &str) -> Fixture {
     .expect("write Cargo.toml");
     stub(&fixture.bin, "cargo", CARGO_STUB);
     stub(&fixture.bin, "cargo-deny", "#!/bin/sh\nexit 0\n");
+    stub(&fixture.bin, "cargo-nextest", "#!/bin/sh\nexit 0\n");
     edit(&fixture, |doc| {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
-            let on = layer.get("id").and_then(Value::as_str) == Some("static-lint");
+            let on = stays_on(layer);
             set(layer, "enabled", Value::Bool(on));
         }
     });
     fixture
+}
+
+/// Whether the fixture leaves a layer on: `static-lint`, plus the layers
+/// protocol 1.3.0 requires of a library-core instance.
+fn stays_on(layer: &Value) -> bool {
+    matches!(
+        layer.get("id").and_then(Value::as_str),
+        Some("static-lint" | "security-advisory" | "property")
+    )
 }
 
 /// Sets `key` in an object.
@@ -346,7 +356,7 @@ fn no_enabled_layer_in_range_exits_2() {
     assert!(
         at(&report, "/error")
             .as_str()
-            .is_some_and(|e| e.contains("no enabled layers")),
+            .is_some_and(|e| e.contains("every class requires the security-advisory layer")),
         "{report}"
     );
 }
@@ -503,7 +513,7 @@ fn a_dry_run_counts_the_mutation_commands_it_lists() {
     let (out, text) = gate(&fixture, &["--dry-run"], None);
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(
-        text.contains("dry-run: 4 command(s) listed, 0 run"),
+        text.contains("dry-run: 6 command(s) listed, 0 run"),
         "{text}"
     );
 }

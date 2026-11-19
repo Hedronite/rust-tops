@@ -1,6 +1,6 @@
 # rust-tops Bend2 pack
 
-The `laws` layer of protocol 1.1.0 ([`../RUST_TOPS.md`](../RUST_TOPS.md) §3.1) runs this pack against an adopting crate's files and gate reports. The laws themselves are kit data, not protocol text.
+The `laws` layer of protocol 1.1.0 ([`../PROTOCOL.md`](../PROTOCOL.md) §3.1) runs this pack against an adopting crate's files and gate reports. The laws themselves are kit data, not protocol text.
 
 Harvest H-01 through H-53 encoded as fail-closed Bend laws. Hard rows map the forbidden case to `Refuse`. Soft rows map it to `Ack` (not `Allow`). Agents under an AI-ops seat treat `Refuse` as stop. Humans read the pack as advisory.
 

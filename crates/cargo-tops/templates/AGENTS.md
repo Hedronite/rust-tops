@@ -1,10 +1,10 @@
-# Agent standing orders (Rust-TOPS 1.2.0)
+# Agent standing orders (Rust-TOPS 1.3.0)
 
 Goal: correct, dense, fast Rust.
 Production: fewest necessary lines that preserve named invariants and measured performance.
 Tests: as many as the contract needs. Never write tests by reading the implementation.
 
-Protocol 1.2.0. The text is [`RUST_TOPS.md`](RUST_TOPS.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
+Protocol 1.3.0. The text is [`PROTOCOL.md`](PROTOCOL.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
 The `laws` layer is optional. A 1.0.0 instance with no `laws` layer still validates, and `gate` does not call Bend.
 
 ## Do this
@@ -36,7 +36,7 @@ cargo crap --lcov target/rust-tops/lcov.info --format json --output target/rust-
 cargo mutants --in-diff <diff>
 ```
 
-After those commands the gate judges the reports itself. It fails when this crate's line or region coverage, or any of its production files, is under a floor in `rust-tops.yaml`. It fails when a new production function's CRAP is over `threshold_agent`, or when a function in the CRAP baseline gets worse (RUST_TOPS.md §2.1, §16). `cargo tops crap-baseline` records that baseline from the last gate run.
+After those commands the gate judges the reports itself. It fails when this crate's line or region coverage, or any of its production files, is under a floor in `rust-tops.yaml`. It fails when a new production function's CRAP is over `threshold_agent`, or when a function in the CRAP baseline gets worse (PROTOCOL.md §2.1, §16). `cargo tops crap-baseline` records that baseline from the last gate run.
 
 Do not set `RUSTFLAGS=-D warnings`. Do not pass `--fail-under-lines` unless the instance class floor says so and the LCOV is already nonempty. `cargo tops gate` does not pass it.
 
@@ -88,7 +88,7 @@ The reviewer is a fresh agent that did not write the diff. Write the inputs befo
 
 - Coverage hole → add a test for the specified missing branch, not a tautology.
 - High CRAP → reduce real branching or cover the risky arm. Do not extract `foo_part_2`.
-- An exhaustive dispatch `match` (one arm per enum variant, no guards, each arm one call or expression) over the threshold → a `layer: crap` exemption with a reason and an expiry, not a split (RUST_TOPS.md §2.2).
+- An exhaustive dispatch `match` (one arm per enum variant, no guards, each arm one call or expression) over the threshold → a `layer: crap` exemption with a reason and an expiry, not a split (PROTOCOL.md §2.2).
 - Never refresh the CRAP baseline to let a score rise.
 - Surviving mutant → assert the behavior the mutant broke.
 - Perf miss → profile, then algorithm / alloc / layout. `unsafe` is last and Miri-clean.
@@ -98,4 +98,4 @@ The reviewer is a fresh agent that did not write the diff. Write the inputs befo
 - `not-evaluated` → the law was not checked. It is not a pass. Read `reason` in `report.json`. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as `Allow`.
 - Tool missing → install it. `cargo-tops` does not vendor engines. A missing tool is a fail, not a skip.
 
-See [`POLICIES.md`](POLICIES.md) for the CI floor and [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) for the law catalog. A `Refuse` from an enabled `laws` layer fails the run ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1, §22).
+See [`POLICIES.md`](POLICIES.md) for the CI floor and [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) for the law catalog. A `Refuse` from an enabled `laws` layer fails the run ([`PROTOCOL.md`](PROTOCOL.md) §3.1, §22).

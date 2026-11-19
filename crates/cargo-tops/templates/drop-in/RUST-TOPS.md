@@ -1,4 +1,4 @@
-<!-- Rust-TOPS adoption record (RUST_TOPS.md §14.4). `cargo tops init` fills
+<!-- Rust-TOPS adoption record (PROTOCOL.md §14.4). `cargo tops init` fills
 the marks in double braces from the rust-tops.yaml it writes. Keep this file
 current by hand: one row per rust-tops.yaml, every exemption in force, every
 deviation. -->
@@ -10,7 +10,7 @@ This repository adopts the Rust-TOPS protocol from
 | Item | Value |
 | --- | --- |
 | Protocol version | {{protocol}} |
-| Spec | <https://github.com/Hedronite/rust-tops/blob/v{{cargo_tops}}/RUST_TOPS.md> |
+| Spec | <https://github.com/Hedronite/rust-tops/blob/v{{cargo_tops}}/PROTOCOL.md> |
 | cargo-tops | {{cargo_tops}} (`cargo install cargo-tops --version {{cargo_tops}} --locked`) |
 
 ## Crates and thresholds
@@ -30,7 +30,7 @@ cargo tops gate --max-tier 1
 
 The gate fails when coverage is under a floor above, when a new production
 function's CRAP is over the agent threshold, or when an existing function's
-CRAP rises (RUST_TOPS.md §2.1, §7.5, §16).
+CRAP rises (PROTOCOL.md §2.1, §7.5, §16).
 
 ## CRAP baseline
 

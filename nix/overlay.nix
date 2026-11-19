@@ -1,5 +1,5 @@
 # rust-tops overlay: cargo-tops, the Bend laws pack, and on Linux the pinned
-# Bend that judges the `laws` layer (protocol 1.1.0, RUST_TOPS.md §3.1).
+# Bend that judges the `laws` layer (protocol 1.1.0, PROTOCOL.md §3.1).
 final: prev:
 {
   cargo-tops = final.callPackage ./cargo-tops.nix { };

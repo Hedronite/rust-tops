@@ -1,5 +1,5 @@
 //! `cargo tops gate` enforces the coverage floors and the CRAP threshold and
-//! ratchet of `rust-tops.yaml` (RUST_TOPS.md §2, §7.3, §16, §19), and
+//! ratchet of `rust-tops.yaml` (PROTOCOL.md §2, §7.3, §16, §19), and
 //! `cargo tops crap-baseline` records the baseline the ratchet reads.
 //!
 //! Cargo and its plugins are stubs. The cargo stub writes the coverage
@@ -86,6 +86,12 @@ fn fixture(name: &str) -> Fixture {
     fixture_with(name, &["coverage", "crap"])
 }
 
+/// The layers protocol 1.3.0 requires of a library-core instance, which no
+/// fixture may turn off.
+fn required(id: &str) -> bool {
+    matches!(id, "security-advisory" | "property")
+}
+
 /// A library-core instance named `fixture` with only the `on` layers enabled.
 fn fixture_with(name: &str, on: &[&str]) -> Fixture {
     let root =
@@ -124,7 +130,7 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
         for layer in layers.expect("layers") {
             let id = layer.get("id").and_then(Value::as_str);
-            let enabled = id.is_some_and(|id| on.contains(&id));
+            let enabled = id.is_some_and(|id| on.contains(&id) || required(id));
             set(layer, "", "enabled", Some(Value::Bool(enabled)));
         }
     });
@@ -407,7 +413,13 @@ fn a_live_exemption_exempts_and_an_expired_one_fails() {
     );
     edit(&fixture, |doc| {
         set(doc, "/gates/coverage", "line_min_pct", Some(json!(50)));
-        set(doc, "", "exemptions", Some(exemptions()));
+        // 1.3.0: a floor below the class's needs a live crate-wide exemption.
+        let mut records = exemptions();
+        records.as_array_mut().expect("records").push(json!({
+            "path": "**", "layer": "coverage", "owner": "core",
+            "reason": "the floor is lowered for this test", "expires": "2999-01-01"
+        }));
+        set(doc, "", "exemptions", Some(records));
     });
     let (code, text) = gate(&fixture);
     assert_eq!(code, Some(1), "{text}");
@@ -465,7 +477,7 @@ fn a_workspace_root_instance_judges_only_its_named_member() {
 }
 
 #[test]
-fn no_floor_and_no_threshold_judge_nothing() {
+fn an_unset_floor_is_a_config_error_not_a_gate_with_nothing_to_judge() {
     let fixture = fixture("unset");
     summary(&fixture, &[]);
     crap(&fixture, &[("./src/lib.rs", "big", 99.0)]);
@@ -478,20 +490,15 @@ fn no_floor_and_no_threshold_judge_nothing() {
         }
     });
     let (code, text) = gate(&fixture);
-    assert_eq!(code, Some(0), "{text}");
-    assert!(text.contains("floors for "), "{text}");
-    assert!(
-        text.contains("line not set, region not set, per-file line not set"),
-        "{text}"
-    );
-    assert!(
-        text.contains("no floor is set, so there is nothing to judge"),
-        "{text}"
-    );
-    assert!(
-        text.contains("==> [crap] no threshold_agent or threshold_production: not judged here"),
-        "{text}"
-    );
+    assert_eq!(code, Some(2), "{text}");
+    for key in [
+        "line_min_pct",
+        "region_min_pct",
+        "threshold_agent",
+        "threshold_human",
+    ] {
+        assert!(text.contains(&format!("{key} is not set")), "{key}: {text}");
+    }
 }
 
 #[test]
@@ -502,6 +509,16 @@ fn threshold_production_stands_in_for_a_missing_agent_threshold() {
     edit(&fixture, |doc| {
         set(doc, "/gates/crap", "threshold_agent", None);
         set(doc, "/gates/crap", "threshold_production", Some(json!(8)));
+        // 1.3.0: a threshold above the class's needs a live crate-wide exemption.
+        set(
+            doc,
+            "",
+            "exemptions",
+            Some(json!([{
+                "path": "**", "layer": "crap", "owner": "core",
+                "reason": "the threshold is raised for this test", "expires": "2999-01-01"
+            }])),
+        );
     });
     let (code, text) = gate(&fixture);
     assert_eq!(code, Some(0), "{text}");
@@ -639,7 +656,7 @@ fn a_failing_advisory_check_fails_security_advisory() {
         text.contains("  - security-advisory: `cargo deny check advisories` failed"),
         "{text}"
     );
-    assert!(text.contains("count: 4 command(s) ran"), "{text}");
+    assert!(text.contains("count: 5 command(s) ran"), "{text}");
     assert!(text.contains("1 problem(s)"), "{text}");
     assert!(!text.contains("not on PATH"), "{text}");
     assert!(!text.contains("\nok: "), "{text}");

@@ -47,7 +47,7 @@ impl Exemption {
     pub(crate) fn expired_problem(&self, layer: &str) -> String {
         format!(
             "{layer}: the exemption for {}{} expired on {} (or its date is not a day); \
-             renew it with a reason or remove it (RUST_TOPS.md §19)",
+             renew it with a reason or remove it (PROTOCOL.md §19)",
             self.path,
             self.symbol
                 .as_deref()
@@ -197,12 +197,12 @@ mod tests {
         assert_eq!(
             exemption("src/a.rs", Some("run"), "2027-01-01").expired_problem("crap"),
             "crap: the exemption for src/a.rs (run) expired on 2027-01-01 (or its date is not a day); \
-             renew it with a reason or remove it (RUST_TOPS.md §19)"
+             renew it with a reason or remove it (PROTOCOL.md §19)"
         );
         assert_eq!(
             record.expired_problem("coverage"),
             "coverage: the exemption for src/a.rs expired on 2027-01-01 (or its date is not a day); \
-             renew it with a reason or remove it (RUST_TOPS.md §19)"
+             renew it with a reason or remove it (PROTOCOL.md §19)"
         );
     }
 }

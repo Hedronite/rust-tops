@@ -1,9 +1,9 @@
 # Bend2 × rust-tops — candidate laws
 
 **Status: the laws layer is normative in protocol 1.1.0**
-([`RUST_TOPS.md`](RUST_TOPS.md) §3.1, §15, §22). A Bend `Refuse` fails the
+([`PROTOCOL.md`](PROTOCOL.md) §3.1, §15, §22). A Bend `Refuse` fails the
 run. `not-evaluated` is never a pass. This file is the catalog. Promoting a
-row's text into `RUST_TOPS.md` still takes an explicit spec bump. Hard/soft
+row's text into `PROTOCOL.md` still takes an explicit spec bump. Hard/soft
 is the `Refuse` / `Ack` encoding.
 
 Sketch mapping: protocol intents → fail-closed agent laws → Halo / agent
@@ -21,7 +21,7 @@ treat `hard` rows as fail-closed once encoded.
 
 | Artifact | Role |
 | --- | --- |
-| `RUST_TOPS.md` + schema | Global PROTOCOL (normative 1.1.0) |
+| `PROTOCOL.md` + schema | Global PROTOCOL (normative 1.1.0) |
 | `POLICIES.md` | Harvested gates / checks (practice) |
 | `rust-tops.yaml` | Per-crate instance (tightness, floors) |
 | `LAWS.bend` | Fail-closed agent laws derived from PROTOCOL + instance |
@@ -97,7 +97,7 @@ rust-tops PROTOCOL ──encode──► LAWS.bend ──steer──► agent ed
         └────────────── apply (gates) ◄────────────────┘
 ```
 
-A `LAWS.bend` pack has shipped as a **kit overlay** since v0.1.2. Since v0.1.4 it is a hard, required gate on this repository. Since protocol 1.1.0 (package 0.2.0) the `laws` layer of `cargo tops gate` checks an adopting crate's own files against it ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1). The schema names the layer, and the laws stay in this file and `LAWS.bend`. Hard rows encode as `Refuse`; soft rows as `Ack`.
+A `LAWS.bend` pack has shipped as a **kit overlay** since v0.1.2. Since v0.1.4 it is a hard, required gate on this repository. Since protocol 1.1.0 (package 0.2.0) the `laws` layer of `cargo tops gate` checks an adopting crate's own files against it ([`PROTOCOL.md`](PROTOCOL.md) §3.1). The schema names the layer, and the laws stay in this file and `LAWS.bend`. Hard rows encode as `Refuse`; soft rows as `Ack`.
 
 | Path | What |
 | --- | --- |
@@ -106,4 +106,4 @@ A `LAWS.bend` pack has shipped as a **kit overlay** since v0.1.2. Since v0.1.4 i
 | [`flake.nix`](flake.nix) | Nix overlay (`rust-tops-laws`, `cargo-tops`) |
 | `./scripts/bend-gate.sh` | names, template bytes, Bend version, then `bend PROOF.bend`; a missing `bend` exits 1 |
 
-Promote a row into `RUST_TOPS.md` only with an explicit spec bump.
+Promote a row into `PROTOCOL.md` only with an explicit spec bump.

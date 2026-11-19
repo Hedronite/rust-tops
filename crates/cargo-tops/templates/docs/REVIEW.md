@@ -1,6 +1,6 @@
 # Rust-TOPS review gate
 
-Additive guidance. It sits on top of [`RUST_TOPS.md`](../RUST_TOPS.md) §14.2: tests come from the contract, and a green run is not evidence the change is correct. It does not change CRAP, coverage floors, or mutation gates, and it is not a protocol section.
+Additive guidance. It sits on top of [`PROTOCOL.md`](../PROTOCOL.md) §14.2: tests come from the contract, and a green run is not evidence the change is correct. It does not change CRAP, coverage floors, or mutation gates, and it is not a protocol section.
 
 Source: Tomas Vykruta, 2026-10-02, [the write-up](https://x.com/tvykruta/status/2106138620780261842) and [the rules reply](https://x.com/tvykruta/status/2106138761511727451). The numbers below are his, from two production PRs and twelve reviews, re-checked by him on the PR and on head. They are the reason for the rules.
 

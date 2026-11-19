@@ -37,6 +37,7 @@ mod scope;
 mod skills;
 mod steps;
 mod strict_lints;
+mod tiers;
 
 #[cfg(test)]
 mod parse_oracle;
@@ -113,7 +114,7 @@ Where more than one applies, 2 wins over 3, and 3 over 1.")]
 }
 
 /// The protocol version this build implements.
-const PROTOCOL_VERSION: &str = "1.2.0";
+const PROTOCOL_VERSION: &str = "1.3.0";
 
 /// What `cargo tops version` prints: package, protocol, then the `[tools]`
 /// pins of the lock text, or one line saying why there are none.
@@ -216,8 +217,8 @@ fn run_gate(path: &Path, opts: gate::Options) -> ExitCode {
 }
 
 /// `rust-tops.yaml` under `path`, typed, with a class profile, and valid
-/// against `schema/rust-tops.schema.json`. Any of the three failing is a
-/// `check` failure.
+/// against `schema/rust-tops.schema.json`, with tiers and floors that hold the
+/// class (`tiers::check`). Any of the four failing is a `check` failure.
 fn load_config(path: &Path) -> Result<TopsConfig> {
     let file = config_path(path);
     let raw = fs::read_to_string(&file)
@@ -236,6 +237,10 @@ fn load_config(path: &Path) -> Result<TopsConfig> {
             file.display(),
             errors.join("\n  ")
         ));
+    }
+    let problems = tiers::check(&file.display().to_string(), &doc, &exemptions::today());
+    if !problems.is_empty() {
+        return Err(anyhow!("{}", problems.join("\n")));
     }
     Ok(cfg)
 }
@@ -273,11 +278,6 @@ fn check(cfg: &TopsConfig) -> Result<()> {
         .is_some_and(|agent| agent < 1.0)
     {
         return Err(anyhow!("gates.crap.threshold_agent must be >= 1"));
-    }
-    if cfg.gates.mutation.unexplained_survivors_max != 0 && cfg.crate_.class == "library-core" {
-        return Err(anyhow!(
-            "library-core cannot raise unexplained_survivors_max above 0"
-        ));
     }
     Ok(())
 }
@@ -659,6 +659,37 @@ fn with_init_exemptions(yaml: &str) -> String {
 mod tests {
     use super::*;
 
+    type Plant = fn(&mut TopsConfig);
+
+    /// The library-core golden, typed.
+    fn golden_cfg() -> TopsConfig {
+        let raw = include_str!("../tests/golden/init/library-core/rust-tops.yaml");
+        parse_config(Path::new("rust-tops.yaml"), raw).expect("golden parses")
+    }
+
+    #[test]
+    fn check_accepts_the_golden_and_names_each_typed_fault() {
+        assert!(check(&golden_cfg()).is_ok());
+        let faults: [(&str, Plant); 4] = [
+            ("protocol.id must be rust-tops", |c| {
+                c.protocol.id = "other".into();
+            }),
+            ("protocol.version is required", |c| {
+                c.protocol.version.clear();
+            }),
+            ("crate.name is required", |c| c.crate_.name.clear()),
+            ("gates.crap.threshold_agent must be >= 1", |c| {
+                c.gates.crap.threshold_agent = Some(0.5);
+            }),
+        ];
+        for (message, plant) in faults {
+            let mut cfg = golden_cfg();
+            plant(&mut cfg);
+            let err = check(&cfg).expect_err(message);
+            assert_eq!(err.to_string(), message);
+        }
+    }
+
     /// Every file in `profiles/`.
     const PROFILE_CLASSES: [&str; 8] = [
         "library-core",
@@ -920,13 +951,13 @@ mod tests {
         let pkg = env!("CARGO_PKG_VERSION");
         assert_eq!(
             version_text(None),
-            format!("cargo-tops {pkg}\nprotocol 1.2.0\ntool pins: none (no ./rust-tops.lock)\n")
+            format!("cargo-tops {pkg}\nprotocol 1.3.0\ntool pins: none (no ./rust-tops.lock)\n")
         );
         let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
         assert_eq!(
             version_text(Some(lock)),
             format!(
-                "cargo-tops {pkg}\nprotocol 1.2.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+                "cargo-tops {pkg}\nprotocol 1.3.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
             )
         );
         assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));
