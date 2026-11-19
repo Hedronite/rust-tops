@@ -59,24 +59,29 @@ pub(crate) fn artifact_dir(project: &Path) -> PathBuf {
 }
 
 thread_local! {
-    static META_CACHE: RefCell<HashMap<PathBuf, Option<String>>> = RefCell::new(HashMap::new());
+    /// The target directory `cargo metadata` named, and whether it could not run.
+    static META_CACHE: RefCell<HashMap<PathBuf, (Option<String>, bool)>> = RefCell::new(HashMap::new());
     #[cfg(test)]
     static META_SPAWNS: Cell<u32> = const { Cell::new(0) };
 }
 
 fn metadata_target_once(project: &Path) -> Option<String> {
+    metadata_cached(project).0
+}
+
+fn metadata_cached(project: &Path) -> (Option<String>, bool) {
     let key = project
         .canonicalize()
         .unwrap_or_else(|_| project.to_path_buf());
     let cached = META_CACHE.with(|slot| slot.borrow().get(&key).cloned());
-    if let Some(target) = cached {
-        return target;
+    if let Some(found) = cached {
+        return found;
     }
-    let target = metadata_target(project);
+    let found = metadata_probe(project);
     META_CACHE.with(|slot| {
-        slot.borrow_mut().insert(key, target.clone());
+        slot.borrow_mut().insert(key, found.clone());
     });
-    target
+    found
 }
 
 /// Same rule as [`report_dir`], with the two lookups passed in. A relative
@@ -114,10 +119,24 @@ fn display_under(project: &Path, out: &Path) -> String {
         .unwrap_or_else(|| out.display().to_string())
 }
 
+/// A project `cargo metadata` cannot answer for: no `Cargo.toml` at all, or
+/// one whose `cargo metadata` could not run or exited with an error. It does
+/// not depend on `CARGO_TARGET_DIR`: the same tree gets the same answer.
+pub(crate) fn metadata_unavailable(project: &Path) -> bool {
+    !project.join("Cargo.toml").is_file() || metadata_cached(project).1
+}
+
+#[cfg(test)]
 fn metadata_target(project: &Path) -> Option<String> {
+    metadata_probe(project).0
+}
+
+/// The target directory, and whether `cargo metadata` could not run or
+/// failed. Output that names no target directory is not a failure.
+fn metadata_probe(project: &Path) -> (Option<String>, bool) {
     let manifest = project.join("Cargo.toml");
     if !manifest.is_file() {
-        return None;
+        return (None, false);
     }
     #[cfg(test)]
     META_SPAWNS.with(|count| count.set(count.get() + 1));
@@ -130,14 +149,18 @@ fn metadata_target(project: &Path) -> Option<String> {
             "--manifest-path",
         ])
         .arg(&manifest)
-        .output()
-        .ok()?;
+        .output();
+    let Ok(output) = output else {
+        return (None, true);
+    };
     if !output.status.success() {
-        return None;
+        return (None, true);
     }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    value.get("target_directory")?.as_str().map(str::to_string)
+    let target = String::from_utf8(output.stdout)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.get("target_directory")?.as_str().map(str::to_string));
+    (target, false)
 }
 
 /// The `bend` binary that reports the pinned version.
