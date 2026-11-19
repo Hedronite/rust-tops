@@ -376,7 +376,7 @@ fn print_init_notes(plan: &init_meta::Plan, yaml: &str) {
         println!("{note}");
     }
     if !plan.write_toolchain {
-        println!("note: rust-toolchain.toml not written; the crate or a directory above it, up to the workspace root, already pins a toolchain");
+        println!("note: rust-toolchain.toml not written; the crate or a directory above it, up to the workspace, git or filesystem root, already pins a toolchain");
     }
 }
 
