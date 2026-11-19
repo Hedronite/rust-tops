@@ -396,6 +396,20 @@ fn smoke_gate(nu: &Path) {
         parse_json(&out.stdout)
     };
 
+    let odd = run("odd-numbers");
+    assert_eq!(at(&odd, "/data/layers/0/seconds"), 0, "{odd}");
+    assert_eq!(at(&odd, "/data/gate_green"), true, "{odd}");
+
+    let ran_empty = run("laws-ran-empty");
+    assert_eq!(at(&ran_empty, "/ok"), false, "{ran_empty}");
+    assert!(
+        at(&ran_empty, "/error")
+            .as_str()
+            .unwrap_or_default()
+            .contains("laws layer ran"),
+        "{ran_empty}"
+    );
+
     let pass = run("pass");
     #[expect(
         clippy::indexing_slicing,

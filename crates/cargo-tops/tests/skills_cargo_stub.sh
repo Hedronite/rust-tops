@@ -59,6 +59,16 @@ case "$mode" in
     printf '%s\n' 'error: cargo-mutants: command not found' >&2
     exit 3
     ;;
+  odd-numbers)
+    write_report 0 true '{"id":"static-lint","tier":0,"verdict":"pass","argv":[["cargo","fmt"]],"tool_version":null,"seconds":-1}' ''
+    printf 'ok: 1 command(s) passed\n'
+    exit 0
+    ;;
+  laws-ran-empty)
+    write_report 0 true "$LINT"',{"id":"laws","tier":1,"verdict":"pass","argv":[["cargo","bend"]],"tool_version":null,"seconds":1}' ''
+    printf 'ok: 2 command(s) passed\n'
+    exit 0
+    ;;
   config-invalid)
     write_report 2 false '' ''
     printf '%s\n' 'error: rust-tops.yaml: crate.name is required' >&2

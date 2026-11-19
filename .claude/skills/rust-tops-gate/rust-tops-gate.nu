@@ -92,7 +92,13 @@ export def gate-verdict [cases: any] {
     return {laws_clear: false, checked_green: false, error: "report.json laws is not a list", fixes: [], gaps: []}
   }
   if ($laws | is-empty) {
-    return {laws_clear: false, checked_green: false, error: "report.json listed no laws", fixes: [], gaps: []}
+    # The report is written on every run, so no laws is normal while the laws
+    # layer is off. A laws layer that ran and listed none is an error.
+    let ran = ($cases.layers? | default [] | any {|l| $l.id? == "laws" and ($l.verdict? | default "") not-in ["not-run" "not-evaluated" "tool-missing"]})
+    if $ran {
+      return {laws_clear: false, checked_green: false, error: "report.json listed no laws although the laws layer ran", fixes: [], gaps: []}
+    }
+    return {laws_clear: true, checked_green: true, error: "", fixes: [], gaps: []}
   }
   let rows = (
     $laws | each {|row|
@@ -202,7 +208,7 @@ def report-layers [report: record] {
       id: $id
       tier: ($layer.tier? | default null)
       verdict: $verdict
-      seconds: ($layer.seconds? | default 0)
+      seconds: ([($layer.seconds? | default 0) 0] | math max)
       command: ($layer.argv? | default [] | each {|c| $c | str join " "} | str join " && ")
       ok: $passed
       remedy: (if $passed or $verdict in ["not-run" "not-evaluated"] { "" } else { remedy-problem $hint })
