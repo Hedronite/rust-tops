@@ -15,6 +15,11 @@ use serde_json::{Map, Number, Value};
 
 use crate::init_meta::{resolve_unsafe_policy, Settings};
 
+// Until `main.rs` declares it (the 1.3.0 wiring), `tiers` hangs off the module
+// that owns the profiles it reads.
+#[path = "tiers.rs"]
+pub(crate) mod tiers;
+
 const TEMPLATE: &str = include_str!("../templates/rust-tops.example.yaml");
 
 /// Every `templates/profiles/*.yaml`, keyed by the class id in the file.
@@ -134,6 +139,11 @@ pub(crate) fn merge_profile_with(
     apply_profile(&mut doc, &profile, class, crate_name)?;
     apply_settings(&mut doc, &profile, settings, class)?;
     Ok(emit_yaml(&doc))
+}
+
+/// The parsed profile for `class`; `None` for a class with no profile.
+pub(crate) fn class_profile(class: &str) -> Option<Value> {
+    parse_yaml(profile_source(class)?).ok()
 }
 
 fn profile_source(class: &str) -> Option<&'static str> {

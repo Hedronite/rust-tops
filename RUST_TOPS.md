@@ -138,6 +138,7 @@ Every behavior that ships must be justified by the **lowest layer that can actua
 | 0 | `coverage` | Did tests reach the production regions we claim? | every PR |
 | 0 | `crap` | Is untested complexity leaking in? | every PR |
 | 0 | `laws` | Do the facts in this crate's files and gate reports clear the Bend law pack? | every PR |
+| 0 | `security-advisory` | Did we pick up a known-bad crate? | every PR |
 | 1 | `integration` | Do crate-public seams work together? | every PR |
 | 1 | `acceptance` | Does the named user/oracle behavior hold? | every PR for changed journeys |
 | 1 | `mutation` | Would a small bug in this diff survive the suite? | every PR on the diff |
@@ -151,8 +152,9 @@ Every behavior that ships must be justified by the **lowest layer that can actua
 | 4 | `formal-kani` | Is a bounded kernel free of panic/overflow/UB? | PR on kernels, else scheduled |
 | 4 | `bench-callgrind` | Did instruction/cache counts regress? | PR on `hot_paths` |
 | 5 | `bench-criterion` | What is the wall-clock distribution on this machine? | local / dedicated runner |
-| 5 | `security-advisory` | Did we pick up a known-bad crate? | every PR |
 | 5 | `density-audit` | Did production SLOC grow without capability? | advisory on PR, blocking on release |
+
+**Tiers are fixed (since 1.3.0).** A layer's tier comes from its id, by this table. An instance `tier` must equal the table's value or be absent; `cargo tops check` fails any other value, and a layer id the table does not list. `security-advisory` moved from tier 5 to tier 0 in 1.3.0, so the default `--max-tier 1` gate runs the advisory check.
 
 ### 3.1 The `laws` layer (since 1.1.0)
 
@@ -183,6 +185,12 @@ Set `crate.class` in the instance file. Defaults below are the starting gate set
 | `no-std-embedded` | 90 | 85 | 6 / 4 | 95% / 0 | required | optional | required | kernels | size + cycle |
 | `proc-macro` | 85 + compile-fail | n/a branch | 8 / 6 | trybuild is the mutant analog | optional | no | no | no | no |
 | `workspace-root` | inherits per-package | | | | | | | | |
+
+**`check` holds an instance to its class (since 1.3.0).** `cargo tops check` fails an instance when:
+- a floor is looser than the class profile in `profiles/`: `gates.coverage.line_min_pct` and `region_min_pct`, the CRAP thresholds (a minimum may not drop, a maximum may not rise), and `gates.mutation.kill_rate_min_pct` and `unexplained_survivors_max`. A floor that is missing counts as looser. A live, dated exemption (§19) for the floor's layer (`coverage`, `crap` or `mutation`) whose `path` covers the whole crate lifts the failure. The path is `**`, `./**`, `**/*`, `.` or `./`, and the record names no `symbol`. An exemption for part of the crate, for one symbol, or an expired one does not.
+- a layer the class requires is disabled or absent: `security-advisory` for every class, and each layer a class profile marks `required` (§4 table), except `acceptance`, which no class requires until it has a runner.
+
+Each message names the file, the key, the class value and the one-line fix.
 
 Numbers are *minima*. A 40-line pure codec with a spec should sit at 100% region coverage because anything less is laziness, not philosophy.
 

@@ -121,7 +121,7 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 5,
-            "description": "0 always-on PR gate, 5 nightly/manual"
+            "description": "Fixed by the layer id (spec §3). Equal to the table or absent. 0 always-on PR gate, 5 nightly/manual"
           },
           "runner": { "type": "string" },
           "scope": {
