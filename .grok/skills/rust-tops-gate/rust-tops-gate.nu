@@ -1,8 +1,9 @@
 #!/usr/bin/env nu
 # Wraps `cargo tops gate`. Does not re-implement the gate.
-# The report's top-level pass bit only means bend exited and its verdicts parsed.
-# This script never reads that field. `ok` is true only when the command exits 0
-# and every law row is checked with verdict Allow or Ack.
+# It reads only <target>/rust-tops/report.json, which every gate run writes.
+# `ok` is true only when the command exits 0 and every law row is checked with
+# verdict Allow or Ack. Exit codes: 0 pass, 1 the gate ran and failed, 2 the
+# config is invalid, 3 the environment lacks a tool or cargo metadata.
 
 def have [bin: string] {
   not ((which $bin | where type == external) | is-empty)
@@ -30,7 +31,7 @@ def remedy-problem [text: string] {
   } else if ($text | str starts-with "mutation:") {
     "assert the behavior the mutant broke. Never --baseline skip."
   } else if ($text | str starts-with "laws:") {
-    "read that law in rust-tops/cases.json and fix the fact it read. Do not edit the pinned kit files."
+    "read that law in rust-tops/report.json and fix the fact it read. Do not edit the pinned kit files."
   } else if ($text | str contains "ENOENT") {
     "honor CARGO_BIN_EXE_* / $CARGO_TARGET_DIR / one-level target/ scan."
   } else if ($text | str contains "callgrind") or ($text | str contains "perf") {
@@ -44,13 +45,13 @@ def remedy-law [status: string, verdict: string, code: string] {
   if $code == "no_fact_reader" {
     "this release has no fact reader for this law. It is not a pass. Leave it. Do not edit the pinned kit files and do not encode it as Allow."
   } else if $status == "not-evaluated" {
-    "the law was not checked. It is not a pass. Read reason in cases.json. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as Allow."
+    "the law was not checked. It is not a pass. Read reason in report.json. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as Allow."
   } else if $verdict == "Refuse" {
-    "read that law in rust-tops/cases.json and fix the fact it read. Do not edit the pinned kit files."
+    "read that law in rust-tops/report.json and fix the fact it read. Do not edit the pinned kit files."
   } else if $verdict == "unreported" {
-    "unreported is not a pass. bend stops at the first refusal. Read rust-tops/cases.json."
+    "unreported is not a pass. bend stops at the first refusal. Read rust-tops/report.json."
   } else {
-    "the law is not a passing checked verdict. Read rust-tops/cases.json. Do not count it as a pass."
+    "the law is not a passing checked verdict. Read rust-tops/report.json. Do not count it as a pass."
   }
 }
 
@@ -76,22 +77,28 @@ export def gate-verdict [cases: any] {
     return {
       laws_clear: false
       checked_green: false
-      error: "cases.json is missing or not JSON"
+      error: "report.json is missing or not JSON"
       fixes: []
       gaps: []
     }
   }
   let laws = ($cases.laws? | default null)
   if $laws == null {
-    return {laws_clear: false, checked_green: false, error: "cases.json has no laws array", fixes: [], gaps: []}
+    return {laws_clear: false, checked_green: false, error: "report.json has no laws array", fixes: [], gaps: []}
   }
   let laws_kind = ($laws | describe)
   let laws_ok = ($laws_kind | str starts-with "list") or ($laws_kind | str starts-with "table")
   if not $laws_ok {
-    return {laws_clear: false, checked_green: false, error: "cases.json laws is not a list", fixes: [], gaps: []}
+    return {laws_clear: false, checked_green: false, error: "report.json laws is not a list", fixes: [], gaps: []}
   }
   if ($laws | is-empty) {
-    return {laws_clear: false, checked_green: false, error: "cases.json listed no laws", fixes: [], gaps: []}
+    # The report is written on every run, so no laws is normal while the laws
+    # layer is off. A laws layer that ran and listed none is an error.
+    let ran = ($cases.layers? | default [] | any {|l| $l.id? == "laws" and ($l.verdict? | default "") not-in ["not-run" "not-evaluated" "tool-missing"]})
+    if $ran {
+      return {laws_clear: false, checked_green: false, error: "report.json listed no laws although the laws layer ran", fixes: [], gaps: []}
+    }
+    return {laws_clear: true, checked_green: true, error: "", fixes: [], gaps: []}
   }
   let rows = (
     $laws | each {|row|
@@ -178,32 +185,35 @@ def problem-lines [text: string] {
   $text | lines | each {|row| $row | str trim } | where {|row| $row | str starts-with "- " } | each {|row| $row | str substring 2.. }
 }
 
-def layer-rows [text: string, problems: list] {
-  $text | lines | each {|row|
-    let trimmed = ($row | str trim)
-    if not ($trimmed | str starts-with "==> [") {
-      null
-    } else {
-      let rest = ($trimmed | str substring 5..)
-      let parts = ($rest | split row "] ")
-      if ($parts | length) < 2 {
-        null
-      } else {
-        let id = ($parts | first)
-        let command = ($parts | skip 1 | str join "] ")
-        let mine = ($problems | where {|p| $p | str starts-with $"($id):" })
-        let named = ($mine | any {|p| $p | str contains $command })
-        let unnamed = (not ($mine | is-empty)) and ($mine | all {|p| not ($p | str contains "`") })
-        let failed = $named or $unnamed
-        {
-          id: $id
-          command: $command
-          ok: (not $failed)
-          remedy: (if $failed { remedy-problem ($mine | first) } else { "" })
-        }
-      }
+# What each exit code of `cargo tops gate` means.
+def exit-meaning [code: int] {
+  match $code {
+    1 => "the gate ran and failed"
+    2 => "the config is invalid"
+    3 => "the environment lacks a required tool or cargo metadata"
+    _ => "the command failed"
+  }
+}
+
+# One row per layer of the report: id, tier, verdict, seconds, the argv run,
+# `ok` for a pass only, and the remedy for any other verdict.
+def report-layers [report: record] {
+  let layers = ($report.layers? | default [])
+  $layers | each {|layer|
+    let id = ($layer.id? | default "")
+    let verdict = ($layer.verdict? | default "")
+    let passed = ($verdict == "pass")
+    let hint = if $verdict == "tool-missing" { $"($id): command not found" } else { $"($id): ($verdict)" }
+    {
+      id: $id
+      tier: ($layer.tier? | default null)
+      verdict: $verdict
+      seconds: ([($layer.seconds? | default 0) 0] | math max)
+      command: ($layer.argv? | default [] | each {|c| $c | str join " "} | str join " && ")
+      ok: $passed
+      remedy: (if $passed or $verdict in ["not-run" "not-evaluated"] { "" } else { remedy-problem $hint })
     }
-  } | where {|row| $row != null }
+  }
 }
 
 def main [
@@ -215,9 +225,9 @@ def main [
   if not $located.ok {
     return ({ok: false, command: $meta_cmd, error: (clip $located.error), exit: 2} | to json)
   }
-  let cases = ($located.dir | path join "rust-tops" "cases.json")
+  let report_path = ($located.dir | path join "rust-tops" "report.json")
   let started = (date now)
-  rm -f $cases
+  rm -f $report_path
   let args = ["tops" "gate" "--path" $path "--max-tier" ($max_tier | into string)]
   let command = (argv-line (["cargo"] ++ $args))
   if not (have cargo) {
@@ -227,37 +237,52 @@ def main [
   let text = ([$r.stdout $r.stderr] | str join "\n")
   let summary = (summary-line $text)
   let problems = (problem-lines $text | each {|p| {text: $p, remedy: (remedy-problem $p)}})
-  let layers = (layer-rows $text ($problems | get text))
-  let loaded = (read-cases $cases $started)
-  let cases_value = if $loaded.state == "ok" { $loaded.cases } else { null }
-  let verdict = (gate-verdict $cases_value)
+  let loaded = (read-cases $report_path $started)
+  let report = if $loaded.state == "ok" { $loaded.cases } else { null }
+  let verdict = (gate-verdict $report)
   let stderr_tail = ($r.stderr | str trim)
   let stdout_tail = ($r.stdout | str trim)
-  let command_tail = if not ($stderr_tail | is-empty) { $stderr_tail } else { $stdout_tail }
+  let process_tail = if not ($stderr_tail | is-empty) { $stderr_tail } else { $stdout_tail }
+  # The report names why the gate stopped; the process tail varies with the
+  # cargo cache, so it is only the fallback when there is no report.
+  let report_problems = if $report == null { [] } else { $report.problems? | default [] }
+  let command_tail = if $report != null and (($report.error? | default "") != "") {
+    $report.error
+  } else if not ($report_problems | is-empty) {
+    $report_problems | str join "; "
+  } else {
+    $process_tail
+  }
+  let report_exit = if $report == null { null } else { $report.exit_code? | default null }
   mut error = ""
-  if $r.exit_code != 0 {
+  if $r.exit_code in [2 3] {
+    $error = $"cargo tops gate exited ($r.exit_code), (exit-meaning $r.exit_code): (clip $command_tail)"
+  } else if $r.exit_code != 0 {
     $error = $"cargo tops gate exited ($r.exit_code): (clip $command_tail)"
   } else if $loaded.state == "stale" {
-    $error = "cases.json is older than this run"
+    $error = "report.json is older than this run"
   } else if $loaded.state != "ok" {
-    $error = "cases.json is missing or not JSON"
+    $error = "report.json is missing or not JSON"
+  } else if $report_exit != 0 {
+    $error = $"report.json says exit_code ($report_exit), the command exited 0"
   } else {
     $error = $verdict.error
   }
-  let report_ok = ($r.exit_code == 0) and ($loaded.state == "ok")
+  let report_ok = ($r.exit_code == 0) and ($loaded.state == "ok") and ($report_exit == 0)
+  let clear = ($report_ok and $verdict.laws_clear)
   {
-    ok: ($report_ok and $verdict.laws_clear)
+    ok: $clear
     command: $command
     exit: $r.exit_code
-    error: (if ($report_ok and $verdict.laws_clear) { "" } else { clip $error })
+    error: (if $clear { "" } else { clip $error })
     data: {
       gate_green: ($report_ok and $verdict.checked_green)
       summary: $summary
       problems: $problems
-      layers: $layers
+      layers: (if $report == null { [] } else { report-layers $report })
       fixes: $verdict.fixes
       gaps: $verdict.gaps
-      laws: (if $loaded.state == "ok" { $loaded.cases.laws? | default [] } else { [] })
+      laws: (if $report == null { [] } else { $report.laws? | default [] })
     }
   } | to json
 }

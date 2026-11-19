@@ -18,7 +18,7 @@ BeautifulRust is the style companion. The `rust-tops-style`, `rust-tops-review` 
 
 `cargo tops init --class <class>` adopts the kit. It writes `rust-toolchain.toml` with `channel` set from `crate.msrv`, plus `LAWS.bend`, `laws/bend.lock`, and `scripts/fetch-bend.sh`. Those three are pinned. Do not edit them to get a green gate. `cargo tops init --skills` also writes the agent skills, a one-line `CLAUDE.md` that imports this file, and [`docs/REVIEW.md`](docs/REVIEW.md).
 
-`cargo tops gate` runs the mapped layers, then `laws` when that layer is enabled. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. `bend` stops at the first refusal; later laws are `unreported`, which is not a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when set, otherwise `cargo metadata`'s `target_directory`). Ignore a file from an earlier run.
+`cargo tops gate` runs the mapped layers, then `laws` when that layer is enabled. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. `bend` stops at the first refusal; later laws are `unreported`, which is not a pass. Read `rust-tops/report.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when set, otherwise `cargo metadata`'s `target_directory`). Ignore a file from an earlier run.
 
 The commands the gate runs, when those layers are enabled:
 
@@ -94,8 +94,8 @@ The reviewer is a fresh agent that did not write the diff. Write the inputs befo
 - Perf miss → profile, then algorithm / alloc / layout. `unsafe` is last and Miri-clean.
 - Empty LCOV / CRAP JSON → the recorder never ran; fix the kit, do not skip.
 - Spawned-bin ENOENT under llvm-cov → honor CARGO_BIN_EXE_* / $CARGO_TARGET_DIR / one-level `target/` scan.
-- Bend `Refuse` → read that law in rust-tops/cases.json and fix the fact it read. Do not edit the pinned kit files.
-- `not-evaluated` → the law was not checked. It is not a pass. Read `reason` in `cases.json`. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as `Allow`.
+- Bend `Refuse` → read that law in rust-tops/report.json and fix the fact it read. Do not edit the pinned kit files.
+- `not-evaluated` → the law was not checked. It is not a pass. Read `reason` in `report.json`. If the runner has no fact for that law, leave it. Do not edit the pinned kit files and do not encode it as `Allow`.
 - Tool missing → install it. `cargo-tops` does not vendor engines. A missing tool is a fail, not a skip.
 
 See [`POLICIES.md`](POLICIES.md) for the CI floor and [`BEND2-INTEGRATION.md`](BEND2-INTEGRATION.md) for the law catalog. A `Refuse` from an enabled `laws` layer fails the run ([`RUST_TOPS.md`](RUST_TOPS.md) §3.1, §22).
