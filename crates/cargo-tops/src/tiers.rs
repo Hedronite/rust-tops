@@ -56,10 +56,11 @@ enum Bound {
     Max,
 }
 
-/// One floor: the instance keys (first present wins), the class profile
-/// pointer, and the layer whose exemption may loosen it.
+/// One floor: the instance key, the key read when that one is absent, the
+/// class profile pointer, and the layer whose exemption may loosen it.
 struct Floor {
-    keys: &'static [&'static str],
+    key: &'static str,
+    fallback: Option<&'static str>,
     section: &'static str,
     profile: &'static str,
     layer: &'static str,
@@ -68,14 +69,16 @@ struct Floor {
 
 const FLOORS: [Floor; 6] = [
     Floor {
-        keys: &["line_min_pct"],
+        key: "line_min_pct",
+        fallback: None,
         section: "coverage",
         profile: "/coverage/line_min_pct",
         layer: "coverage",
         bound: Bound::Min,
     },
     Floor {
-        keys: &["region_min_pct"],
+        key: "region_min_pct",
+        fallback: None,
         section: "coverage",
         profile: "/coverage/region_min_pct",
         layer: "coverage",
@@ -83,28 +86,32 @@ const FLOORS: [Floor; 6] = [
     },
     // The gate reads `threshold_production` when there is no agent key.
     Floor {
-        keys: &["threshold_agent", "threshold_production"],
+        key: "threshold_agent",
+        fallback: Some("threshold_production"),
         section: "crap",
         profile: "/crap/threshold_agent",
         layer: "crap",
         bound: Bound::Max,
     },
     Floor {
-        keys: &["threshold_human"],
+        key: "threshold_human",
+        fallback: None,
         section: "crap",
         profile: "/crap/threshold_human",
         layer: "crap",
         bound: Bound::Max,
     },
     Floor {
-        keys: &["kill_rate_min_pct"],
+        key: "kill_rate_min_pct",
+        fallback: None,
         section: "mutation",
         profile: "/mutation/kill_rate_min_pct",
         layer: "mutation",
         bound: Bound::Min,
     },
     Floor {
-        keys: &["unexplained_survivors_max"],
+        key: "unexplained_survivors_max",
+        fallback: None,
         section: "mutation",
         profile: "/mutation/unexplained_survivors_max",
         layer: "mutation",
@@ -188,10 +195,10 @@ fn floor_problem(
 ) -> Option<String> {
     let wanted = profile.pointer(floor.profile).and_then(Value::as_f64)?;
     let section = doc.pointer(&format!("/gates/{}", floor.section));
-    let found = floor
-        .keys
-        .iter()
-        .find_map(|key| Some((*key, section?.get(key)?.as_f64()?)));
+    let found = [Some(floor.key), floor.fallback]
+        .into_iter()
+        .flatten()
+        .find_map(|key| Some((key, section?.get(key)?.as_f64()?)));
     let loose = found.is_none_or(|(_, have)| match floor.bound {
         Bound::Min => have < wanted,
         Bound::Max => have > wanted,
@@ -199,7 +206,7 @@ fn floor_problem(
     if !loose || live_exemption(doc, floor.layer, today) {
         return None;
     }
-    let key = found.map_or(floor.keys[0], |(key, _)| key);
+    let key = found.map_or(floor.key, |(key, _)| key);
     let have = found.map_or_else(|| "not set".to_string(), |(_, have)| have.to_string());
     let verb = if floor.bound == Bound::Min {
         "raise"
@@ -297,11 +304,11 @@ mod tests {
     }
 
     fn layer_index(doc: &Value, id: &str) -> usize {
-        doc["layers"]
-            .as_array()
+        doc.get("layers")
+            .and_then(Value::as_array)
             .expect("layers")
             .iter()
-            .position(|l| l["id"] == id)
+            .position(|l| l.get("id").and_then(Value::as_str) == Some(id))
             .expect("layer present")
     }
 
@@ -482,7 +489,10 @@ mod tests {
     fn a_missing_security_advisory_layer_is_named_missing() {
         let mut doc = golden("library-util");
         let at = layer_index(&doc, "security-advisory");
-        doc["layers"].as_array_mut().expect("layers").remove(at);
+        doc.get_mut("layers")
+            .and_then(Value::as_array_mut)
+            .expect("layers")
+            .remove(at);
         assert!(one(&doc).contains("layers[id=security-advisory].enabled is missing"));
     }
 
