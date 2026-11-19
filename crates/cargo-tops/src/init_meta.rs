@@ -2,8 +2,9 @@
 //!
 //! `cargo metadata --no-deps --manifest-path <dir>/Cargo.toml` gives the name,
 //! edition and `rust-version`. The manifest's lint table gives the unsafe
-//! policy. The directories from the crate up to the workspace root say whether
-//! a toolchain pin already exists. `init` never walks up to a parent package:
+//! policy. The directories from the crate up to the workspace root, the git
+//! root or the filesystem root, whichever comes first, say whether a
+//! toolchain pin already exists. `init` never walks up to a parent package:
 //! a directory with no `Cargo.toml` is a bare directory and takes defaults,
 //! each one named in a stdout note.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
@@ -37,7 +38,7 @@ pub(crate) struct Plan {
     pub(crate) name: String,
     pub(crate) settings: Settings,
     /// Whether `rust-toolchain.toml` is written (no pin in the crate directory
-    /// or above it up to the workspace root).
+    /// or above it up to the workspace, git or filesystem root).
     pub(crate) write_toolchain: bool,
     /// One stdout line per defaulted field, in the order they were decided.
     pub(crate) notes: Vec<String>,
@@ -151,15 +152,18 @@ pub(crate) fn resolve_unsafe_policy(
 }
 
 /// The note `init` prints when `unsafe_policy` is a fallback. `policy` is the
-/// value written.
+/// value written: the class policy, or `forbid` when the class sets none.
 pub(crate) fn unsafe_note(settings: &Settings, policy: &str) -> Option<String> {
-    resolve_unsafe_policy(settings.unsafe_lint.as_deref(), Some(policy))
-        .note
-        .then(|| {
-            format!(
-                "note: unsafe_policy {policy} is the class default; the crate's lint table does not set unsafe_code = \"forbid\""
-            )
-        })
+    let lint = settings.unsafe_lint.as_deref();
+    resolve_unsafe_policy(lint, Some(policy)).note.then(|| {
+        let table = match lint {
+            None => "the lint table has no unsafe_code entry".to_string(),
+            Some(level) => format!("the lint table sets unsafe_code = \"{level}\", not forbid"),
+        };
+        format!(
+            "note: unsafe_policy {policy} stands: {table}, so the class policy (or forbid) applies"
+        )
+    })
 }
 
 /// The `[tools] rustc` of a `rust-tops.lock` text.
@@ -287,12 +291,14 @@ fn unsafe_level(own: &toml::Table, root: Option<&toml::Table>) -> Option<String>
     level.as_str().map(str::to_string)
 }
 
-/// Whether `dir`, or a directory above it up to the workspace root, holds a
-/// toolchain pin. Without a workspace root above `dir`, only `dir` is read.
-/// A dangling link counts: it is something at that name.
+/// Whether `dir`, or a directory above it, holds a toolchain pin. The walk
+/// ends at the first of the workspace root, a directory holding `.git`, or
+/// the filesystem root; that last directory is read too. A workspace root
+/// fences the walk only when it is above `dir`: a standalone package is its
+/// own workspace root and fences nothing. A dangling link counts: it is something at that name.
 fn has_toolchain_pin(dir: &Path, root: Option<&Path>) -> bool {
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    let stop = root.filter(|root| dir.starts_with(root));
+    let workspace = root.filter(|root| dir.starts_with(root) && dir != *root);
     for ancestor in dir.ancestors() {
         let pinned = TOOLCHAIN_FILES
             .iter()
@@ -300,7 +306,8 @@ fn has_toolchain_pin(dir: &Path, root: Option<&Path>) -> bool {
         if pinned {
             return true;
         }
-        if stop.is_none_or(|stop| stop == ancestor) {
+        let git_root = std::fs::symlink_metadata(ancestor.join(".git")).is_ok();
+        if git_root || workspace == Some(ancestor) {
             return false;
         }
     }
@@ -428,14 +435,56 @@ mod tests {
     fn a_pin_above_the_workspace_root_is_not_looked_for() {
         let outer = scratch("above");
         let root = outer.join("ws");
-        fs::create_dir_all(&root).expect("mkdir");
+        let krate = root.join("k");
+        fs::create_dir_all(&krate).expect("mkdir");
         fs::write(outer.join("rust-toolchain.toml"), "").expect("write");
-        assert!(!has_toolchain_pin(&root, Some(&root)));
+        assert!(!has_toolchain_pin(&krate, Some(&root)));
+        fs::remove_dir_all(&outer).ok();
+    }
+
+    #[test]
+    fn without_a_workspace_root_the_walk_goes_to_the_git_root() {
+        let outer = scratch("gitroot");
+        let deep = outer.join("a/b");
+        fs::create_dir_all(&deep).expect("mkdir");
+        fs::create_dir_all(outer.join(".git")).expect("git");
+        assert!(!has_toolchain_pin(&deep, None), "no pin yet");
+        fs::write(outer.join("rust-toolchain.toml"), "").expect("write");
+        assert!(has_toolchain_pin(&deep, None), "pin two levels up");
         assert!(
-            !has_toolchain_pin(&root, None),
-            "no root reads only the dir"
+            has_toolchain_pin(&deep, Some(&outer.join("elsewhere"))),
+            "a root that is not above the crate does not stop the walk"
         );
-        assert!(!has_toolchain_pin(&root, Some(&outer.join("elsewhere"))));
+        assert!(
+            has_toolchain_pin(&deep, Some(&deep)),
+            "a standalone package is its own root and fences nothing"
+        );
+        fs::remove_dir_all(&outer).ok();
+    }
+
+    #[test]
+    fn the_git_root_stops_the_walk_and_is_itself_read() {
+        let outer = scratch("gitstop");
+        let repo = outer.join("repo");
+        let deep = repo.join("a/b");
+        fs::create_dir_all(&deep).expect("mkdir");
+        fs::create_dir_all(repo.join(".git")).expect("git");
+        fs::write(outer.join("rust-toolchain.toml"), "").expect("write");
+        assert!(!has_toolchain_pin(&deep, None), "pin above the git root");
+        fs::write(repo.join("rust-toolchain"), "").expect("write");
+        assert!(has_toolchain_pin(&deep, None), "pin at the git root");
+        fs::remove_dir_all(&outer).ok();
+    }
+
+    #[test]
+    fn the_workspace_root_stops_the_walk_before_the_git_root() {
+        let outer = scratch("wsfirst");
+        let root = outer.join("ws");
+        let krate = root.join("k");
+        fs::create_dir_all(&krate).expect("mkdir");
+        fs::create_dir_all(outer.join(".git")).expect("git");
+        fs::write(outer.join("rust-toolchain.toml"), "").expect("write");
+        assert!(!has_toolchain_pin(&krate, Some(&root)));
         fs::remove_dir_all(&outer).ok();
     }
 
@@ -601,6 +650,22 @@ mod tests {
         assert!(note.contains("unsafe_policy forbid"), "{note}");
         settings.unsafe_lint = Some("forbid".to_string());
         assert_eq!(unsafe_note(&settings, "forbid"), None);
+    }
+
+    #[test]
+    fn the_unsafe_note_says_why_the_policy_stands() {
+        let mut settings = Settings::default();
+        let note = unsafe_note(&settings, "required-kernel").expect("note");
+        assert_eq!(
+            note,
+            "note: unsafe_policy required-kernel stands: the lint table has no unsafe_code entry, so the class policy (or forbid) applies"
+        );
+        settings.unsafe_lint = Some("deny".to_string());
+        let note = unsafe_note(&settings, "forbid").expect("note");
+        assert!(
+            note.contains("sets unsafe_code = \"deny\", not forbid"),
+            "{note}"
+        );
     }
 
     #[test]
