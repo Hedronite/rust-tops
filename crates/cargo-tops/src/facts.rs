@@ -1074,6 +1074,21 @@ mod tests {
     }
 
     #[test]
+    fn fmt_at_tier_zero_is_not_evaluated_when_a_workflow_does_not_parse() {
+        let cfg = cfg();
+        let ctx = Ctx {
+            workflows: Workflows::Broken("ci.yml: bad".into()),
+            ..ctx_with(&cfg, &[])
+        };
+        let Choice::NotEvaluated { reason, .. } = fmt_is_tier0(&ctx) else {
+            panic!("a workflow that does not parse is not a verdict");
+        };
+        assert_eq!(reason, "workflow did not parse: ci.yml: bad");
+        let ctx = ctx_with(&cfg, &[]);
+        assert!(matches!(fmt_is_tier0(&ctx), Choice::Fact { met: true, .. }));
+    }
+
+    #[test]
     fn the_shipped_pack_declares_53_laws() {
         assert_eq!(pack_law_count(profiles::LAWS_BEND), 53);
     }
