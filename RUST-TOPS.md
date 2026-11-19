@@ -6,7 +6,7 @@ and it adopts the protocol for its own code
 
 | Item | Value |
 | --- | --- |
-| Protocol version | `1.2.0` |
+| Protocol version | `1.3.0` |
 | Spec | [`PROTOCOL.md`](PROTOCOL.md) in this tree |
 | cargo-tops | built from this checkout (`cargo install --path crates/cargo-tops --locked`), package 0.4.0 |
 

@@ -322,7 +322,7 @@ fn layer_rows(parts: &Parts<'_>) -> (Vec<Value>, Vec<String>) {
             disabled.push(layer.id.clone());
             continue;
         }
-        let tier = layer.tier.unwrap_or(0);
+        let tier = crate::tiers::tier_for(layer);
         let mut entry = if tier > parts.opts.max_tier {
             let mut entry = row(&layer.id, tier, "not-evaluated", &[], 0.0, None);
             entry.insert(

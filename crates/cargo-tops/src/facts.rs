@@ -570,9 +570,7 @@ fn class_jobs(ctx: &Ctx) -> Choice {
 /// workflow set, when there is one, runs `cargo fmt --check`.
 fn fmt_is_tier0(ctx: &Ctx) -> Choice {
     let tier0 = ctx.cfg.layers.iter().any(|layer| {
-        layer.id == "static-lint"
-            && layer.enabled
-            && crate::profile_data::tiers::tier_of(&layer.id) == Some(0)
+        layer.id == "static-lint" && layer.enabled && crate::tiers::tier_of(&layer.id) == Some(0)
     });
     let fmt_check =
         yaml_at(&ctx.yaml, &["gates", "lint", "fmt_check"]).and_then(Value::as_bool) != Some(false);
@@ -928,8 +926,7 @@ fn perf_runner(ctx: &Ctx) -> Choice {
         .layers
         .iter()
         .filter(|layer| {
-            layer.enabled
-                && crate::profile_data::tiers::tier_of(&layer.id).is_some_and(|t| t <= ctx.max_tier)
+            layer.enabled && crate::tiers::tier_of(&layer.id).is_some_and(|t| t <= ctx.max_tier)
         })
         .map(|layer| layer.id.as_str())
         .filter(|id| PERF_LAYERS.contains(id))

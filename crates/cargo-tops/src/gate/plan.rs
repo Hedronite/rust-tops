@@ -289,7 +289,7 @@ impl GatePlan<'_> {
 fn in_range(cfg: &TopsConfig, max_tier: u8) -> Vec<&config::Layer> {
     cfg.layers
         .iter()
-        .filter(|l| l.enabled && l.tier.unwrap_or(0) <= max_tier)
+        .filter(|l| l.enabled && crate::tiers::tier_for(l) <= max_tier)
         .collect()
 }
 
@@ -369,7 +369,7 @@ pub(crate) fn build<'a>(
         laws_on: enabled.iter().any(|l| l.id == "laws"),
         // Enabled layers above the range are not judged, so they cannot
         // fail the gate. The run names them.
-        above: ids(cfg, |l| l.enabled && l.tier.unwrap_or(0) > max_tier),
+        above: ids(cfg, |l| l.enabled && crate::tiers::tier_for(l) > max_tier),
         // A layer turned off still shows in the run: it is not run, not omitted.
         disabled: ids(cfg, |l| !l.enabled),
         units: units_of(&enabled, &tests, &report),

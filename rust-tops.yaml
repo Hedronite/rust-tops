@@ -1,10 +1,10 @@
-# Rust-TOPS 1.2.0 instance for this repository (cargo-tops, binary-cli).
+# Rust-TOPS 1.3.0 instance for this repository (cargo-tops, binary-cli).
 # Adopters start from `cargo tops init`, not from this file.
 # Validate against schema/rust-tops.schema.json
 
 protocol:
   id: rust-tops
-  version: "1.2.0"
+  version: "1.3.0"
   spec_uri: "./PROTOCOL.md"
   adopted: "2026-09-25"
 

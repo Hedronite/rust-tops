@@ -217,7 +217,7 @@ fn announce(baseline: Option<&[Score]>) {
     if baseline.is_none() {
         println!(
             "    no baseline: every function is judged as new. After a gate run, \
-             `cargo tops crap-baseline` records one (RUST_TOPS.md §16)"
+             `cargo tops crap-baseline` records one (PROTOCOL.md §16)"
         );
     }
 }

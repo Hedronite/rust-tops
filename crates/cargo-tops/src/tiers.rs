@@ -5,15 +5,18 @@
 //! also compares an instance's floors with its class profile and reports a
 //! required layer that is switched off. It returns problem lines, one per
 //! fault, each naming the file, the key, the class value and the fix.
-//!
-//! `check` in `main.rs` calls [`check`] once the protocol 1.3.0 wiring lands.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
-#![allow(dead_code, reason = "main.rs calls check once the 1.3.0 wiring lands")]
 
 use serde_json::Value;
 
 use crate::exemptions;
 use crate::profile_data::class_profile;
+
+/// The tier a layer runs at: the table's, else the instance's own for an id
+/// the table lacks, else 0.
+pub(crate) fn tier_for(layer: &crate::config::Layer) -> u8 {
+    tier_of(&layer.id).or(layer.tier).unwrap_or(0)
+}
 
 /// Each layer id and its tier: the §3 table. `security-advisory` is tier 0
 /// so a default `--max-tier 1` gate runs the advisory check (VD-P2).

@@ -1,5 +1,5 @@
 //! `cargo tops gate` enforces the coverage floors and the CRAP threshold and
-//! ratchet of `rust-tops.yaml` (RUST_TOPS.md §2, §7.3, §16, §19), and
+//! ratchet of `rust-tops.yaml` (PROTOCOL.md §2, §7.3, §16, §19), and
 //! `cargo tops crap-baseline` records the baseline the ratchet reads.
 //!
 //! Cargo and its plugins are stubs. The cargo stub writes the coverage

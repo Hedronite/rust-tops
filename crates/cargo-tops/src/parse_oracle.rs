@@ -76,7 +76,7 @@ fn load_yaml(label: &str, yaml: &str) -> TopsConfig {
 
 /// Protocol 1.1.0 changed the bundled template in two places: it moved
 /// `protocol.version` and added a `laws` layer, which the drop-in pack turned
-/// off (D3: adopters opt in). Protocol 1.2.0 moved the version again. Check
+/// off (D3: adopters opt in). Protocol 1.2.0 moved the version again, and 1.3.0 once more. Check
 /// both, then undo them so the rest still compares to the `968c390`
 /// serde_yaml oracle.
 fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
@@ -85,7 +85,7 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_86_16 = value["protocol"]["version"].clone();
-    assert_eq!(tops_idx_86_16, "1.2.0");
+    assert_eq!(tops_idx_86_16, "1.3.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
@@ -174,7 +174,7 @@ fn with_template_crap(class: &str, mut value: serde_json::Value) -> serde_json::
 }
 
 /// The drop-in pack fixed the kit's own `rust-tops.yaml` (K5): protocol
-/// 1.1.0 (1.2.0 since the floors pack), `laws` on, `acceptance` off, no `release_profile`, and no
+/// 1.1.0 (1.3.0 since the verdict pack), `laws` on, `acceptance` off, no `release_profile`, and no
 /// `src/generated/**` exemption. Check that, then undo it so the rest still
 /// compares to the `968c390` oracle.
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
@@ -184,7 +184,7 @@ fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_158_16 = value["protocol"]["version"].clone();
-    assert_eq!(tops_idx_158_16, "1.2.0");
+    assert_eq!(tops_idx_158_16, "1.3.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"

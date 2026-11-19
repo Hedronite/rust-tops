@@ -9,7 +9,7 @@ This repository adopts the Rust-TOPS protocol from
 
 | Item | Value |
 | --- | --- |
-| Protocol version | `1.2.0` |
+| Protocol version | `1.3.0` |
 | Spec | <https://github.com/Hedronite/rust-tops/blob/v0.4.0/PROTOCOL.md> |
 | cargo-tops | 0.4.0 (`cargo install cargo-tops --version 0.4.0 --locked`) |
 
