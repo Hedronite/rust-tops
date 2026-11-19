@@ -594,7 +594,7 @@ fn deny_runs(log: &Path) -> Vec<String> {
     fs::read_to_string(log)
         .unwrap_or_default()
         .lines()
-        .filter(|line| line.starts_with("deny "))
+        .filter(|line| line.starts_with("deny ") && !line.ends_with("--version"))
         .map(str::to_string)
         .collect()
 }

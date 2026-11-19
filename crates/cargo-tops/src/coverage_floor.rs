@@ -78,6 +78,15 @@ fn count(file: &Value, kind: &str) -> Count {
     }
 }
 
+/// The crate's line and region percent over `files`; `None` for a total
+/// with nothing to cover.
+pub(crate) fn percents(files: &[FileCoverage]) -> (Option<f64>, Option<f64>) {
+    let total = |pick: fn(&FileCoverage) -> Count| {
+        files.iter().map(pick).fold(Count::default(), Count::plus)
+    };
+    (total(|f| f.lines).percent(), total(|f| f.regions).percent())
+}
+
 /// Every floor `gate` misses on `files`, one line each. `exempt` holds the
 /// live `coverage` exemptions. No production file at all is a miss: the
 /// floors cannot be judged on a report that has none of the crate's files.
