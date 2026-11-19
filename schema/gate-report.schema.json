@@ -2,63 +2,129 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Hedronite/rust-tops/v0.4.0/schema/gate-report.schema.json",
   "title": "Rust-TOPS gate report",
-  "description": "Optional unified report object that CI or an agent may emit after a protocol run.",
+  "description": "The report `cargo tops gate` writes to <target>/rust-tops/report.json on every run: a pass, a failure, a dry run, a missing tool, and a config error once the target is known.",
   "type": "object",
-  "required": ["protocol_version", "crate", "ok", "layers"],
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "crate",
+    "max_tier",
+    "dry_run",
+    "kind",
+    "exit_code",
+    "ok",
+    "problems",
+    "layers",
+    "laws"
+  ],
   "properties": {
-    "protocol_version": { "type": "string" },
-    "crate": { "type": "string" },
-    "git_sha": { "type": "string" },
-    "ok": { "type": "boolean" },
+    "protocol_version": {
+      "description": "The protocol version of the cargo-tops that wrote the report.",
+      "type": "string"
+    },
+    "crate": {
+      "description": "crate.name from rust-tops.yaml; the directory name when the config did not load.",
+      "type": "string"
+    },
+    "class": { "type": "string" },
+    "git_sha": {
+      "description": "HEAD of the target; absent outside a git repository.",
+      "type": "string"
+    },
+    "max_tier": { "type": "integer", "minimum": 0 },
+    "dry_run": { "type": "boolean" },
+    "kind": {
+      "description": "What decided the exit code. Where more than one applies, config-invalid wins over environment, and environment over fail.",
+      "type": "string",
+      "enum": ["pass", "fail", "config-invalid", "environment"]
+    },
+    "exit_code": {
+      "description": "0 pass; 1 the gate ran and failed (a dry run included); 2 the config is invalid; 3 the environment (a required tool or cargo metadata is missing).",
+      "type": "integer",
+      "enum": [0, 1, 2, 3]
+    },
+    "ok": {
+      "description": "True only when exit_code is 0.",
+      "type": "boolean"
+    },
+    "error": {
+      "description": "Why the gate stopped before a verdict (exit codes 2 and 3 with no run).",
+      "type": "string"
+    },
+    "problems": {
+      "description": "Every problem, one line each. Empty exactly when ok.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "count": {
+      "description": "The `count:` line of the run; null when nothing was judged.",
+      "type": ["string", "null"]
+    },
     "layers": {
+      "description": "One row per enabled layer, in rust-tops.yaml order.",
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "ok"],
+        "additionalProperties": false,
+        "required": ["id", "tier", "verdict", "argv", "tool_version", "seconds"],
         "properties": {
           "id": { "type": "string" },
-          "ok": { "type": "boolean" },
+          "tier": { "type": "integer", "minimum": 0 },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "not-run",
+              "vacuous",
+              "tool-missing",
+              "not-evaluated"
+            ]
+          },
+          "argv": {
+            "description": "Each command of the layer, as an argv list, in order.",
+            "type": "array",
+            "items": { "type": "array", "items": { "type": "string" } }
+          },
+          "tool_version": {
+            "description": "The first line the tool's --version printed; null when not asked or not found.",
+            "type": ["string", "null"]
+          },
+          "seconds": { "type": "number", "minimum": 0 },
+          "took_from": {
+            "description": "The layer whose run this layer took, when it has no command of its own.",
+            "type": "string"
+          },
           "detail": { "type": "string" },
-          "metrics": { "type": "object", "additionalProperties": true }
-        }
-      }
-    },
-    "crap": {
-      "type": "object",
-      "properties": {
-        "max": { "type": "number" },
-        "over_threshold": { "type": "integer" },
-        "functions": {
-          "type": "array",
-          "items": {
+          "judged": {
+            "description": "The floors and the measured values the layer was judged on.",
             "type": "object",
-            "properties": {
-              "symbol": { "type": "string" },
-              "file": { "type": "string" },
-              "cc": { "type": "number" },
-              "cov": { "type": "number" },
-              "crap": { "type": "number" }
-            }
+            "additionalProperties": true
           }
         }
       }
     },
-    "mutation": {
-      "type": "object",
-      "properties": {
-        "caught": { "type": "integer" },
-        "survived": { "type": "integer" },
-        "unviable": { "type": "integer" },
-        "kill_rate_pct": { "type": "number" },
-        "survivors": { "type": "array", "items": { "type": "string" } }
-      }
+    "disabled": {
+      "description": "Layers turned off with enabled: false.",
+      "type": "array",
+      "items": { "type": "string" }
     },
-    "coverage": {
-      "type": "object",
-      "properties": {
-        "line_pct": { "type": "number" },
-        "region_pct": { "type": "number" },
-        "branch_pct": { "type": ["number", "null"] }
+    "laws_checked": { "type": "integer", "minimum": 0 },
+    "laws_total": { "type": "integer", "minimum": 0 },
+    "laws": {
+      "description": "The laws as cases.json has them: the same status, verdict and reason code. Empty when bend did not run.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["law", "status"],
+        "properties": {
+          "law": { "type": "string" },
+          "status": { "type": "string", "enum": ["checked", "not-evaluated"] },
+          "verdict": { "type": ["string", "null"] },
+          "reason_code": { "type": ["string", "null"] },
+          "reason": { "type": ["string", "null"] }
+        }
       }
     }
   }

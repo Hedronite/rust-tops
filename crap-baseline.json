@@ -1058,24 +1058,6 @@
       "line": 934
     },
     {
-      "coverage": 98.96373056994818,
-      "crap": 32.00113950967422,
-      "cyclomatic": 32.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "gate",
-      "line": 489,
-      "uncovered": [
-        {
-          "end": 499,
-          "start": 499
-        },
-        {
-          "end": 681,
-          "start": 681
-        }
-      ]
-    },
-    {
       "coverage": 100.0,
       "crap": 1.0,
       "cyclomatic": 1.0,
@@ -1147,14 +1129,6 @@
     },
     {
       "coverage": 100.0,
-      "crap": 11.0,
-      "cyclomatic": 11.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "plan_for",
-      "line": 1104
-    },
-    {
-      "coverage": 100.0,
       "crap": 1.0,
       "cyclomatic": 1.0,
       "file": "./crates/cargo-tops/src/main.rs",
@@ -1208,24 +1182,6 @@
       "file": "./crates/cargo-tops/src/main.rs",
       "function": "run_pinned_crap",
       "line": 986
-    },
-    {
-      "coverage": 65.21739130434783,
-      "crap": 12.408564148927423,
-      "cyclomatic": 9.0,
-      "file": "./crates/cargo-tops/src/main.rs",
-      "function": "run_step",
-      "line": 1063,
-      "uncovered": [
-        {
-          "end": 1079,
-          "start": 1079
-        },
-        {
-          "end": 1093,
-          "start": 1084
-        }
-      ]
     },
     {
       "coverage": 100.0,
@@ -3400,6 +3356,76 @@
       "file": "./xtask/tests/sync.rs",
       "function": "xtask",
       "line": 26
+    },
+    {
+      "coverage": 100.0,
+      "crap": 11.0,
+      "cyclomatic": 11.0,
+      "file": "./crates/cargo-tops/src/gate/plan.rs",
+      "function": "plan_for",
+      "line": 141
+    },
+    {
+      "coverage": 95.65217391304348,
+      "crap": 9.01,
+      "cyclomatic": 9.0,
+      "file": "./crates/cargo-tops/src/gate/execute.rs",
+      "function": "run_step",
+      "line": 405,
+      "uncovered": [
+        {
+          "end": 421,
+          "start": 421
+        }
+      ]
+    },
+    {
+      "coverage": 88.88888888888889,
+      "crap": 9.11,
+      "cyclomatic": 9.0,
+      "file": "./crates/cargo-tops/src/gate/mod.rs",
+      "function": "run",
+      "line": 85,
+      "uncovered": [
+        {
+          "end": 105,
+          "start": 105
+        },
+        {
+          "end": 109,
+          "start": 109
+        }
+      ]
+    },
+    {
+      "coverage": 100.0,
+      "crap": 8.0,
+      "cyclomatic": 8.0,
+      "file": "./crates/cargo-tops/src/gate/execute.rs",
+      "function": "Runner::chain",
+      "line": 196
+    },
+    {
+      "coverage": 100.0,
+      "crap": 7.0,
+      "cyclomatic": 7.0,
+      "file": "./crates/cargo-tops/src/gate/report.rs",
+      "function": "print_summary",
+      "line": 103
+    },
+    {
+      "coverage": 92.85714285714286,
+      "crap": 6.01,
+      "cyclomatic": 6.0,
+      "file": "./crates/cargo-tops/src/gate/plan.rs",
+      "function": "GatePlan::argv_of",
+      "line": 249,
+      "uncovered": [
+        {
+          "end": 251,
+          "start": 251
+        }
+      ]
     }
   ],
   "try_weight": 0.0,
