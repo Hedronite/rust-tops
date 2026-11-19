@@ -118,7 +118,7 @@ to = ["config/drop-in/mutants.toml", ".cargo/mutants.toml"]
 
 [[copy]]
 from = "crates/cargo-tops/templates/drop-in/nextest.toml"
-to = ["config/drop-in/nextest.toml", ".config/nextest.toml"]
+to = ["config/drop-in/nextest.toml"]
 
 [[copy]]
 from = "crates/cargo-tops/templates/drop-in/deny.toml"

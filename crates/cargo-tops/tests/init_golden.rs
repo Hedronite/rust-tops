@@ -15,7 +15,7 @@
 //! crate is a 2021-edition package with `rust-version = "1.95"` that forbids
 //! unsafe code.
 //!
-//! `RUST_TOPS_RECORD_GOLDEN` rewrites these files for a local re-record.
+//! `RUST_TOPS_BLESS` rewrites these files for a local re-record.
 //! CI does not set it.
 #![expect(clippy::panic, reason = "this crate already violates the strict table")]
 use std::fs;
@@ -63,7 +63,7 @@ fn golden_root() -> PathBuf {
 }
 
 fn recording() -> bool {
-    std::env::var_os("RUST_TOPS_RECORD_GOLDEN").is_some()
+    std::env::var_os("RUST_TOPS_BLESS").is_some()
 }
 
 /// A package at `dir` with `manifest` as its `Cargo.toml`.

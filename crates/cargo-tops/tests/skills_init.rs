@@ -300,7 +300,7 @@ fn frontmatter(md: &str) -> serde_json::Value {
 }
 
 fn nu_bin() -> Option<PathBuf> {
-    let found = Command::new("sh")
+    Command::new("sh")
         .args(["-c", "command -v nu"])
         .output()
         .ok()
@@ -308,12 +308,7 @@ fn nu_bin() -> Option<PathBuf> {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    if let Some(path) = found {
-        return Some(path);
-    }
-    let local = PathBuf::from("/tmp/nu/nu");
-    local.is_file().then_some(local)
+        .map(PathBuf::from)
 }
 
 fn parse_json(stdout: &[u8]) -> serde_json::Value {
