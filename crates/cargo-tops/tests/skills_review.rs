@@ -17,7 +17,7 @@ fn templates() -> PathBuf {
 }
 
 fn nu_bin() -> Option<PathBuf> {
-    let found = Command::new("sh")
+    Command::new("sh")
         .args(["-c", "command -v nu"])
         .output()
         .ok()
@@ -25,12 +25,7 @@ fn nu_bin() -> Option<PathBuf> {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    if found.is_some() {
-        return found;
-    }
-    let local = PathBuf::from("/tmp/nu/nu");
-    local.is_file().then_some(local)
+        .map(PathBuf::from)
 }
 
 /// The nu binary, or `None` to skip. `RUST_TOPS_REQUIRE_NU` makes a missing one fail.
@@ -476,4 +471,56 @@ fn answers_rejects_a_finding_with_an_empty_note_and_a_bad_status() {
     assert_eq!(problems(&empty).len(), ids.len(), "{empty}");
     let bad = answered(&nu, "answers-status", &entries(&ids, "maybe", ""));
     assert_eq!(ok(&bad), Some(false), "{bad}");
+}
+
+/// `answers <file>` from `root`, as JSON; the scratch target sits in `root`.
+fn answers_from(nu: &Path, script: &Path, root: &Path, file: &str) -> Json {
+    json(&run(
+        nu,
+        script,
+        root,
+        &["answers", file],
+        &root.join("target"),
+    ))
+}
+
+#[test]
+fn answers_prints_a_relative_path_for_a_relative_or_absolute_file() {
+    let Some(nu) = nu_or_skip() else { return };
+    let root = temp("answers-rel");
+    let script = skills_tree(&root);
+    let body = format!("[answers]\n{}", entries(&review_judgment_ids(), "ok", ""));
+    fs::create_dir_all(root.join("sub")).expect("sub");
+    fs::write(root.join("sub/answers.toml"), body).expect("answers");
+    let want = Some("nu rust-tops-review.nu answers sub/answers.toml");
+    let relative = answers_from(&nu, &script, &root, "sub/answers.toml");
+    assert_eq!(at(&relative, &["command"]).as_str(), want);
+    assert_eq!(ok(&relative), Some(true), "{relative}");
+    let abs = root.join("sub/answers.toml");
+    let given = answers_from(&nu, &script, &root, abs.to_str().expect("utf8"));
+    assert_eq!(at(&given, &["command"]).as_str(), want);
+}
+
+#[test]
+fn answers_reads_the_lock_beside_the_file_not_the_working_directory() {
+    let Some(nu) = nu_or_skip() else { return };
+    let root = temp("answers-lock");
+    let script = skills_tree(&root);
+    let body = format!("[answers]\n{}", entries(&review_judgment_ids(), "ok", ""));
+    fs::create_dir_all(root.join("sub")).expect("sub");
+    fs::write(root.join("sub/answers.toml"), body).expect("answers");
+    fs::write(
+        root.join("rust-tops.lock"),
+        "[tools]\nnushell = \"0.108.0\"\n",
+    )
+    .expect("cwd lock");
+    fs::write(
+        root.join("sub/rust-tops.lock"),
+        "[tools]\nnushell = \"0.1.0\"\n",
+    )
+    .expect("file lock");
+    let refused = answers_from(&nu, &script, &root, "sub/answers.toml");
+    assert_eq!(ok(&refused), Some(false), "{refused}");
+    let error = at(&refused, &["error"]).as_str().unwrap_or("");
+    assert!(error.starts_with("nu 0.1.0 required"), "{error}");
 }

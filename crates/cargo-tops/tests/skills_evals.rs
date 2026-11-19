@@ -739,8 +739,7 @@ fn port_script() -> PathBuf {
 struct PortCase {
     case: &'static str,
     lang: &'static str,
-    /// Directory the files are copied into. The C patterns read only a
-    /// directory named `tests`, so the C case goes there.
+    /// Directory the files are copied into.
     dir: &'static str,
     golden: &'static str,
 }
@@ -748,7 +747,7 @@ struct PortCase {
 const PORT_C_CASE: PortCase = PortCase {
     case: PORT_C,
     lang: "c",
-    dir: "tests",
+    dir: "c",
     golden: "golden/port-inventory-c.json",
 };
 const PORT_PY_CASE: PortCase = PortCase {

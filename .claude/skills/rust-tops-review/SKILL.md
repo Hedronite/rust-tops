@@ -34,6 +34,6 @@ MIT. The style rules are distilled from BeautifulRust v1.5.0 (40db61c6), rewritt
 
 By default the range is `base...HEAD` plus the working tree: tracked edits and untracked files. `--committed-only` omits the working tree.
 
-Each command prints JSON. `ok` is false when a command fails or, for `style` and `answers`, finds a problem. `style` needs a build. A wrong Nushell minor is `ok: false` with `nu <lock> required, found <version>`.
+Each command prints JSON. `command` is the exact argv of each external command run, in order, joined by ` && `, with paths relative to `--path`; a command that runs none gives the script's own invocation. `ok` is false when a command fails or, for `style` and `answers`, finds a problem. `style` needs a build. A wrong Nushell minor is `ok: false` with `nu <lock> required, found <version>`.
 
 If `nu` is not on PATH, there is no JSON. Treat `nu: command not found` as `{"ok":false,"command":"nu rust-tops-review.nu","error":"nu: command not found"}`.

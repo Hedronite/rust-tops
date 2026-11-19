@@ -21,7 +21,7 @@ fn skill_dir() -> PathBuf {
 }
 
 fn nu_bin() -> Option<PathBuf> {
-    let found = Command::new("sh")
+    Command::new("sh")
         .args(["-c", "command -v nu"])
         .output()
         .ok()
@@ -29,12 +29,7 @@ fn nu_bin() -> Option<PathBuf> {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    if found.is_some() {
-        return found;
-    }
-    let local = PathBuf::from("/tmp/nu/nu");
-    local.is_file().then_some(local)
+        .map(PathBuf::from)
 }
 
 fn require_nu() -> Option<PathBuf> {
@@ -219,6 +214,49 @@ fn inventory_lists_the_c_fixture_tests() {
     );
     assert!(ok(&go));
     assert!(ids(&go).is_empty(), "{go}");
+}
+
+#[test]
+fn inventory_finds_root_level_c_and_cpp_test_files_at_any_depth() {
+    let Some(nu) = require_nu() else { return };
+    let rig = Rig::new(nu, "croot");
+    let tree = rig.root.join("croot");
+    for (name, body) in [
+        ("test_foo.c", "void test_root(void) {}\n"),
+        ("tests/bar.c", "TEST(suite, in_tests) {}\n"),
+        ("src/deep/x_test.c", "int test_deep(void) { return 0; }\n"),
+        ("src/y_test.cpp", "void test_cpp_suffix() {}\n"),
+        ("test_z.cpp", "TEST_F(Fix, prefixed) {}\n"),
+        ("lib.c", "void test_hidden(void) {}\n"),
+        ("contest.c", "void test_hidden2(void) {}\n"),
+    ] {
+        let path = tree.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    }
+    let (c, _) = rig.run(&rig.root, &["inventory", "--from", "croot", "--lang", "c"]);
+    assert_eq!(
+        ids(&c),
+        [
+            "src/deep/x_test.c::test_deep",
+            "test_foo.c::test_root",
+            "tests/bar.c::suite.in_tests"
+        ]
+    );
+    let (cpp, _) = rig.run(
+        &rig.root,
+        &["inventory", "--from", "croot", "--lang", "cpp"],
+    );
+    assert_eq!(
+        ids(&cpp),
+        [
+            "src/deep/x_test.c::test_deep",
+            "src/y_test.cpp::test_cpp_suffix",
+            "test_foo.c::test_root",
+            "test_z.cpp::Fix.prefixed",
+            "tests/bar.c::suite.in_tests"
+        ]
+    );
 }
 
 #[test]

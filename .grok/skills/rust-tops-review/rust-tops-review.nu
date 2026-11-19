@@ -27,7 +27,9 @@ def argv-line [args: list<string>] {
 }
 
 def git-run [args: list<string>] {
-  let command = (argv-line (["git"] ++ $args))
+  # The command shown holds paths relative to --path, so `-C <path>` reads `-C .`.
+  let shown = if ($args | first) == "-C" { ["-C" "."] ++ ($args | skip 2) } else { $args }
+  let command = (argv-line (["git"] ++ $shown))
   if not (have git) {
     return {ok: false, command: $command, error: "git: command not found", exit: 127}
   }
@@ -231,8 +233,9 @@ def "main style" [--base: string = "origin/main", --path: string = ".", --commit
 
 # `<file>` is TOML: [answers] "<ID>" = { status = "ok" | "finding" | "n/a", note = "..." }
 def "main answers" [file: string] {
-  let own = $"nu rust-tops-review.nu answers ($file)"
-  let wrong = (nu-mismatch ".")
+  let shown = (try { $file | path expand | path relative-to (pwd) } catch { $file })
+  let own = $"nu rust-tops-review.nu answers ($shown)"
+  let wrong = (nu-mismatch ($file | path expand | path dirname))
   if $wrong != null { return (fail "nu --version" $wrong) }
   let rules = (catalog)
   if $rules == null { return (fail "open rules.toml" "rules.toml is missing or not a rule catalog") }

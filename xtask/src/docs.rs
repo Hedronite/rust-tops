@@ -7,6 +7,10 @@
 //! - the `Package` row against the workspace version in `Cargo.toml`;
 //! - each `name version` in the `Tool lock` row against `[tools]` in
 //!   `rust-tops.lock`;
+//! - the Nushell version the README prose, its install line and release link
+//!   name, and the version the `init --skills` note in `main.rs` names,
+//!   against `[tools] nushell` in `rust-tops.lock`, which the `Tool lock`
+//!   row must also list;
 //! - the count in the `Class floors` row (`Eight profile files`) against the
 //!   number of `profiles/*.yaml`.
 //!
@@ -80,6 +84,7 @@ fn check(root: &Path) -> Result<Vec<String>> {
     let mut problems = Vec::new();
     problems.extend(check_package(root, &readme)?);
     problems.extend(check_tools(root, &readme)?);
+    problems.extend(check_nushell(root, &readme)?);
     problems.extend(check_profiles(root, &readme)?);
     Ok(problems)
 }
@@ -117,6 +122,60 @@ fn check_tools(root: &Path, readme: &str) -> Result<Vec<String>> {
             None => problems.push(format!(
                 "README Tool lock names {name}, which rust-tops.lock does not pin"
             )),
+        }
+    }
+    Ok(problems)
+}
+
+/// The version after `prefix` in `text`: digits and dots, no trailing dot.
+fn version_after(text: &str, prefix: &str) -> Option<String> {
+    let start = text.find(prefix)? + prefix.len();
+    let version: String = text[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect();
+    Some(version.trim_end_matches('.').to_owned())
+}
+
+/// Nushell is stated in four places besides the lock; each must match it.
+fn check_nushell(root: &Path, readme: &str) -> Result<Vec<String>> {
+    let lock = read_toml(root, "rust-tops.lock")?;
+    let locked = lock
+        .get("tools")
+        .and_then(|tools| tools.get("nushell"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| anyhow!("rust-tops.lock pins no [tools] nushell"))?;
+    let main_path = root.join("crates/cargo-tops/src/main.rs");
+    let main_rs =
+        fs::read_to_string(&main_path).with_context(|| format!("read {}", main_path.display()))?;
+    let mut problems = Vec::new();
+    if !cell(readme, "| Tool lock |", 1)?
+        .split(',')
+        .any(|item| item.trim().starts_with("nushell "))
+    {
+        problems.push("README Tool lock row does not list nushell".to_owned());
+    }
+    let places = [
+        ("README prose", readme, "\nNushell "),
+        (
+            "README install line",
+            readme,
+            "cargo install nu --locked --version ",
+        ),
+        (
+            "README release link",
+            readme,
+            "nushell/nushell/releases/tag/",
+        ),
+        ("init --skills note", main_rs.as_str(), "Nushell (nu) "),
+    ];
+    for (place, text, prefix) in places {
+        match version_after(text, prefix) {
+            Some(stated) if stated == locked => {}
+            Some(stated) => problems.push(format!(
+                "{place} says nushell {stated}, rust-tops.lock says {locked}"
+            )),
+            None => problems.push(format!("{place} does not state the nushell version")),
         }
     }
     Ok(problems)
