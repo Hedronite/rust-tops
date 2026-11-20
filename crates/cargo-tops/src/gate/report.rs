@@ -410,19 +410,11 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
         done.seconds(id),
         version.as_deref(),
     );
-    let unmapped = plan
-        .units
-        .iter()
-        .any(|unit| unit.layer.id == id && matches!(unit.what, What::NotRun));
-    if unmapped {
-        entry.insert("detail".into(), json!("enabled and no command is mapped"));
-    }
     if let Some(numbers) = numbers {
         entry.insert("judged".into(), numbers);
     }
-    // A layer stopped on a note (the credit evidence of `property`) says why.
-    if let Some(note) = run_note(done, id) {
-        entry.insert("detail".into(), json!(note));
+    if let Some(detail) = layer_detail(plan, done, id) {
+        entry.insert("detail".into(), json!(detail));
     }
     if id == "mutation" {
         name_the_base(plan, done, &mut entry);
@@ -459,6 +451,19 @@ fn name_the_base(plan: &GatePlan<'_>, done: &Executed<'_>, entry: &mut Map<Strin
     if let Some(detail) = ran.or(planned) {
         entry.insert("detail".into(), json!(detail));
     }
+}
+
+/// Why a layer has no plain pass or fail: no command is mapped for it, or
+/// its run kept a note (the credit evidence of `property` and `acceptance`).
+fn layer_detail(plan: &GatePlan<'_>, done: &Executed<'_>, id: &str) -> Option<String> {
+    let unmapped = plan
+        .units
+        .iter()
+        .any(|unit| unit.layer.id == id && matches!(unit.what, What::NotRun));
+    if unmapped {
+        return Some("enabled and no command is mapped".to_string());
+    }
+    run_note(done, id)
 }
 
 /// The note `layer`'s run kept: why it stopped, in the words the report and
