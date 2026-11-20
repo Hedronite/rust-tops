@@ -9,7 +9,7 @@ LINT='{"id":"static-lint","tier":0,"verdict":"pass","argv":[["cargo","fmt","--al
 write_report() {
   mkdir -p "$target/rust-tops"
   case "$1" in 0) kind=pass;; 1) kind=fail;; 2) kind=config-invalid;; *) kind=environment;; esac
-  printf '{"protocol_version":"1.3.0","crate":"stub","max_tier":1,"dry_run":false,"kind":"%s","exit_code":%s,"ok":%s,"problems":[],"layers":[%s],"laws":[%s]}\n' "$kind" "$1" "$2" "$3" "$4" > "$report"
+  printf '{"protocol_version":"1.4.0","crate":"stub","max_tier":1,"dry_run":false,"kind":"%s","exit_code":%s,"ok":%s,"problems":[],"layers":[%s],"laws":[%s]}\n' "$kind" "$1" "$2" "$3" "$4" > "$report"
 }
 case "$mode" in
   pass)

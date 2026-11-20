@@ -171,7 +171,7 @@ enum Commands {
 }
 
 /// The protocol version this build implements.
-const PROTOCOL_VERSION: &str = "1.3.0";
+const PROTOCOL_VERSION: &str = "1.4.0";
 
 /// What `cargo tops version` prints: package, protocol, then the `[tools]`
 /// pins of the lock text, or one line saying why there are none.
@@ -1034,13 +1034,13 @@ mod tests {
         let pkg = env!("CARGO_PKG_VERSION");
         assert_eq!(
             version_text(None),
-            format!("cargo-tops {pkg}\nprotocol 1.3.0\ntool pins: none (no ./rust-tops.lock)\n")
+            format!("cargo-tops {pkg}\nprotocol 1.4.0\ntool pins: none (no ./rust-tops.lock)\n")
         );
         let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
         assert_eq!(
             version_text(Some(lock)),
             format!(
-                "cargo-tops {pkg}\nprotocol 1.3.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+                "cargo-tops {pkg}\nprotocol 1.4.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
             )
         );
         assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));

@@ -1,10 +1,10 @@
-# Agent standing orders (Rust-TOPS 1.3.0)
+# Agent standing orders (Rust-TOPS 1.4.0)
 
 Goal: correct, dense, fast Rust.
 Production: fewest necessary lines that preserve named invariants and measured performance.
 Tests: as many as the contract needs. Never write tests by reading the implementation.
 
-Protocol 1.3.0. The text is [`PROTOCOL.md`](PROTOCOL.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
+Protocol 1.4.0. The text is [`PROTOCOL.md`](PROTOCOL.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
 The `laws` layer is optional. A 1.0.0 instance with no `laws` layer still validates, and `gate` does not call Bend.
 
 ## Do this

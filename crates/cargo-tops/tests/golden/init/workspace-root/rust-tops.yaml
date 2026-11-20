@@ -234,4 +234,4 @@ protocol:
   adopted: "2026-09-24"
   id: "rust-tops"
   spec_uri: "./PROTOCOL.md"
-  version: "1.3.0"
+  version: "1.4.0"

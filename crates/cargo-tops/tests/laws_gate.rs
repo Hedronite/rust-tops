@@ -866,7 +866,7 @@ fn init_writes_the_laws_layer_off_the_bend_kit_only_with_laws_and_the_toolchain_
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_798_16 = doc["protocol"]["version"].clone();
-    assert_eq!(tops_idx_798_16, "1.3.0");
+    assert_eq!(tops_idx_798_16, "1.4.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
