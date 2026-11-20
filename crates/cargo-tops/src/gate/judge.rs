@@ -272,23 +272,23 @@ fn finish(
         laws_seconds: laws.seconds,
         bend_ran: laws.ran,
         laws_failed: laws.failed,
-        environment: done
-            .runs
-            .iter()
-            .any(|run| run.outcome == Outcome::ToolMissing),
+        environment: done.runs.iter().any(|run| run.outcome.lacks_tool()),
         law_total,
         survivors,
     }
 }
 
 /// The verdict of a layer's runs: a failure outranks a missing tool, which
-/// outranks a vacuous run.
+/// outranks a tool at another version than its pin, which outranks a vacuous
+/// run.
 fn runs_verdict(runs: &[&Run]) -> &'static str {
     let any = |outcome: Outcome| runs.iter().any(|run| run.outcome == outcome);
     if any(Outcome::Failed) {
         "fail"
     } else if any(Outcome::ToolMissing) {
         "tool-missing"
+    } else if any(Outcome::ToolMismatch) {
+        "tool-mismatch"
     } else if any(Outcome::Vacuous) {
         "vacuous"
     } else {
@@ -408,7 +408,7 @@ fn judge_laws(
 /// judged the laws layer. A layer that took another layer's run ran none.
 pub(crate) fn ran_commands(runs: &[Run], bend_ran: bool, shared: &[(&str, &str)]) -> usize {
     runs.iter()
-        .filter(|run| run.outcome != Outcome::ToolMissing && run.ran())
+        .filter(|run| !run.outcome.lacks_tool() && run.ran())
         .filter(|run| !shared.iter().any(|(layer, _)| *layer == run.layer))
         .count()
         + usize::from(bend_ran)
@@ -437,7 +437,7 @@ pub(crate) fn command_count(
             "laws" => !bend_ran,
             _ => !runs
                 .iter()
-                .any(|run| run.layer == *id && run.outcome != Outcome::ToolMissing && run.ran()),
+                .any(|run| run.layer == *id && !run.outcome.lacks_tool() && run.ran()),
         })
         .collect();
     let mut line = format!(
@@ -496,6 +496,13 @@ pub(crate) fn run_failure(run: &Run) -> Option<String> {
             };
             Some(format!("{}: {missing}", run.layer))
         }
+        Outcome::ToolMismatch => Some(format!(
+            "{}: {}",
+            run.layer,
+            run.note
+                .as_deref()
+                .unwrap_or("a tool is not its pinned version")
+        )),
     }
 }
 

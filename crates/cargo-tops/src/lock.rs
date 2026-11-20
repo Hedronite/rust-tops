@@ -10,7 +10,8 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::process::Command;
+use std::path::Path;
+use std::process::{Command, ExitCode};
 
 use anyhow::{Context, Result};
 
@@ -161,8 +162,10 @@ pub(crate) enum Verdict {
     Mismatch {
         found: String,
     },
-    /// The tool could not be run, or exited non-zero.
-    Missing,
+    /// The tool could not be run, or exited non-zero; `asked` is the command.
+    Missing {
+        asked: String,
+    },
     /// Nothing to ask: a library or name row, or a tool with no pin.
     Skipped {
         why: &'static str,
@@ -189,7 +192,7 @@ impl Line {
             Verdict::Mismatch { found } => {
                 format!("mismatch {key}: pin {pin}, found {found}")
             }
-            Verdict::Missing => format!("missing  {key}: pin {pin}, not found"),
+            Verdict::Missing { .. } => format!("missing  {key}: pin {pin}, not found"),
             Verdict::Skipped { why } => format!("skipped  {key}: {why}"),
         }
     }
@@ -210,14 +213,38 @@ pub(crate) fn read_pins(text: &str) -> Result<BTreeMap<String, String>> {
         .unwrap_or_default())
 }
 
-/// What `argv` printed on stdout, or `None` when it could not run or failed.
-pub(crate) fn system_probe(argv: &[&str]) -> Option<String> {
-    let (program, args) = argv.split_first()?;
-    let output = Command::new(program).args(args).output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+/// A probe that runs each argv in `dir` and returns its stdout, or `None`
+/// when it could not run or failed.
+pub(crate) fn probe_in(dir: &Path) -> impl FnMut(&[&str]) -> Option<String> + '_ {
+    move |argv| {
+        let (program, args) = argv.split_first()?;
+        let output = Command::new(program)
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+/// The row for a lock key.
+pub(crate) fn row(key: &str) -> Option<&'static Row> {
+    ROWS.iter().find(|row| row.key == key)
+}
+
+/// The pinned tools the given layers need, each with its pin, in table order.
+/// A tool with no pin in the lock is left out: nothing to check.
+pub(crate) fn pins_for<'a>(
+    layers: impl IntoIterator<Item = &'a str>,
+    pins: &BTreeMap<String, String>,
+) -> Vec<(&'static Row, String)> {
+    tools_for(layers)
+        .into_iter()
+        .filter_map(|key| Some((row(key)?, pins.get(key)?.clone())))
+        .collect()
 }
 
 /// Asks one pinned tool. `probe` runs an argv and returns its stdout.
@@ -227,8 +254,16 @@ pub(crate) fn check_row(
     probe: &mut dyn FnMut(&[&str]) -> Option<String>,
 ) -> Line {
     let verdict = match probe(row.argv) {
-        None => Verdict::Missing,
-        Some(_) if row.present.iter().any(|argv| probe(argv).is_none()) => Verdict::Missing,
+        None => Verdict::Missing {
+            asked: row.argv.join(" "),
+        },
+        Some(_) if row.present.iter().any(|argv| probe(argv).is_none()) => Verdict::Missing {
+            asked: row
+                .present
+                .iter()
+                .find(|argv| probe(argv).is_none())
+                .map_or_else(String::new, |argv| argv.join(" ")),
+        },
         Some(out) => match parse_version(row, &out) {
             Some(found) if pin_matches(pin, &found) => Verdict::Ok { found },
             Some(found) => Verdict::Mismatch { found },
@@ -335,6 +370,78 @@ fn replace_value(line: &str, found: &BTreeMap<String, String>) -> String {
     format!("{key}={}{new}{}", &rest[..=open], &rest[close..])
 }
 
+/// What `cargo tops lock` was asked to do.
+pub(crate) enum Action {
+    /// Check the pins; with a tier, only the tools the enabled layers at or
+    /// below it need.
+    Verify { max_tier: Option<u8> },
+    /// Write the versions the tools print into `[tools]`.
+    Write,
+}
+
+/// `cargo tops lock`. An unreadable lock, or a config that will not load for
+/// `--max-tier`, is an error (exit 2); a missing or mismatched tool is exit 3.
+pub(crate) fn command(dir: &Path, action: &Action) -> anyhow::Result<ExitCode> {
+    let path = dir.join(crate::TOOL_LOCK);
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let pins = read_pins(&text).with_context(|| format!("read {}", path.display()))?;
+    match action {
+        Action::Verify { max_tier } => verify_command(dir, &pins, *max_tier),
+        Action::Write => write_command(dir, &path, &text, &pins),
+    }
+}
+
+/// The tools the enabled layers at or below `tier` need, from the config.
+fn tools_in_range(dir: &Path, tier: u8) -> anyhow::Result<Vec<&'static str>> {
+    let cfg = crate::load_config(dir)?;
+    Ok(tools_for(
+        cfg.layers
+            .iter()
+            .filter(|layer| layer.enabled && crate::tiers::tier_for(layer) <= tier)
+            .map(|layer| layer.id.as_str()),
+    ))
+}
+
+fn verify_command(
+    dir: &Path,
+    pins: &BTreeMap<String, String>,
+    max_tier: Option<u8>,
+) -> anyhow::Result<ExitCode> {
+    let needed = max_tier.map(|tier| tools_in_range(dir, tier)).transpose()?;
+    let lines = verify(pins, needed.as_deref(), &mut probe_in(dir));
+    for line in &lines {
+        println!("{}", line.text());
+    }
+    Ok(if lines.iter().all(Line::passes) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(3)
+    })
+}
+
+fn write_command(
+    dir: &Path,
+    path: &Path,
+    text: &str,
+    pins: &BTreeMap<String, String>,
+) -> anyhow::Result<ExitCode> {
+    let found = found_versions(pins, &mut probe_in(dir));
+    for (key, pin) in pins {
+        match found.get(key) {
+            Some(now) if now == pin => println!("kept     {key} {pin}"),
+            Some(now) => println!("wrote    {key}: {pin} -> {now}"),
+            None if row(key).is_some() => println!("kept     {key} {pin}: not found"),
+            None => println!("skipped  {key}: a library or name, not a tool on PATH"),
+        }
+    }
+    let written = write_values(text, &found);
+    if written != text {
+        std::fs::write(path, written).with_context(|| format!("write {}", path.display()))?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn each_row_reads_the_line_a_real_tool_printed_on_tower() {
+    fn each_row_reads_the_line_a_real_tool_printed() {
         for (key, file, want) in [
             ("rustc", "rustc", "1.99.1"),
             ("cargo-nextest", "cargo-nextest", "0.9.145"),

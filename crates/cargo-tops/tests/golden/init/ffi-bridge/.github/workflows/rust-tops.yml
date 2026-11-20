@@ -221,6 +221,8 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
           fallback: none
+      # The installed tools are the pinned ones, at the tiers the gate runs.
+      - run: cargo tops lock --verify --max-tier 1
       - run: cargo tops gate --max-tier 1 --base "origin/${{ github.base_ref || github.event.repository.default_branch }}"
 
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default

@@ -31,6 +31,7 @@ mod floors;
 mod gate;
 mod init_meta;
 mod laws;
+mod lock;
 mod mutation;
 mod profile_data;
 mod profiles;
@@ -81,6 +82,34 @@ struct InitArgs {
     laws: bool,
 }
 
+#[derive(clap::Args)]
+struct LockArgs {
+    /// Ask each pinned tool for its version and compare it with the pin
+    #[arg(long, conflicts_with = "write", required_unless_present = "write")]
+    verify: bool,
+    /// Write the versions the tools print into the [tools] values, keeping comments and order
+    #[arg(long)]
+    write: bool,
+    /// With --verify: only the tools the enabled layers at or below this tier need
+    #[arg(long, requires = "verify")]
+    max_tier: Option<u8>,
+    #[arg(long, default_value = ".")]
+    path: PathBuf,
+}
+
+impl LockArgs {
+    /// `--verify` (with its tier) or, without it, `--write`.
+    fn action(&self) -> lock::Action {
+        if self.verify {
+            lock::Action::Verify {
+                max_tier: self.max_tier,
+            }
+        } else {
+            lock::Action::Write
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Write rust-tops.yaml, rust-tops.lock, AGENTS.md, RUST-TOPS.md and the drop-in tool configs, read from the crate's Cargo.toml
@@ -95,10 +124,11 @@ enum Commands {
 Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
 2  the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable \
 or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable \
-when a layer in range needs a pin (crap today); a command-line usage error is 2 too and \
-writes no report. An expired exemption is not 2: it is 1\n  \
-3  the environment: a required tool or cargo metadata is missing, or report.json \
-cannot be written\n\
+when a layer in range needs a pinned tool (every pinned tool a running layer needs reads \
+the lock); a command-line usage error is 2 too and writes no report. An expired \
+exemption is not 2: it is 1\n  \
+3  the environment: a required tool or cargo metadata is missing, a pinned tool prints \
+another version than its pin in rust-tops.lock, or report.json cannot be written\n\
 Where more than one applies, 2 wins over 3, and 3 over 1.")]
     Gate {
         #[arg(long, default_value = ".")]
@@ -115,6 +145,13 @@ Where more than one applies, 2 wins over 3, and 3 over 1.")]
         #[arg(long, value_name = "REF")]
         base: Option<String>,
     },
+    /// Check or rewrite the tool pins in rust-tops.lock against the tools on PATH
+    #[command(
+        after_help = "Exit codes:\n  0  every pin matches (verify) or the lock is written\n  \
+2  rust-tops.lock is unreadable, or the config does not load for --max-tier, or a usage error\n  \
+3  a pinned tool is missing or prints another version than its pin"
+    )]
+    Lock(LockArgs),
     /// Record the last gate's CRAP report as the baseline the crap ratchet reads
     CrapBaseline {
         #[arg(long, default_value = ".")]
@@ -200,6 +237,7 @@ fn run() -> Result<ExitCode> {
             },
             base.as_deref(),
         )),
+        Commands::Lock(args) => lock::command(&args.path, &args.action()),
         Commands::CrapBaseline { path } => {
             let cfg = load_config(&path)?;
             floors::record_baseline(&path, &cfg)?;

@@ -8,11 +8,12 @@ use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result};
 
-use super::plan::{GatePlan, Unit, What, CRAP_VERSION};
+use super::plan::{GatePlan, Unit, What};
 use super::{Fault, Mode};
 use crate::config::Layer;
 use crate::evidence;
 use crate::facts::{Outcome, Run};
+use crate::lock::{self, Line, Verdict};
 use crate::mutation::{self, Outcomes};
 use crate::steps::{self, Base, Kind, MutationPlan, Step};
 use crate::{laws, TOOL_LOCK};
@@ -88,7 +89,21 @@ fn version_of(
     cache: &mut HashMap<String, Option<String>>,
 ) -> Option<String> {
     let (program, rest) = argv.split_first()?;
-    let asks = version_ask(program, rest.first().map(String::as_str));
+    ask_cached(
+        dir,
+        &version_ask(program, rest.first().map(String::as_str)),
+        cache,
+    )
+}
+
+/// The first line `asks` prints, or `None` when it cannot run or fails. Each
+/// distinct argv is run once per gate, so a pinned tool the gate checked and
+/// the version the report names come from the same answer.
+fn ask_cached(
+    dir: &Path,
+    asks: &[&str],
+    cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
     cache
         .entry(asks.join(" "))
         .or_insert_with(|| {
@@ -144,6 +159,7 @@ pub(crate) fn run<'a>(dir: &Path, plan: &GatePlan<'a>, mode: Mode) -> Result<Exe
             found: None,
         },
         versions: HashMap::new(),
+        asked: HashMap::new(),
     };
     for unit in &plan.units {
         runner.unit(unit)?;
@@ -164,6 +180,8 @@ struct Runner<'p, 'a> {
     live: bool,
     done: Executed<'a>,
     versions: HashMap<String, Option<String>>,
+    /// What each pinned tool answered, asked once per gate.
+    asked: HashMap<&'static str, Line>,
 }
 
 impl<'a> Runner<'_, 'a> {
@@ -172,14 +190,77 @@ impl<'a> Runner<'_, 'a> {
         match &unit.what {
             What::Shared(from) => self.shared(layer, from),
             What::NotRun => self.not_run(layer),
-            What::Mutation(mutation) => self.mutation(layer, mutation)?,
+            What::Mutation(mutation) => {
+                if !self.pinned_tools_stop(layer) {
+                    self.mutation(layer, mutation)?;
+                }
+            }
             What::Chains(chains) => {
-                for chain in chains {
-                    self.chain(layer, chain)?;
+                if !self.pinned_tools_stop(layer) {
+                    for chain in chains {
+                        self.chain(layer, chain)?;
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Asks each pinned tool `layer` needs for its version, before any of the
+    /// layer's commands ([`Runner::ask_pins`]). `true` when the layer stopped
+    /// on one. A dry run only names the pins.
+    fn pinned_tools_stop(&mut self, layer: &Layer) -> bool {
+        let pins = self.plan.pins_of(&layer.id);
+        if pins.is_empty() {
+            return false;
+        }
+        let named: Vec<String> = pins
+            .iter()
+            .map(|(row, pin)| format!("{} {pin}", row.key))
+            .collect();
+        println!(
+            "\n==> [{}] {TOOL_LOCK} pins, asked first: {}",
+            layer.id,
+            named.join(", ")
+        );
+        if !self.live {
+            return false;
+        }
+        let clock = Clock::start();
+        let Some(run) = self.ask_pins(layer) else {
+            return false;
+        };
+        self.done.record(run, &clock, None);
+        true
+    }
+
+    /// The run that stands for `layer` when a pinned tool it needs is at
+    /// another version ([`Outcome::ToolMismatch`], the note naming tool, pin
+    /// and found) or will not run ([`Outcome::ToolMissing`]); `None` when
+    /// every tool answers with its pin. Each tool is asked once per gate.
+    fn ask_pins(&mut self, layer: &Layer) -> Option<Run> {
+        let dir = self.dir;
+        let mut mismatched = Vec::new();
+        let mut missing: Option<String> = None;
+        for (row, pin) in self.plan.pins_of(&layer.id) {
+            let line = self.asked.entry(row.key).or_insert_with(|| {
+                lock::check_row(row, pin, &mut |argv| {
+                    ask_cached(dir, argv, &mut self.versions)
+                })
+            });
+            match &line.verdict {
+                Verdict::Mismatch { .. } => mismatched.push((row.argv.join(" "), line.text())),
+                Verdict::Missing { asked } => {
+                    missing.get_or_insert_with(|| asked.clone());
+                }
+                Verdict::Ok { .. } | Verdict::Skipped { .. } => {}
+            }
+        }
+        if let Some((argv, _)) = mismatched.first() {
+            let notes: Vec<&str> = mismatched.iter().map(|(_, text)| text.as_str()).collect();
+            return Some(mismatch_run(&layer.id, argv, notes.join("; ")));
+        }
+        missing.map(|asked| missing_run(&layer.id, asked))
     }
 
     fn shared(&mut self, layer: &'a Layer, from: &'static str) {
@@ -227,38 +308,27 @@ impl<'a> Runner<'_, 'a> {
     }
 
     fn chain(&mut self, layer: &Layer, chain: &[Step]) -> Result<(), Fault> {
-        let pin = self.plan.crap_pin.as_deref().filter(|_| layer.id == "crap");
-        let mut shown: Vec<String> = pin.map(|_| CRAP_VERSION.join(" ")).into_iter().collect();
-        shown.extend(chain.iter().map(Step::display));
-        println!("\n==> [{}] {}", layer.id, shown.join(" && "));
-        if let Some(pin) = pin {
-            println!(
-                "    `{}` must print `cargo-crap {pin}`, the {TOOL_LOCK} pin",
-                CRAP_VERSION.join(" ")
-            );
-        }
+        println!(
+            "\n==> [{}] {}",
+            layer.id,
+            chain
+                .iter()
+                .map(Step::display)
+                .collect::<Vec<_>>()
+                .join(" && ")
+        );
         self.done.listed += 1;
         if !self.live {
             return Ok(());
         }
         let clock = Clock::start();
-        let run = match pin {
-            Some(pin) => run_pinned_crap(self.dir, &layer.id, chain, pin),
-            None => run_chain(self.dir, &layer.id, chain),
-        }
-        .map_err(Fault::env)?;
-        let version = match pin {
-            // The version the gate already verified against the lock.
-            Some(pin) => run
-                .cmd
-                .starts_with(&format!("{} && ", CRAP_VERSION.join(" ")))
-                .then(|| format!("cargo-crap {pin}")),
-            None if layer.id == "crap" => None,
-            // A tool that is not there has no version to ask for.
-            None => first_tool(chain)
-                .filter(|_| run.outcome != Outcome::ToolMissing)
-                .and_then(|argv| version_of(self.dir, argv, &mut self.versions)),
-        };
+        let run = run_chain(self.dir, &layer.id, chain).map_err(Fault::env)?;
+        let version = first_tool(chain)
+            // A tool that is not there has no version to ask for, and crap's
+            // is named only when the lock pinned it.
+            .filter(|_| run.outcome != Outcome::ToolMissing)
+            .filter(|_| layer.id != "crap" || !self.plan.pins_of("crap").is_empty())
+            .and_then(|argv| version_of(self.dir, argv, &mut self.versions));
         self.done.record(run, &clock, version);
         Ok(())
     }
@@ -389,34 +459,32 @@ pub(crate) fn run_chain(dir: &Path, layer: &str, chain: &[Step]) -> Result<Run> 
     Ok(finish(layer, &ran, outcome))
 }
 
-/// The crap chain, run only when `cargo crap --version` prints
-/// `cargo-crap <pin>`. It asks the binary that `cargo crap` runs, so another
-/// version earlier on `PATH` fails the layer before a report is written. A
-/// cargo-crap that is not there is left to the chain, which reports it
-/// missing.
-pub(crate) fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str) -> Result<Run> {
-    let version = CRAP_VERSION.join(" ");
-    let argv = CRAP_VERSION.map(String::from);
-    if steps::check_tool(&argv).is_err() {
-        return run_chain(dir, layer, chain);
+/// A layer that stopped because a pinned tool prints another version than its
+/// pin. The same `note` is the stdout line, the layer's detail and its problem.
+fn mismatch_run(layer: &str, argv: &str, note: String) -> Run {
+    println!("tool-mismatch [{layer}]: {note}");
+    Run {
+        layer: layer.to_string(),
+        cmd: String::new(),
+        step: argv.to_string(),
+        outcome: Outcome::ToolMismatch,
+        note: Some(note),
     }
-    let output = Command::new(CRAP_VERSION[0])
-        .args(&CRAP_VERSION[1..])
-        .current_dir(dir)
-        .output()
-        .with_context(|| format!("spawn: {version}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let printed = stdout.lines().next().unwrap_or_default().trim();
-    let want = format!("cargo-crap {pin}");
-    if !output.status.success() || printed != want {
-        println!(
-            "Failed [{layer}]: `{version}` printed `{printed}`, not `{want}` from {TOOL_LOCK}"
-        );
-        return Ok(finish(layer, &[version], Outcome::Failed));
+}
+
+/// A layer that stopped because a pinned tool will not run: the same outcome
+/// and words as a command whose tool is not on `PATH`.
+fn missing_run(layer: &str, asked: String) -> Run {
+    let words: Vec<String> = asked.split_whitespace().map(str::to_string).collect();
+    let binary = steps::tool_binary(&words).unwrap_or_else(|| asked.clone());
+    println!("{}", steps::MissingTool { binary });
+    Run {
+        layer: layer.to_string(),
+        cmd: String::new(),
+        step: asked,
+        outcome: Outcome::ToolMissing,
+        note: None,
     }
-    let mut run = run_chain(dir, layer, chain)?;
-    run.cmd = format!("{version} && {}", run.cmd);
-    Ok(run)
 }
 
 /// A mutation layer's run, and what its `outcomes.json` held.

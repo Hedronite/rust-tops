@@ -385,6 +385,15 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
       - run: cargo install --path crates/cargo-tops --locked
+      # The tools just installed are the pinned ones: checked on a fresh
+      # `init` of a throwaway crate (the lock an adopter gets), at the tiers
+      # the gate below runs.
+      - name: Lock verify on a fresh init
+        run: |
+          probe="$(mktemp -d)"
+          cargo new --lib --vcs none "$probe/probe"
+          cargo-tops init --path "$probe/probe" --class library-core --name probe
+          cargo-tops lock --verify --max-tier 1 --path "$probe/probe"
       - run: cargo tops gate --max-tier 1 --base "origin/${{ github.base_ref || github.event.repository.default_branch }}"
         env:
           # The gate's own tests include a run of the real cargo-mutants: it

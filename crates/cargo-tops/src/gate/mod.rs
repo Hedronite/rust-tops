@@ -10,7 +10,8 @@
 //! expired exemption); 2 the config or the request cannot be gated
 //! (`rust-tops.yaml` missing or failing check, `rust-tops.lock` unreadable,
 //! no enabled layer at or below `--max-tier`); 3 the environment (a required
-//! tool or `cargo metadata` is missing, or `report.json` cannot be written).
+//! tool or `cargo metadata` is missing, a pinned tool prints another version
+//! than its pin in `rust-tops.lock`, or `report.json` cannot be written).
 //! Where more than one applies, 2 wins over 3, and 3 over 1; every problem is
 //! still listed in the report.
 use std::path::Path;

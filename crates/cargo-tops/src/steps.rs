@@ -109,17 +109,28 @@ pub(crate) enum Outcome {
     Passed,
     Failed,
     ToolMissing,
+    /// A pinned tool ran and printed a version other than its pin in
+    /// `rust-tops.lock`. Like `ToolMissing`, the verdict rests on the
+    /// environment.
+    ToolMismatch,
     /// The diff command succeeded and the diff is empty.
     Vacuous,
 }
 
 impl Outcome {
+    /// The tool the layer needs is absent or not the pinned one: the layer ran
+    /// no command and the verdict rests on the environment.
+    #[must_use]
+    pub(crate) fn lacks_tool(self) -> bool {
+        matches!(self, Self::ToolMissing | Self::ToolMismatch)
+    }
+
     /// `Some(true)` pass, `Some(false)` fail, `None` when no law may count it.
     #[must_use]
     pub(crate) fn law_verdict(self) -> Option<bool> {
         match self {
             Self::Passed => Some(true),
-            Self::Failed | Self::ToolMissing => Some(false),
+            Self::Failed | Self::ToolMissing | Self::ToolMismatch => Some(false),
             Self::Vacuous => None,
         }
     }
@@ -133,7 +144,7 @@ impl Outcome {
     /// Gate failure. Vacuous does not fail the gate.
     #[must_use]
     pub(crate) fn fails_the_gate(self) -> bool {
-        matches!(self, Self::Failed | Self::ToolMissing)
+        matches!(self, Self::Failed | Self::ToolMissing | Self::ToolMismatch)
     }
 }
 
@@ -143,6 +154,7 @@ impl fmt::Display for Outcome {
             Self::Passed => "passed",
             Self::Failed => "Failed",
             Self::ToolMissing => "not on PATH",
+            Self::ToolMismatch => "not the pinned version",
             Self::Vacuous => "Vacuous",
         })
     }

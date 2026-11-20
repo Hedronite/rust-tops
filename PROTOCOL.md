@@ -849,6 +849,43 @@ Every adopting repository keeps a `RUST-TOPS.md` at its root. It is the one page
 
 The template is [`config/drop-in/RUST-TOPS.md`](config/drop-in/RUST-TOPS.md). `cargo tops init` writes it beside the instance, with items 2–4 and 6 filled from that instance. When `init` runs in one crate's directory of a larger repo, move its row into the root record and delete the copy. Keep it current when an instance, an exemption, or the baseline path changes. A record that disagrees with a `rust-tops.yaml` is wrong; the instance wins.
 
+### 14.5 The tool lock (since 1.4.0)
+
+`rust-tops.lock` pins the tools the gate runs, under `[tools]`. A pin the gate does not check is only a comment, so the gate asks each tool for its version and compares the answer with the pin.
+
+**What is asked.** One row per tool. The first line of the output is read, and the version is the first word after the tool's name, cut at the first character that is not a digit or a dot.
+
+| Lock key | Asked | Line starts with |
+|---|---|---|
+| `rustc` | `rustc --version` | `rustc ` |
+| `clippy`, `rustfmt` | judged by the toolchain: `rustc --version`; `cargo clippy --version` and `cargo fmt --version` must also exit 0 | `rustc ` |
+| `cargo-nextest` | `cargo nextest --version` | `cargo-nextest ` |
+| `cargo-llvm-cov` | `cargo llvm-cov --version` | `cargo-llvm-cov ` |
+| `cargo-mutants` | `cargo mutants --version` | `cargo-mutants ` |
+| `cargo-crap` | `cargo crap --version` | `cargo-crap ` |
+| `cargo-deny` | `cargo deny --version` | `cargo-deny ` |
+| `cargo-fuzz` | `cargo fuzz --version` | `cargo-fuzz ` |
+| `kani-verifier` | `cargo kani --version` | `Kani Rust Verifier ` |
+| `nushell` | `nu --version` | (the version alone) |
+
+Keys that name a library or a runner (`proptest`, `criterion`, `callgrind-runner`) are not tools on `PATH`. They are skipped.
+
+**Matching.** A pin matches when its dot-separated parts are the first parts of the version found. `0.12` matches `0.12.0` and `0.12.3`, and does not match `0.120.0`. `0.12.3` does not match `0.12`. A line that does not have the shape above is a mismatch, and the line is named as found.
+
+**In the gate.**
+- Before the commands of a layer that runs, the gate asks each pinned tool that layer needs, once per gate. The layers and tools are: `static-lint` (`rustc`, `clippy`, `rustfmt`, `cargo-deny`), `unit`, `integration`, `property` and `acceptance` (`cargo-nextest`), `doc` (`rustc`), `coverage` (`cargo-llvm-cov`, `cargo-nextest`), `crap` (`cargo-crap`), `security-advisory` (`cargo-deny`), `mutation` (`cargo-mutants`), `fuzz` (`cargo-fuzz`) and `formal-kani` (`kani-verifier`).
+- A tool that prints another version fails its layer with the verdict `tool-mismatch`. The layer's `detail`, its problem and the line on stdout carry the same words: `mismatch <tool>: pin <pin>, found <found>`. The kind is `environment` and the exit code is 3. None of the layer's commands run.
+- A tool that cannot be run is the `tool-missing` outcome, as before.
+- A layer that takes another layer's run takes its verdict, `tool-mismatch` included.
+- A layer above `--max-tier`, or one that is off, asks nothing. A tool with no pin in the lock is not asked. With no lock file the gate asks nothing.
+- A `rust-tops.lock` that cannot be read or parsed, when a layer in range needs a pinned tool, is a config error: exit 2.
+
+**`cargo tops lock --verify [--max-tier N] [--path P]`.** Asks every tool in the lock, or, with `--max-tier`, only the tools that the enabled layers at or below `N` need, and prints one line per tool: `ok`, `mismatch`, `missing` or `skipped`. Exit 0 when none is a mismatch or missing, 2 when the lock cannot be read (or the config cannot be loaded for `--max-tier`), 3 otherwise. It never writes a file.
+
+**`cargo tops lock --write [--path P]`.** Replaces each `[tools]` value with the version the tool prints now. Comments, order, spacing and other tables are kept. A tool that cannot be run keeps its value.
+
+The reference workflow runs `cargo tops lock --verify` after the tools are installed and before the gate (section 17).
+
 ---
 
 ## 15. Repository layout
@@ -936,6 +973,8 @@ Jobs are separated so a 90-minute Miri run cannot hide a 20-second clippy fail.
 | `mutants-full` | schedule / release | release only |
 | `criterion` | dedicated runner optional | no |
 | `sanitizers` | schedule | release for ffi/unsafe |
+
+A job that runs `cargo tops gate` runs `cargo tops lock --verify` first, with the same `--max-tier`, after the pinned tools are installed (section 14.5).
 
 ---
 
@@ -1035,6 +1074,7 @@ cargo test --doc --workspace
 cargo llvm-cov nextest --workspace --all-features \
   --lcov --output-path target/coverage/lcov.info --fail-under-lines 90
 cargo crap
+cargo tops lock --verify   # the installed tools are the pinned ones (section 14.5)
 git diff "$(git merge-base "$BASE" HEAD)" HEAD --unified=0 > /tmp/pr.diff   # BASE: section 8.3
 cargo mutants --in-diff /tmp/pr.diff
 

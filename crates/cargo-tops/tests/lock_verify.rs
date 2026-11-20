@@ -8,21 +8,10 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-const INIT_CLASSES: [&str; 8] = [
-    "library-core",
-    "parser-codec",
-    "no-std-embedded",
-    "unsafe-kernel",
-    "binary-cli",
-    "library-util",
-    "ffi-bridge",
-    "workspace-root",
-];
 
 struct Scratch {
     root: PathBuf,
@@ -46,7 +35,7 @@ impl Scratch {
         let scratch = Scratch { root };
         scratch.script(
             "cargo",
-            "#!/bin/sh\nsub=\"$1\"; shift\nexec \"$(dirname \"$0\")/cargo-$sub\" \"$@\"\n",
+            "#!/bin/sh\nsub=\"$1\"; shift\nexec \"${0%/*}/cargo-$sub\" \"$@\"\n",
         );
         scratch
     }
@@ -284,17 +273,40 @@ fn max_tier_asks_only_for_the_tools_of_layers_in_range() {
 }
 
 #[test]
-fn the_lock_of_every_init_class_passes_verify_against_shims_at_the_pins() {
-    for class in INIT_CLASSES {
-        let scratch = Scratch::new(&format!("init-{class}"));
-        init(&scratch, class);
-        let pins = pins_of(&scratch.read_lock());
-        shim_all(&scratch, &pins);
-        let out = scratch.run(&["--verify"]);
-        assert_eq!(out.status.code(), Some(0), "{class}: {}", text(&out));
+fn the_lock_every_init_class_writes_passes_verify_against_shims_at_the_pins() {
+    // `init_golden` holds every class to these bytes, so this is the lock each
+    // of the eight classes gets.
+    let golden =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/init/shared/rust-tops.lock");
+    let lock_text = fs::read_to_string(golden).expect("the golden lock");
+    let scratch = Scratch::new("golden-lock");
+    scratch.lock(&lock_text);
+    shim_all(&scratch, &pins_of(&lock_text));
+    let out = scratch.run(&["--verify"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    // One line per tool the lock names, none of them a mismatch.
+    let said = text(&out);
+    assert!(
+        !said.contains("mismatch") && !said.contains("missing"),
+        "{said}"
+    );
+    for tool in [
+        "rustc",
+        "cargo-nextest",
+        "cargo-llvm-cov",
+        "cargo-mutants",
+        "cargo-crap",
+        "cargo-deny",
+        "cargo-fuzz",
+        "kani-verifier",
+        "nushell",
+    ] {
+        assert!(
+            said.contains(&format!("ok       {tool} ")),
+            "{tool}: {said}"
+        );
     }
 }
-
 #[test]
 fn clippy_and_rustfmt_must_run_even_when_rustc_matches_the_pin() {
     let scratch = Scratch::new("toolchain");
