@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn a_name_is_unescaped() {
         let xml = r#"<testcase name="property_a&amp;b&quot;c&apos;d&lt;e&gt;" classname="x"/>"#;
-        assert_eq!(tally(xml, "a&b\"c'd<e>").passed, 1);
+        assert_eq!(tally(xml, "property_a&b\"c'd<e>").passed, 1);
     }
 
     #[test]
