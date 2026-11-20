@@ -23,7 +23,7 @@ callgrind-runner = "gungraun-runner"
 nushell = "0.108.0"
 
 [notes]
-schema = "1.3.0"
+schema = "1.4.0"
 installed_with = "cargo install --locked <tool>"
 # Date of the one nightly the Miri and fuzz overlays use; bump it as a pin, never a bare `nightly`.
 nightly = "nightly-2026-11-16"

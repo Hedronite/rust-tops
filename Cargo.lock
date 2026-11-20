@@ -860,6 +860,7 @@ dependencies = [
  "anyhow",
  "rustix",
  "serde",
+ "serde_json",
  "toml",
 ]
 

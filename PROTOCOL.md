@@ -1,7 +1,7 @@
 # Rust Testing and Optimization Protocol Suite (Rust-TOPS)
 
 **Protocol ID:** `rust-tops`  
-**Version:** 1.3.0  
+**Version:** 1.4.0  
 **Status:** Adopted specification  
 **Machine schema:** [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json)  
 **Example instance:** [`config/rust-tops.example.yaml`](config/rust-tops.example.yaml)  
@@ -16,6 +16,8 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 > **1.2.0:** states what the CRAP thresholds apply to and how the gate holds existing code (§2.1), when an exhaustive dispatch `match` takes an exemption instead of a split (§2.2), how `max_fn_cc` relates to the CRAP threshold (§5.6), how the gate judges the coverage floors (§7.5) and the CRAP baseline (§16), how exemptions are matched (§19), and the `RUST-TOPS.md` record every adopting repo keeps (§14.4). No default threshold and no part of the CRAP formula changed.
 
 > **1.3.0:** fixes each layer's tier by its id and moves `security-advisory` to tier 0 (§3), makes `cargo tops check` hold an instance to its class floors and required layers (§4), and takes the file name `PROTOCOL.md` (the changelog names the old one). §14.4 still requires each adopting repo's root `RUST-TOPS.md`. No default threshold and no part of the CRAP formula changed.
+
+> **1.4.0:** makes the gate pass a layer only on evidence from the run: the mutation base comes from `--base`, `gates.base_ref` or `origin/HEAD`, and a missing base fails under CI (§8.3); a credited `property` or `acceptance` layer needs a matching passed test (§6.5.1); an expired exemption fails the gate for every layer, and survivors are judged per function (§19); a pinned tool at another version fails its layer with exit 3, and `cargo tops lock` checks and writes the pins (§14.5). The schema adds `gates.base_ref`, `gates.property.test_filter` and `gates.acceptance`. No default threshold and no part of the CRAP formula changed.
 
 ## 0. Purpose
 
@@ -832,7 +834,7 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 
 ### 14.3 `AGENTS.md`
 
-`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.3.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
+`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.4.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
 
 ### 14.4 The adoption record `RUST-TOPS.md` (since 1.2.0)
 
@@ -1024,6 +1026,19 @@ Expired exemptions fail CI. Reasons shorter than one clause are rejected.
 
 How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `mutation` exemption explains survivors per function. A missed mutant inside a function is explained only by a record whose `symbol` names that function (matched as for `crap`) and whose `path` covers its file. A missed mutant in no function (cargo-mutants writes `function: null` for a `const` or `static` initialiser, a type alias or a field type) is explained only by a record with no `symbol` whose `path` covers its file. No record, of any shape or path, explains every survivor, so `gates.mutation.unexplained_survivors_max` always decides. A record with no `symbol` and a whole-crate `path` (`**`, `./**`, `**/*`, `.` or `./`) still lifts the class floor on `unexplained_survivors_max` in `cargo tops check` (§4), as for the other floors; it explains no survivor inside a function. A `coverage` exemption takes a file out of the per-file floor; its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
 
+The `symbol` of a `crap` or `mutation` record matches the function name as cargo-mutants 27.1.0 writes it, either in full or as a `::` suffix. A bare `run` therefore matches every function called `run` under the record's `path`, and a bare `twice` matches that method in every impl there. Write the qualified form. The forms 27.1.0 writes are:
+
+| Function | Name written |
+|---|---|
+| a free function `run` | `run` |
+| a method of `Cli` | `Cli::run` |
+| a function in an inline `mod inner` | `inner::run` |
+| a method in `impl Twice for Cli` | `<impl Twice for Cli>::twice` |
+| a method of a generic type | `Wrap<T>::get` |
+| a function in a file module (`src/a/b.rs`) | `run`, with no `a::b::` prefix |
+
+A `Cli::twice` record does not match the trait-impl form above, since that name ends in `Cli>::twice`; write it as the table shows. The `path` is what tells two file modules apart.
+
 ---
 
 ## 20. Worked protocol — a 40-line codec
@@ -1100,13 +1115,15 @@ cargo bench --bench hot          # local criterion
 
 ## 23. Versioning
 
-This spec is `1.3.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
+This spec is `1.4.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
 
 1.1.0 added the `laws` layer (§3.1). A 1.0.0 instance that does not list `laws` still validates.
 
 1.2.0 states how the thresholds apply to new and changed code and the baseline ratchet (§2.1, §16), the dispatch-match exemption (§2.2), the relation of `max_fn_cc` to CRAP (§5.6), how the floors are judged (§7.5), how exemptions are read (§19), and the adoption record (§14.4). The schema adds the optional `gates.crap.baseline`. A 1.1.0 instance still validates. No default threshold and no part of the formula changed.
 
 1.3.0 fixes the tier of each layer by its id and moves `security-advisory` to tier 0 (§3), makes `check` hold an instance to its class (§4), and takes the file name `PROTOCOL.md`. The schema describes `tier` as fixed by layer id. A 1.2.0 instance with a loose floor or a wrong tier now fails `check` until it is fixed or carries a dated exemption. No default threshold and no part of the formula changed.
+
+1.4.0 makes the gate honest about what a pass rests on. The mutation base resolves from `--base`, then `gates.base_ref`, then `origin/HEAD`, and none found fails under CI (§8.3). A credited `property` or `acceptance` layer passes only when the credited run's nextest report holds a matching passed test, found by the new `test_filter` keys (§6.5.1). Every expired exemption fails the gate, and survivors are judged per function (§19). A pinned tool at another version is an environment failure with exit 3, and `cargo tops lock --verify` and `--write` check and record the pins (§14.5). Every change to the schema is additive, so a 1.3.0 instance still validates. A 1.3.0 gate that went green without a base, without a matching test, or past an expiry can now fail until it is fixed. No default threshold and no part of the formula changed.
 
 ---
 

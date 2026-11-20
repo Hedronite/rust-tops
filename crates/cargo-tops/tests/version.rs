@@ -61,7 +61,7 @@ fn the_version_subcommand_prints_package_protocol_and_the_lock_pins() {
         let text = text(&out);
         assert_eq!(out.status.code(), Some(0), "{args:?}: {text}");
         assert!(text.contains(&format!("cargo-tops {PACKAGE}\n")), "{text}");
-        assert!(text.contains("protocol 1.3.0\n"), "{text}");
+        assert!(text.contains("protocol 1.4.0\n"), "{text}");
         assert!(text.contains("  rustc = 1.99.1\n"), "{text}");
         assert!(text.contains("  cargo-nextest = 0.9.145\n"), "{text}");
         assert!(!text.contains("schema"), "{text}");
@@ -75,7 +75,7 @@ fn the_version_subcommand_without_a_lock_says_so_and_exits_zero() {
     let out = tops(&["version"], &dir);
     let text = text(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains("protocol 1.3.0\n"), "{text}");
+    assert!(text.contains("protocol 1.4.0\n"), "{text}");
     assert!(
         text.contains("tool pins: none (no ./rust-tops.lock)\n"),
         "{text}"

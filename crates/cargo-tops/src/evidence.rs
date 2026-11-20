@@ -14,10 +14,14 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// The nextest profile whose report is read.
 pub(crate) const PROFILE: &str = "ci";
+
+/// How far ahead of this host's clock a report's mtime may be and still count
+/// as written during the run: a network filesystem's clock can run ahead.
+const CLOCK_SKEW: Duration = Duration::from_secs(5);
 
 /// Where nextest keeps its reports, under the workspace root, when
 /// `.config/nextest.toml` has no `[store] dir`.
@@ -170,14 +174,15 @@ pub(crate) fn credit(
              one (`[profile.ci.junit]` and `[store] dir` in .config/nextest.toml)"
         )
     })?;
-    // Written during the credited run: not before it began, not after now.
+    // Written during the credited run: not before it began, and not more than
+    // the clock skew ahead of now.
     let fresh = fs::metadata(&path)
         .and_then(|meta| meta.modified())
-        .is_ok_and(|written| written >= since && written <= SystemTime::now());
+        .is_ok_and(|written| written >= since && written <= SystemTime::now() + CLOCK_SKEW);
     if !fresh {
         return Err(format!(
             "the JUnit report {shown} was not written during the credited run (it is older \
-             than the run, or dated in the future), so it is no evidence for {who}; make that \
+             than the run, or dated well in the future), so it is no evidence for {who}; make that \
              run write it (`[profile.ci.junit]` and `[store] dir` in .config/nextest.toml)"
         ));
     }
@@ -387,6 +392,18 @@ mod tests {
             why.contains("no JUnit report at target/nt/ci/junit.xml"),
             "{why}"
         );
+    }
+
+    #[test]
+    fn a_report_a_few_seconds_ahead_of_the_clock_still_counts() {
+        let dir = fixture(Some(CONFIG), Some(REPORT));
+        let file = fs::File::options()
+            .write(true)
+            .open(dir.path().join("target/nextest/ci/junit.xml"))
+            .unwrap();
+        file.set_modified(SystemTime::now() + Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(run(&dir, "property"), Ok(2));
     }
 
     #[test]

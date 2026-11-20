@@ -8,6 +8,16 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+/// A copy of the tree with no `.git`, such as the one cargo-mutants tests in,
+/// has no tracked files to list. The scan then has nothing to read.
+fn has_history() -> bool {
+    let present = workspace().join(".git").exists();
+    if !present {
+        eprintln!("skipped: this tree has no .git, so there are no tracked files to scan");
+    }
+    present
+}
+
 /// Files that record what was published, which keep the old name.
 fn is_history(path: &str) -> bool {
     path == "CHANGELOG.md" || path.starts_with("docs/release-notes/")
@@ -39,11 +49,17 @@ fn tracked_files_naming(needle: &str) -> Vec<String> {
 
 #[test]
 fn no_tracked_file_but_the_changelog_names_the_old_protocol_file() {
+    if !has_history() {
+        return;
+    }
     assert_eq!(tracked_files_naming(&old_name()), Vec::<String>::new());
 }
 
 #[test]
 fn the_scan_reads_tracked_files() {
+    if !has_history() {
+        return;
+    }
     assert!(
         tracked_files_naming(&["zz-no-such", "-text-zz"].concat()).is_empty(),
         "an absent string is found nowhere"

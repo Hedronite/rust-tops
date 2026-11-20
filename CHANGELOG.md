@@ -6,7 +6,7 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 
 | Plane | What | Where |
 | --- | --- | --- |
-| Protocol | rust-tops contract | `PROTOCOL.md` header (`1.3.0`) and `schema/` |
+| Protocol | rust-tops contract | `PROTOCOL.md` header (`1.4.0`) and `schema/` |
 | Package | `cargo-tops` and git tag | `v0.4.0`, Cargo `0.4.0` |
 
 Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0.
@@ -31,10 +31,29 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - Fixed tiers ([#50](https://github.com/Hedronite/rust-tops/pull/50)): a layer's tier comes from its id (§3), and `security-advisory` moved from tier 5 to tier 0 so the default `--max-tier 1` gate runs the advisory check. `cargo tops check` now fails an instance whose layer tier differs from the table, whose floor is looser than its class profile, or that disables a layer its class requires.
   - Protocol file rename ([#53](https://github.com/Hedronite/rust-tops/pull/53)): `RUST_TOPS.md` is now `PROTOCOL.md` (§14.4 still requires each repo's root `RUST-TOPS.md`). A test fails if a tracked file other than this changelog names the old file.
 
+- Honest pack (protocol 1.4.0, package unreleased). The gate passes a layer only on evidence from the run.
+  - Mutation base ([#55](https://github.com/Hedronite/rust-tops/pull/55)): the diff starts at the merge base with `--base <ref>`, then `gates.base_ref`, then `origin/HEAD`. A missing base fails under CI (fix: `fetch-depth: 0` and `--base`) and is `vacuous` otherwise, and the report names the base used.
+  - Credited layers ([#56](https://github.com/Hedronite/rust-tops/pull/56)): a credited `property` or `acceptance` layer passes only when the credited run's nextest JUnit report holds a passed test with a `::` segment of its name starting with `gates.<layer>.test_filter` (default the layer id; letters, digits and underscore only). A layer that runs itself selects tests the same way, with `-E 'test(/(^|::)<filter>/)'` instead of a positional filter. `acceptance` now runs (it was `NotRun`). Fix for a failing layer: add a matching test, or set the filter.
+  - Tidy-up ([#54](https://github.com/Hedronite/rust-tops/pull/54)): the fresh-init test gets a nextest slow-timeout override, and the Bend script, its README and `BEND2-INTEGRATION.md` use neutral wording.
+  - Exemptions and survivors ([#57](https://github.com/Hedronite/rust-tops/pull/57)): an expired exemption, or one whose `expires` is not a real day, fails the gate with exit 1 whatever its layer, whether that layer is on, and whatever `--max-tier`; `check` prints it as a warning. The mutation layer reads cargo-mutants' `outcomes.json` and judges each missed mutant per function: only a live `layer: mutation` record whose `symbol` names the function and whose `path` covers the file explains it, and `gates.mutation.unexplained_survivors_max` always decides. A survivor outside any function is explained only by a record with no `symbol`. Fix for a failing run: kill the mutant, or add a dated record that names the function.
+  - Tool pins ([#59](https://github.com/Hedronite/rust-tops/pull/59)): every tool in `rust-tops.lock` that a running layer uses is checked against its pin, not only `cargo-crap`. A tool at another version fails its layer with the verdict `tool-mismatch` and exit 3 (the `cargo-crap` pin mismatch exited 1 before). A new `cargo tops lock --verify` checks the pins and `--write` rewrites them. Fix: install the pinned version, or run `cargo tops lock --write` and review the diff.
+  - Enforcement map and protocol 1.4.0 ([#60](https://github.com/Hedronite/rust-tops/pull/60)): `schema/enforcement.json` classes every schema key as judged or declarative, with the reading file for the judged ones, and `cargo run -p xtask -- docs` prints the ratio and fails when the README table disagrees. `cargo tops version` prints protocol 1.4.0. The schema changes are additive: `gates.base_ref`, `gates.property.test_filter` and the new `gates.acceptance` object with `test_filter`; the gate report gains the `tool-mismatch` verdict and the survivor and exemption detail.
+
+  Behaviour changes in this group, each with its fix:
+  - A CI run with no resolvable base now fails the mutation layer (it used to be a silent `vacuous` pass). Fix: `fetch-depth: 0` and `--base`.
+  - A credited `property` or `acceptance` layer now needs a matching passed test in the credited run. Fix: add one, or set `test_filter`.
+  - An expired exemption of any layer now fails the gate. Fix: renew it with a reason, or remove it.
+  - Mutation survivors are judged per function. Fix: name the function in the record's `symbol`; use the qualified form (§19).
+  - A `cargo-crap` pin mismatch now exits 3, not 1, and every pinned tool is checked. Fix: install the pinned version.
+
 ### Changed
 
 - The `AGENTS.md` template (and its copies) no longer calls the upstream review skill an optional style pass; `rust-tops-review` runs it.
 - `.gitignore` lists `/mutants.out*`, the output the gate's mutation layer leaves in the repository root.
+
+### The drop-in on `main` needs the next release
+
+After the mutation-base change, `config/drop-in/rust-tops.yml`, its template and the init goldens pass `--base` and run `cargo tops lock --verify --max-tier 1`, while still installing `cargo-tops` 0.4.0, which rejects `--base` with exit 2 and has no `lock` command. Until the next release ships, copy the drop-in from the `v0.4.0` tag. An adopter who runs `cargo tops init` with the new binary gets the matching template.
 
 ### Upgrade to protocol 1.3.0
 

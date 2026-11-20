@@ -12,7 +12,10 @@
 //!   against `[tools] nushell` in `rust-tops.lock`, which the `Tool lock`
 //!   row must also list;
 //! - the count in the `Class floors` row (`Eight profile files`) against the
-//!   number of `profiles/*.yaml`.
+//!   number of `profiles/*.yaml`;
+//! - the table between the `enforcement` markers against
+//!   `schema/enforcement.json`: each section's keys, how many are judged,
+//!   and the total ratio. `--table` prints that table.
 //!
 //! It exits 0 when they agree, 1 with each disagreement listed, and 2 when
 //! a file or a row cannot be read.
@@ -21,23 +24,29 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo run -p xtask -- docs [--root DIR]";
+const USAGE: &str = "usage: cargo run -p xtask -- docs [--root DIR] [--table]";
+const TABLE_START: &str = "<!-- enforcement:start -->";
+const TABLE_END: &str = "<!-- enforcement:end -->";
 const COUNTS: [&str; 12] = [
     "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
 ];
 
 /// Run the `docs` task over the arguments after the task name.
 pub(crate) fn run(args: impl Iterator<Item = String>) -> ExitCode {
-    let root = match parse_root(args) {
-        Ok(root) => root,
+    let (root, table) = match parse_args(args) {
+        Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("error: {err}\n{USAGE}");
             return ExitCode::from(2);
         }
     };
+    if table {
+        return print_table(&root);
+    }
     match check(&root) {
         Ok(problems) if problems.is_empty() => {
             println!("docs: the README pin table matches Cargo.toml, rust-tops.lock and profiles/");
+            println!("docs: {}", ratio_line(&root).unwrap_or_default());
             ExitCode::SUCCESS
         }
         Ok(problems) => {
@@ -54,10 +63,12 @@ pub(crate) fn run(args: impl Iterator<Item = String>) -> ExitCode {
     }
 }
 
-fn parse_root(mut args: impl Iterator<Item = String>) -> Result<PathBuf> {
+fn parse_args(mut args: impl Iterator<Item = String>) -> Result<(PathBuf, bool)> {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut table = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--table" => table = true,
             "--root" => {
                 root = args
                     .next()
@@ -67,7 +78,7 @@ fn parse_root(mut args: impl Iterator<Item = String>) -> Result<PathBuf> {
             other => bail!("unknown argument {other}"),
         }
     }
-    Ok(root)
+    Ok((root, table))
 }
 
 fn read_toml(root: &Path, name: &str) -> Result<toml::Table> {
@@ -86,7 +97,113 @@ fn check(root: &Path) -> Result<Vec<String>> {
     problems.extend(check_tools(root, &readme)?);
     problems.extend(check_nushell(root, &readme)?);
     problems.extend(check_profiles(root, &readme)?);
+    problems.extend(check_enforcement(root, &readme)?);
     Ok(problems)
+}
+
+/// The sections of `schema/enforcement.json` with their key counts: a
+/// section is the first path part, or `gates.<name>` under `gates`.
+fn sections(root: &Path) -> Result<Vec<(String, usize, usize)>> {
+    let path = root.join("schema").join("enforcement.json");
+    let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    let keys = doc
+        .get("keys")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("{} has no `keys` object", path.display()))?;
+    let mut rows: Vec<(String, usize, usize)> = Vec::new();
+    for (key, entry) in keys {
+        let section = section_of(key);
+        let judged = entry.get("class").and_then(serde_json::Value::as_str) == Some("judged");
+        match rows.iter_mut().find(|row| row.0 == section) {
+            Some(row) => {
+                row.1 += 1;
+                row.2 += usize::from(judged);
+            }
+            None => rows.push((section, 1, usize::from(judged))),
+        }
+    }
+    Ok(rows)
+}
+
+fn section_of(key: &str) -> String {
+    let mut parts = key.trim_start_matches('/').split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("gates"), Some(name), Some(_)) => format!("gates.{name}"),
+        (Some(first), ..) => first.to_string(),
+        (None, ..) => String::new(),
+    }
+}
+
+/// `judged` of `total` as tenths of a percent, rounded down.
+fn percent_tenths(judged: usize, total: usize) -> usize {
+    (judged * 1000).checked_div(total).unwrap_or(0)
+}
+
+fn ratio_line(root: &Path) -> Result<String> {
+    let rows = sections(root)?;
+    let total: usize = rows.iter().map(|row| row.1).sum();
+    let judged: usize = rows.iter().map(|row| row.2).sum();
+    let tenths = percent_tenths(judged, total);
+    Ok(format!(
+        "{judged} of {total} schema keys are judged ({}.{}%)",
+        tenths / 10,
+        tenths % 10
+    ))
+}
+
+/// The table the README holds between its `enforcement` markers.
+fn render_table(root: &Path) -> Result<String> {
+    let mut rows = sections(root)?;
+    rows.sort();
+    let mut out =
+        String::from("| Section | Keys | Judged | Declarative |\n| --- | ---: | ---: | ---: |\n");
+    for (section, total, judged) in &rows {
+        out.push_str(&format!(
+            "| `{section}` | {total} | {judged} | {} |\n",
+            total - judged
+        ));
+    }
+    let total: usize = rows.iter().map(|row| row.1).sum();
+    let judged: usize = rows.iter().map(|row| row.2).sum();
+    out.push_str(&format!(
+        "| **All** | **{total}** | **{judged}** | **{}** |\n\n{}.\n",
+        total - judged,
+        ratio_line(root)?
+    ));
+    Ok(out)
+}
+
+fn print_table(root: &Path) -> ExitCode {
+    match render_table(root) {
+        Ok(table) => {
+            print!("{TABLE_START}\n{table}{TABLE_END}\n");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn check_enforcement(root: &Path, readme: &str) -> Result<Option<String>> {
+    let want = render_table(root)?;
+    let held = readme
+        .split_once(TABLE_START)
+        .and_then(|(_, rest)| rest.split_once(TABLE_END))
+        .map(|(block, _)| block.trim_start_matches('\n'));
+    Ok(match held {
+        None => Some(format!(
+            "README has no table between {TABLE_START} and {TABLE_END}; print it with `cargo run -p xtask -- docs --table`"
+        )),
+        Some(block) if block != want => Some(
+            "README enforcement table disagrees with schema/enforcement.json; reprint it with `cargo run -p xtask -- docs --table`"
+                .to_string(),
+        ),
+        Some(_) => None,
+    })
 }
 
 fn check_package(root: &Path, readme: &str) -> Result<Option<String>> {
