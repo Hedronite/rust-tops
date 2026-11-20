@@ -11,7 +11,11 @@ fn workspace() -> PathBuf {
 /// A copy of the tree with no `.git`, such as the one cargo-mutants tests in,
 /// has no tracked files to list. The scan then has nothing to read.
 fn has_history() -> bool {
-    workspace().join(".git").exists()
+    let present = workspace().join(".git").exists();
+    if !present {
+        eprintln!("skipped: this tree has no .git, so there are no tracked files to scan");
+    }
+    present
 }
 
 /// Files that record what was published, which keep the old name.
