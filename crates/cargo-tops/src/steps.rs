@@ -109,17 +109,28 @@ pub(crate) enum Outcome {
     Passed,
     Failed,
     ToolMissing,
+    /// A pinned tool ran and printed a version other than its pin in
+    /// `rust-tops.lock`. Like `ToolMissing`, the verdict rests on the
+    /// environment.
+    ToolMismatch,
     /// The diff command succeeded and the diff is empty.
     Vacuous,
 }
 
 impl Outcome {
+    /// The tool the layer needs is absent or not the pinned one: the layer ran
+    /// no command and the verdict rests on the environment.
+    #[must_use]
+    pub(crate) fn lacks_tool(self) -> bool {
+        matches!(self, Self::ToolMissing | Self::ToolMismatch)
+    }
+
     /// `Some(true)` pass, `Some(false)` fail, `None` when no law may count it.
     #[must_use]
     pub(crate) fn law_verdict(self) -> Option<bool> {
         match self {
             Self::Passed => Some(true),
-            Self::Failed | Self::ToolMissing => Some(false),
+            Self::Failed | Self::ToolMissing | Self::ToolMismatch => Some(false),
             Self::Vacuous => None,
         }
     }
@@ -133,18 +144,26 @@ impl Outcome {
     /// Gate failure. Vacuous does not fail the gate.
     #[must_use]
     pub(crate) fn fails_the_gate(self) -> bool {
-        matches!(self, Self::Failed | Self::ToolMissing)
+        matches!(self, Self::Failed | Self::ToolMissing | Self::ToolMismatch)
+    }
+}
+
+impl Outcome {
+    /// The words a run's outcome is named by in a problem line.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "Failed",
+            Self::ToolMissing => "not on PATH",
+            Self::ToolMismatch => "not the pinned version",
+            Self::Vacuous => "Vacuous",
+        }
     }
 }
 
 impl fmt::Display for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Passed => "passed",
-            Self::Failed => "Failed",
-            Self::ToolMissing => "not on PATH",
-            Self::Vacuous => "Vacuous",
-        })
+        f.write_str(self.label())
     }
 }
 
@@ -987,6 +1006,36 @@ fn is_env_assign(token: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+#[cfg(test)]
+mod outcome_words {
+    use super::Outcome;
+
+    #[test]
+    fn each_outcome_is_named_in_its_own_words() {
+        for (outcome, words) in [
+            (Outcome::Passed, "passed"),
+            (Outcome::Failed, "Failed"),
+            (Outcome::ToolMissing, "not on PATH"),
+            (Outcome::ToolMismatch, "not the pinned version"),
+            (Outcome::Vacuous, "Vacuous"),
+        ] {
+            assert_eq!(outcome.to_string(), words);
+        }
+    }
+
+    #[test]
+    fn a_missing_or_mismatched_tool_fails_the_gate_and_is_a_lacking_tool() {
+        for outcome in [Outcome::ToolMissing, Outcome::ToolMismatch] {
+            assert!(outcome.lacks_tool(), "{outcome}");
+            assert!(outcome.fails_the_gate(), "{outcome}");
+            assert_eq!(outcome.law_verdict(), Some(false), "{outcome}");
+        }
+        for outcome in [Outcome::Passed, Outcome::Failed, Outcome::Vacuous] {
+            assert!(!outcome.lacks_tool(), "{outcome}");
+        }
+    }
 }
 
 #[cfg(test)]

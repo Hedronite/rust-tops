@@ -16,6 +16,7 @@
     reason = "this crate already violates the strict table"
 )]
 #![expect(clippy::panic, reason = "this crate already violates the strict table")]
+mod support;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,10 +47,17 @@ if [ -n "${CARGO_STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$CARGO_STUB_LOG"
 fi
 # `init` writes rust-tops.lock, which pins cargo-crap 0.9.0.
-if [ "$*" = "crap --version" ]; then
-  echo 'cargo-crap 0.9.0'
-  exit 0
-fi
+case "$1 $2" in
+  "nextest --version") echo "cargo-nextest 0.9.145 (stub)"; exit 0 ;;
+  "llvm-cov --version") echo "cargo-llvm-cov 0.9.1"; exit 0 ;;
+  "mutants --version") echo "cargo-mutants 27.1.0"; exit 0 ;;
+  "crap --version") echo "cargo-crap 0.9.0"; exit 0 ;;
+  "deny --version") echo "cargo-deny 0.18.9"; exit 0 ;;
+  "fuzz --version") echo "cargo-fuzz 0.12.0"; exit 0 ;;
+  "kani --version") echo "Kani Rust Verifier 0.68.0 (cargo plugin)"; exit 0 ;;
+  "clippy --version") echo "clippy 0.1.99 (stub)"; exit 0 ;;
+  "fmt --version") echo "rustfmt 1.10.0-stable (stub)"; exit 0 ;;
+esac
 # 27.1.0 finds nothing to mutate in a diff of comments, tests, docs or CI:
 # it says so on stderr, exits 0 and writes no `mutants.out`.
 if [ "$1" = "mutants" ]; then
@@ -242,6 +250,7 @@ fn init_with(name: &str, class: &str, extra: &[&str]) -> Fixture {
     )
     .expect("write Cargo.toml");
     stub(&fixture.bin, "cargo", CARGO_STUB);
+    support::stub_rustc(&fixture.bin);
     for plugin in PLUGINS {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
     }
@@ -448,10 +457,12 @@ fn cargo_log(fixture: &Fixture) -> String {
     fs::read_to_string(fixture.root.join("cargo.log")).unwrap_or_default()
 }
 
-/// Whether the cargo stub ran subcommand `sub`.
+/// Whether the cargo stub ran subcommand `sub`. A `--version` ask is the
+/// gate checking a pin or naming a version, not the subcommand running.
 fn cargo_ran(fixture: &Fixture, sub: &str) -> bool {
     cargo_log(fixture)
         .lines()
+        .filter(|line| !line.ends_with("--version"))
         .any(|line| line.split_whitespace().next() == Some(sub))
 }
 
@@ -476,6 +487,22 @@ fn nextest_runs(fixture: &Fixture) -> Vec<String> {
 
 /// The cargo stub, except that it exits `code` (after logging) when its
 /// argv matches the shell `case` pattern `pattern`.
+/// The gate's `report.json`, parsed.
+fn report_json(fixture: &Fixture) -> serde_json::Value {
+    let raw =
+        fs::read_to_string(fixture.repo.join("target/rust-tops/report.json")).expect("report.json");
+    serde_json::from_str(&raw).expect("report.json is json")
+}
+
+/// The report row of layer `id`.
+fn layer_of(report: &serde_json::Value, id: &str) -> serde_json::Value {
+    at(report, "/layers")
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| at(row, "/id") == id))
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn stub_cargo_failing(fixture: &Fixture, pattern: &str, code: u8) {
     let body = CARGO_STUB.replacen(
         "#!/bin/sh\n",
@@ -1367,7 +1394,8 @@ fn a_missing_or_failed_coverage_run_is_no_pass_for_the_layers_that_took_it() {
 
     // Failed: the coverage run exits 1, and that is what the three take.
     let failed = fixture_with("one-run-failed", &TEST_LAYERS);
-    stub_cargo_failing(&failed, "llvm-cov*", 1);
+    // The run fails; asking the tool its version (the pin check) still works.
+    stub_cargo_failing(&failed, "\"llvm-cov nextest\"*", 1);
     let (out, text) = gate(&failed, path_with_only_stubs(&failed.bin));
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert_eq!(nextest_runs(&failed), [coverage_run(&failed)], "{text}");
@@ -2034,23 +2062,34 @@ fn pin_crap(fixture: &Fixture, version: &str) {
 }
 
 #[test]
-fn a_cargo_crap_that_is_not_the_lock_pin_fails_the_crap_layer() {
+fn a_cargo_crap_that_is_not_the_lock_pin_is_a_tool_mismatch_for_the_crap_layer() {
     // The second pin is not 0.9.0: the gate reads the pin, it has none built in.
-    for (pin, printed) in [("0.9.0", "cargo-crap 0.5.0"), ("1.2.3", "cargo-crap 0.9.0")] {
+    for (pin, printed, found) in [
+        ("0.9.0", "cargo-crap 0.5.0", "0.5.0"),
+        ("1.2.3", "cargo-crap 0.9.0", "0.9.0"),
+    ] {
         let fixture = fixture_with(&format!("crap-pin-miss-{pin}"), &["coverage", "crap"]);
         pin_crap(&fixture, pin);
         stub_crap_version(&fixture, printed);
         let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
-        assert_eq!(out.status.code(), Some(1), "{text}");
+        assert_eq!(out.status.code(), Some(3), "{text}");
+        let said = format!("mismatch cargo-crap: pin {pin}, found {found}");
+        // One wording: the stdout line, the problem and the layer's detail.
         assert!(
-            text.contains(&format!(
-                "Failed [crap]: `cargo crap --version` printed `{printed}`, not `cargo-crap {pin}` from rust-tops.lock"
-            )),
+            text.contains(&format!("tool-mismatch [crap]: {said}")),
             "{text}"
         );
+        assert!(text.contains(&format!("crap: {said}")), "{text}");
+        let report = report_json(&fixture);
+        let crap = layer_of(&report, "crap");
+        assert_eq!(at(&crap, "/verdict"), "tool-mismatch");
+        assert_eq!(at(&crap, "/detail"), said);
+        assert_eq!(at(&report, "/exit_code"), 3);
         assert!(
-            text.contains("crap: `cargo crap --version` failed"),
-            "{text}"
+            at(&report, "/problems")
+                .as_array()
+                .is_some_and(|all| all.iter().any(|p| p == &format!("crap: {said}"))),
+            "{report}"
         );
         let log = cargo_log(&fixture);
         assert!(log.lines().any(|line| line == "crap --version"), "{log}");
@@ -2072,19 +2111,15 @@ fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
         let fixture = fixture_with(&format!("crap-pin-hit-{pin}"), &["coverage", "crap"]);
         pin_crap(&fixture, pin);
         stub_crap_version(&fixture, &format!("cargo-crap {pin}"));
-        let must =
-            format!("`cargo crap --version` must print `cargo-crap {pin}`, the rust-tops.lock pin");
+        let asked = format!("[crap] rust-tops.lock pins, asked first: cargo-crap {pin}");
         let (_, dry) = gate_with(
             &fixture,
             path_without_bend(&fixture.bin),
             None,
             &["--dry-run"],
         );
-        assert!(
-            dry.contains("\n==> [crap] cargo crap --version && cargo crap --lcov "),
-            "{dry}"
-        );
-        assert!(dry.contains(&must), "{dry}");
+        assert!(dry.contains(&asked), "{dry}");
+        assert!(dry.contains("\n==> [crap] cargo crap --lcov "), "{dry}");
         assert!(
             cargo_log(&fixture)
                 .lines()
@@ -2093,28 +2128,28 @@ fn the_crap_layer_runs_when_cargo_crap_reports_the_lock_pin() {
         );
         let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
         assert_eq!(out.status.code(), Some(0), "{text}");
-        assert!(text.contains(&must), "{text}");
+        assert!(text.contains(&asked), "{text}");
         let log = cargo_log(&fixture);
         let crap: Vec<&str> = log
             .lines()
             .filter(|line| line.starts_with("crap "))
             .collect();
+        // Asked once: the check and the report's tool version share the answer.
         assert_eq!(crap.len(), 2, "{log}");
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let tops_idx_1962_20 = crap[0];
-        assert_eq!(tops_idx_1962_20, "crap --version", "{log}");
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let tops_idx_1967_17 = crap[1];
-        assert!(tops_idx_1967_17.starts_with("crap --lcov "), "{log}");
+        assert_eq!(crap.first().copied(), Some("crap --version"), "{log}");
+        assert!(
+            crap.get(1)
+                .is_some_and(|line| line.starts_with("crap --lcov ")),
+            "{log}"
+        );
         assert!(
             fixture.repo.join("target/rust-tops/crap.json").is_file(),
             "{text}"
+        );
+        let report = report_json(&fixture);
+        assert_eq!(
+            at(&layer_of(&report, "crap"), "/tool_version"),
+            format!("cargo-crap {pin}")
         );
     }
 }
@@ -2126,7 +2161,7 @@ fn without_a_rust_tops_lock_the_crap_layer_asks_no_version() {
     stub_crap_version(&fixture, "cargo-crap 0.5.0");
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(!text.contains("must print"), "{text}");
+    assert!(!text.contains("asked first"), "{text}");
     let log = cargo_log(&fixture);
     assert!(!log.lines().any(|line| line == "crap --version"), "{log}");
     assert!(
@@ -2139,13 +2174,22 @@ fn without_a_rust_tops_lock_the_crap_layer_asks_no_version() {
 fn a_pinned_cargo_crap_that_is_not_installed_is_missing_not_a_version_miss() {
     let fixture = fixture_with("crap-pin-missing", &["coverage", "crap"]);
     pin_crap(&fixture, "0.9.0");
-    fs::remove_file(fixture.bin.join("cargo-crap")).expect("remove stub");
-    let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
+    // `cargo crap` with no cargo-crap on PATH: cargo itself says no such command.
+    stub_cargo_failing(&fixture, "\"crap --version\"", 101);
+    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(3), "{text}");
-    assert!(text.contains("crap: `cargo-crap` not on PATH"), "{text}");
-    assert!(!text.contains("Failed [crap]"), "{text}");
+    assert!(
+        text.contains("crap: missing  cargo-crap: pin 0.9.0, `cargo crap --version` exited 101"),
+        "{text}"
+    );
+    assert!(!text.contains("tool-mismatch"), "{text}");
+    let report = report_json(&fixture);
+    assert_eq!(at(&layer_of(&report, "crap"), "/verdict"), "tool-missing");
     let log = cargo_log(&fixture);
-    assert!(!log.lines().any(|line| line.starts_with("crap ")), "{log}");
+    assert!(
+        !log.lines().any(|line| line.starts_with("crap --lcov")),
+        "{log}"
+    );
 }
 
 #[test]
@@ -2169,16 +2213,6 @@ fn a_rust_tops_lock_that_cannot_be_read_or_parsed_stops_the_gate() {
     }
 }
 
-/// Only the crap layer reads the pin, so a gate without it runs on past a
-/// `rust-tops.lock` that does not parse.
-#[test]
-fn without_the_crap_layer_the_gate_does_not_read_the_pin() {
-    let fixture = fixture_with("crap-off-bad-lock", &["coverage"]);
-    fs::write(fixture.repo.join("rust-tops.lock"), "[tools\n").expect("write lock");
-    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(!text.contains("rust-tops.lock"), "{text}");
-}
 #[expect(clippy::too_many_lines, reason = "over the kit line threshold")]
 #[test]
 fn lock_honesty_holds_a_rust_tops_lock_to_head_and_a_missing_one_is_honest() {

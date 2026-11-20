@@ -5,6 +5,7 @@
 //!
 //! Cargo and its plugins are stubs. Every report is validated against
 //! `schema/gate-report.schema.json`.
+mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -31,7 +32,18 @@ const REPORT_SCHEMA: &str = include_str!("../../../schema/gate-report.schema.jso
 /// Fails for an argv that matches `$CARGO_STUB_FAIL`; answers every
 /// `--version` ask; passes everything else.
 const CARGO_STUB: &str = r#"#!/bin/sh
-if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
+if [ -n "${CARGO_STUB_LOG:-}" ]; then echo "$*" >> "$CARGO_STUB_LOG"; fi
+case "$1 $2" in
+  "nextest --version") echo "cargo-nextest 0.9.145 (stub)"; exit 0 ;;
+  "llvm-cov --version") echo "cargo-llvm-cov 0.9.1"; exit 0 ;;
+  "mutants --version") echo "cargo-mutants 27.1.0"; exit 0 ;;
+  "crap --version") echo "cargo-crap 0.9.0"; exit 0 ;;
+  "deny --version") echo "cargo-deny 0.18.9"; exit 0 ;;
+  "fuzz --version") echo "cargo-fuzz 0.12.0"; exit 0 ;;
+  "kani --version") echo "Kani Rust Verifier 0.68.0 (cargo plugin)"; exit 0 ;;
+  "clippy --version") echo "clippy 0.1.99 (stub)"; exit 0 ;;
+  "fmt --version") echo "rustfmt 1.10.0-stable (stub)"; exit 0 ;;
+esac
 case "$*" in *--version) echo "stub-tool 1.2.3"; exit 0 ;; esac
 if [ -n "${CARGO_STUB_FAIL:-}" ]; then
   case "$*" in *"$CARGO_STUB_FAIL"*) exit 1 ;; esac
@@ -93,6 +105,7 @@ fn fixture(name: &str) -> Fixture {
     )
     .expect("write Cargo.toml");
     stub(&fixture.bin, "cargo", CARGO_STUB);
+    support::stub_rustc(&fixture.bin);
     stub(&fixture.bin, "cargo-deny", "#!/bin/sh\nexit 0\n");
     stub(&fixture.bin, "cargo-nextest", "#!/bin/sh\nexit 0\n");
     edit(&fixture, |doc| {
@@ -147,6 +160,7 @@ fn gate(fixture: &Fixture, args: &[&str], fail: Option<&str>) -> (Output, String
         .arg("--path")
         .arg(&fixture.repo)
         .env("PATH", path(fixture))
+        .env("CARGO_STUB_LOG", fixture.root.join("cargo.log"))
         .env_remove("CARGO_TARGET_DIR")
         .env_remove("CARGO_STUB_FAIL");
     if let Some(pattern) = fail {
@@ -218,14 +232,20 @@ fn a_pass_exits_0_and_the_report_says_so() {
     assert_eq!(at(lint, "/verdict"), "pass");
     assert_eq!(
         at(lint, "/argv").as_array().map(Vec::len),
-        Some(3),
+        Some(5),
         "{lint}"
     );
+    // The pinned tools are asked first: the toolchain, then cargo-deny.
+    assert_eq!(at(lint, "/argv/0"), &json!(["rustc", "--version"]));
+    assert_eq!(at(lint, "/argv/1"), &json!(["cargo", "deny", "--version"]));
     assert_eq!(
-        at(lint, "/argv/0"),
+        at(lint, "/argv/2"),
         &json!(["cargo", "fmt", "--all", "--", "--check"])
     );
-    assert_eq!(at(lint, "/tool_version"), "stub-tool 1.2.3");
+    assert_eq!(
+        at(lint, "/tool_version"),
+        "rustfmt 1.10.0-stable (stub); clippy 0.1.99 (stub); cargo-deny 0.18.9"
+    );
     assert!(at(&report, "/disabled")
         .as_array()
         .is_some_and(|d| !d.is_empty()));
@@ -294,7 +314,7 @@ fn a_dry_run_exits_1_and_writes_a_report_with_nothing_run() {
     assert_eq!(at(lint, "/verdict"), "not-run");
     assert_eq!(
         at(lint, "/argv").as_array().map(Vec::len),
-        Some(3),
+        Some(5),
         "{lint}"
     );
     assert_eq!(at(lint, "/seconds").as_f64(), Some(0.0));
@@ -565,6 +585,8 @@ fn a_directory_with_no_manifest_is_an_unavailable_cargo_metadata() {
 #[test]
 fn a_tool_version_is_asked_from_the_crate_directory() {
     let fixture = fixture("version-dir");
+    // No pins: the check asks nothing, so only the report's own ask is here.
+    fs::remove_file(fixture.repo.join("rust-tops.lock")).expect("init wrote a lock");
     stub(
         &fixture.bin,
         "cargo",
@@ -606,4 +628,245 @@ fn the_law_total_is_left_out_when_no_judgement_counted_it() {
     let (out, text) = gate(&fixture, &[], None);
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(report(&fixture).get("laws_total").is_none());
+}
+
+/// The cargo stub, except that `cargo <sub> --version` answers `answer`
+/// (`exit 101` with no output when `answer` is `None`), as the tool would.
+fn answer_version(fixture: &Fixture, sub: &str, answer: Option<&str>) {
+    let reply = answer.map_or_else(
+        || "exit 101".to_string(),
+        |line| format!("echo '{line}'; exit 0"),
+    );
+    let log = "if [ -n \"${CARGO_STUB_LOG:-}\" ]; then echo \"$*\" >> \"$CARGO_STUB_LOG\"; fi\n";
+    let body = CARGO_STUB.replacen(
+        log,
+        &format!("{log}if [ \"$1 $2\" = \"{sub} --version\" ]; then {reply}; fi\n"),
+        1,
+    );
+    stub(&fixture.bin, "cargo", &body);
+}
+
+fn problems(report: &Value) -> Vec<String> {
+    at(report, "/problems")
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_pinned_tool_at_another_version_is_a_tool_mismatch_worded_once() {
+    let fixture = fixture("mismatch");
+    answer_version(&fixture, "deny", Some("cargo-deny 0.18.8"));
+    let (out, text) = gate(&fixture, &[], None);
+    let said = "mismatch cargo-deny: pin 0.18.9, found 0.18.8";
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let report = report(&fixture);
+    expect_consistent(&report, 3);
+    // The same words on stdout, in the layer's detail and in the problems.
+    assert!(
+        text.contains(&format!("tool-mismatch [static-lint]: {said}")),
+        "{text}"
+    );
+    assert_eq!(
+        at(layer(&report, "static-lint"), "/verdict"),
+        "tool-mismatch"
+    );
+    assert_eq!(at(layer(&report, "static-lint"), "/detail"), said);
+    assert!(
+        problems(&report).contains(&format!("static-lint: {said}")),
+        "{report}"
+    );
+    assert_eq!(
+        at(layer(&report, "security-advisory"), "/verdict"),
+        "tool-mismatch"
+    );
+    // Nothing of the layer ran: no fmt, no clippy, no deny check.
+    let log = cargo_log(&fixture);
+    assert!(
+        !log.lines()
+            .filter(|line| !line.ends_with("--version"))
+            .any(|line| line.starts_with("fmt ") || line.starts_with("clippy ")),
+        "{log}"
+    );
+}
+
+#[test]
+fn the_toolchain_pin_judges_the_layers_that_need_rustc() {
+    let fixture = fixture("rustc-mismatch");
+    stub(
+        &fixture.bin,
+        "rustc",
+        "#!/bin/sh\necho 'rustc 1.98.0 (stub 2025-01-01)'\n",
+    );
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let report = report(&fixture);
+    assert_eq!(
+        at(layer(&report, "static-lint"), "/verdict"),
+        "tool-mismatch"
+    );
+    assert_eq!(
+        at(layer(&report, "static-lint"), "/detail"),
+        "mismatch rustc: pin 1.99.1, found 1.98.0; mismatch clippy: pin 1.99.1, found 1.98.0; mismatch rustfmt: pin 1.99.1, found 1.98.0"
+    );
+}
+
+#[test]
+fn clippy_that_will_not_run_is_a_missing_tool_not_a_version_miss() {
+    let fixture = fixture("no-clippy");
+    answer_version(&fixture, "clippy", None);
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    // The correction: a probe that failed names the tool and the command it ran
+    // (it used to say `cargo` was not on PATH), once, on stdout, in the
+    // layer's detail and in the problems.
+    let said = "missing  clippy: pin 1.99.1, `cargo clippy --version` exited 101";
+    assert!(
+        text.contains(&format!("tool-missing [static-lint]: {said}")),
+        "{text}"
+    );
+    assert!(text.contains(&format!("static-lint: {said}")), "{text}");
+    let report = report(&fixture);
+    assert_eq!(at(layer(&report, "static-lint"), "/detail"), said);
+    assert!(
+        problems(&report).contains(&format!("static-lint: {said}")),
+        "{report}"
+    );
+    assert_eq!(
+        at(layer(&report, "static-lint"), "/verdict"),
+        "tool-missing"
+    );
+}
+
+#[test]
+fn a_tool_only_a_layer_above_the_range_needs_is_not_asked() {
+    let fixture = fixture("above-range");
+    // `property` is tier 1 and needs nextest; at --max-tier 0 it is not in range.
+    answer_version(&fixture, "nextest", Some("cargo-nextest 0.0.1"));
+    let (out, text) = gate(&fixture, &["--max-tier", "0"], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let log = cargo_log(&fixture);
+    assert!(
+        !log.lines().any(|line| line.starts_with("nextest ")),
+        "{log}"
+    );
+    let (out, text) = gate(&fixture, &["--max-tier", "1"], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(
+        text.contains("mismatch cargo-nextest: pin 0.9.145, found 0.0.1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_dry_run_names_the_pins_and_asks_nothing() {
+    let fixture = fixture("dry-pins");
+    answer_version(&fixture, "deny", Some("cargo-deny 0.0.1"));
+    let (out, text) = gate(&fixture, &["--dry-run"], None);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("[static-lint] rust-tops.lock pins, asked first: rustc 1.99.1, clippy 1.99.1, rustfmt 1.99.1, cargo-deny 0.18.9"),
+        "{text}"
+    );
+    assert!(!text.contains("tool-mismatch"), "{text}");
+}
+
+#[test]
+fn a_layer_that_takes_another_layers_run_keeps_that_runs_mismatch() {
+    let fixture = fixture("takes-mismatch");
+    // `property` runs itself here, so turn coverage on: it takes coverage's run.
+    edit(&fixture, |doc| {
+        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
+        for layer in layers.expect("layers") {
+            let on = stays_on(layer) || layer.get("id").and_then(Value::as_str) == Some("coverage");
+            set(layer, "enabled", Value::Bool(on));
+        }
+    });
+    answer_version(&fixture, "llvm-cov", Some("cargo-llvm-cov 0.8.0"));
+    let (out, text) = gate(&fixture, &[], None);
+    let said = "mismatch cargo-llvm-cov: pin 0.9.1, found 0.8.0";
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let report = report(&fixture);
+    assert_eq!(at(layer(&report, "coverage"), "/verdict"), "tool-mismatch");
+    assert_eq!(at(layer(&report, "property"), "/verdict"), "tool-mismatch");
+    assert_eq!(at(layer(&report, "property"), "/detail"), said);
+}
+
+#[test]
+fn a_pre_release_of_a_pinned_tool_is_a_tool_mismatch_not_a_pass() {
+    let fixture = fixture("pre-release");
+    answer_version(&fixture, "deny", Some("cargo-deny 0.18.9-rc.1"));
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(
+        text.contains("mismatch cargo-deny: pin 0.18.9, found 0.18.9-rc.1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_pin_that_is_not_a_string_stops_the_gate_with_exit_2_naming_the_key() {
+    let fixture = fixture("lock-not-a-string");
+    fs::write(
+        fixture.repo.join("rust-tops.lock"),
+        "[tools]\ncargo-deny = 0.18\n",
+    )
+    .expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("cargo-deny"), "{text}");
+    assert!(text.contains("found float"), "{text}");
+    let log = cargo_log(&fixture);
+    assert!(!log.lines().any(|line| line.starts_with("deny ")), "{log}");
+}
+
+#[test]
+fn a_lock_with_no_tools_table_stops_the_gate_with_exit_2() {
+    for header in ["[tool]", "[Tools]"] {
+        let fixture = fixture("lock-no-tools");
+        fs::write(
+            fixture.repo.join("rust-tops.lock"),
+            format!("{header}\ncargo-deny = \"0.18.9\"\n"),
+        )
+        .expect("write lock");
+        let (out, text) = gate(&fixture, &[], None);
+        assert_eq!(out.status.code(), Some(2), "{header}: {text}");
+        assert!(text.contains("has no [tools] table"), "{header}: {text}");
+        let log = cargo_log(&fixture);
+        assert!(!log.lines().any(|line| line.starts_with("deny ")), "{log}");
+    }
+}
+
+#[test]
+fn an_unknown_key_is_a_warning_and_the_tool_it_was_meant_for_is_named() {
+    let fixture = fixture("unknown-key");
+    let pins = "[tools]\nrustc = \"1.99.1\"\nclippy = \"1.99.1\"\nrustfmt = \"1.99.1\"\ncargo-deny = \"0.18.9\"\ncargo-nextest = \"0.9.145\"\n";
+    let lock = fixture.repo.join("rust-tops.lock");
+    fs::write(&lock, format!("{pins}cargo-nexttest = \"0.9.145\"\n")).expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "warning: rust-tops.lock key cargo-nexttest is not a tool rust-tops knows, not checked"
+        ),
+        "{text}"
+    );
+    // The misspelt key stands where the right one is missing: both are named.
+    let without = pins.replace("cargo-nextest = \"0.9.145\"\n", "");
+    fs::write(&lock, format!("{without}cargo-nexttest = \"0.9.145\"\n")).expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "warning: rust-tops.lock has no pin for cargo-nextest, and holds cargo-nexttest"
+        ),
+        "{text}"
+    );
+}
+
+fn cargo_log(fixture: &Fixture) -> String {
+    fs::read_to_string(fixture.root.join("cargo.log")).unwrap_or_default()
 }
