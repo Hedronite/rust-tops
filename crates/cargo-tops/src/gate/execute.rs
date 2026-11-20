@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use super::plan::{GatePlan, Unit, What, CRAP_VERSION};
 use super::{Fault, Mode};
 use crate::config::Layer;
+use crate::evidence;
 use crate::facts::{Outcome, Run};
 use crate::steps::{self, Base, Kind, MutationPlan, Step};
 use crate::{laws, TOOL_LOCK};
@@ -252,10 +253,29 @@ impl<'a> Runner<'_, 'a> {
         }
     }
 
+    /// The run `layer` takes from `from`. `property` and `acceptance` pass
+    /// only when that run also wrote a JUnit report holding a passed test
+    /// they select by name; the report is read, never produced (HN-P3).
+    fn credited(&self, layer: &str, from: &str) -> Run {
+        let mut run = self.plan.tests.take(layer, from, &self.done.runs);
+        let Some(filter) = self.plan.filters.for_layer(layer) else {
+            return run;
+        };
+        if run.outcome != Outcome::Passed {
+            return run;
+        }
+        let target = self.plan.report.parent().unwrap_or(&self.plan.report);
+        if let Err(why) = evidence::credit(layer, self.dir, target, filter) {
+            run.outcome = Outcome::Failed;
+            run.note = Some(why);
+        }
+        run
+    }
+
     /// A layer that adds no command records its source's run.
     fn take_shared(&mut self) {
         for (layer, from) in self.done.shared.clone() {
-            let run = self.plan.tests.take(layer, from, &self.done.runs);
+            let run = self.credited(layer, from);
             println!("[{layer}] took the {from} run's outcome: {}", run.outcome);
             self.done.runs.push(run);
             self.done.timing.push(Timing {

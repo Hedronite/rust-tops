@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
 if [ "$1" = metadata ]; then cat "$REPORTS/metadata.json"; exit 0; fi
+if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/coverage-fails" ]; then exit 1; fi
 if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/junit.xml" ]; then
   mkdir -p "$REPORTS/../repo/target/nextest/ci"
   cp "$REPORTS/junit.xml" "$REPORTS/../repo/target/nextest/ci/junit.xml"
@@ -304,6 +305,29 @@ fn acceptance_follows_the_same_rule_with_its_own_filter() {
     set_filter(&without, "acceptance", "property");
     let (_, _, verdict, _) = gate(&without, "acceptance");
     assert_eq!(verdict, "pass", "its own filter, not property's");
+}
+
+#[test]
+fn a_failed_coverage_run_fails_property_without_reading_evidence() {
+    let fixture = fixture("covfail", &[], Some(&junit(&[("property_ok", true)])));
+    fs::write(fixture.reports.join("coverage-fails"), "").expect("mark");
+    let (code, _, verdict, detail) = gate(&fixture, "property");
+    assert_eq!(code, Some(1));
+    assert_eq!(verdict, "fail");
+    assert!(!detail.contains("JUnit"), "{detail}");
+}
+
+#[test]
+fn unit_and_integration_need_no_matching_test() {
+    let fixture = fixture(
+        "unit",
+        &["unit", "integration"],
+        Some(&junit(&[("property_ok", true)])),
+    );
+    for layer in ["unit", "integration"] {
+        let (_, text, verdict, _) = gate(&fixture, layer);
+        assert_eq!(verdict, "pass", "{layer}: {text}");
+    }
 }
 
 /// The kit holds the property tests its own `property` layer credits. A

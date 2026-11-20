@@ -37,6 +37,11 @@ for arg in "$@"; do
       mkdir -p "$(dirname "$arg")"
       name=$(basename "$arg")
       if [ -f "$REPORTS/$name" ]; then cp "$REPORTS/$name" "$arg"; else printf 'lcov\n' > "$arg"; fi
+      if [ "$1 $2" = "llvm-cov nextest" ]; then
+        j="$(dirname "$arg")/../nextest/ci"
+        mkdir -p "$j"
+        printf '%s\n' '<testsuites><testsuite name="s"><testcase name="property_stub" classname="s"/><testcase name="acceptance_stub" classname="s"/></testsuite></testsuites>' > "$j/junit.xml"
+      fi
       ;;
   esac
   prev=$arg

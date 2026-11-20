@@ -35,12 +35,12 @@ pub(crate) struct TestCommands {
 }
 
 impl TestCommands {
-    pub(crate) fn new(enabled: &[&config::Layer], report: &Path) -> Self {
+    pub(crate) fn new(enabled: &[&config::Layer], report: &Path, filters: &Filters) -> Self {
         let argv = |id: &str| {
             enabled
                 .iter()
                 .find(|layer| layer.id == id)
-                .and_then(|layer| tool_plan(layer, report))
+                .and_then(|layer| tool_plan(layer, report, filters))
                 .and_then(|plan| match plan {
                     Plan::Chains(chains) => chains
                         .into_iter()
@@ -164,25 +164,59 @@ const TOOL_LAYERS: &[(&str, &[&[&str]])] = &[
         &[&["cargo", "test", "--doc", "--workspace", "--all-features"]],
     ),
     (
-        "property",
-        &[&[
-            "cargo",
-            "nextest",
-            "run",
-            "--workspace",
-            "--all-features",
-            "--profile",
-            "ci",
-            "--no-tests=fail",
-            "property",
-        ]],
-    ),
-    (
         "security-advisory",
         &[&["cargo", "deny", "check", "advisories"]],
     ),
     ("formal-kani", &[&["cargo", "kani", "--workspace"]]),
 ];
+
+/// The name prefixes `property` and `acceptance` select tests by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Filters {
+    pub(crate) property: String,
+    pub(crate) acceptance: String,
+}
+
+impl Default for Filters {
+    fn default() -> Self {
+        Self {
+            property: "property".to_string(),
+            acceptance: "acceptance".to_string(),
+        }
+    }
+}
+
+impl Filters {
+    pub(crate) fn of(gates: &config::Gates) -> Self {
+        Self {
+            property: gates.test_filter("property"),
+            acceptance: gates.test_filter("acceptance"),
+        }
+    }
+
+    /// The prefix of `layer`, for the two layers that select by name.
+    pub(crate) fn for_layer(&self, layer: &str) -> Option<&str> {
+        match layer {
+            "property" => Some(&self.property),
+            "acceptance" => Some(&self.acceptance),
+            _ => None,
+        }
+    }
+}
+
+/// The shared nextest run, narrowed to the tests with a `::`-separated name
+/// segment that starts with `filter` (HN-L2). The same rule reads the JUnit
+/// report of a credited run, so credit equals running.
+fn selected_tests(filter: &str) -> Vec<Step> {
+    let literal = regex::escape(filter).replace('/', "\\/");
+    let expr = format!("test(/(^|::){literal}/)");
+    let argv = NEXTEST.iter().map(|arg| (*arg).to_string()).chain([
+        "--no-tests=fail".to_string(),
+        "-E".to_string(),
+        expr,
+    ]);
+    vec![Step::tool(argv)]
+}
 
 /// The test run `unit` and `integration` share.
 const NEXTEST: [&str; 7] = [
@@ -217,20 +251,28 @@ fn crap_steps(report: &Path) -> Vec<Step> {
 /// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
 /// and the mutation diff are written there. `base` is where the mutation
 /// diff starts.
-pub(crate) fn plan_for(layer: &config::Layer, report: &Path, base: &Base) -> Option<Plan> {
+pub(crate) fn plan_for(
+    layer: &config::Layer,
+    report: &Path,
+    base: &Base,
+    filters: &Filters,
+) -> Option<Plan> {
     if layer.id == "mutation" {
         Some(Plan::Mutation(MutationPlan::new(report, base.clone())))
     } else {
-        tool_plan(layer, report)
+        tool_plan(layer, report, filters)
     }
 }
 
 /// The plan of every layer but `mutation`, which also needs a base.
-fn tool_plan(layer: &config::Layer, report: &Path) -> Option<Plan> {
+fn tool_plan(layer: &config::Layer, report: &Path, filters: &Filters) -> Option<Plan> {
     let id = layer.id.as_str();
     match id {
         "coverage" => Some(Plan::Chains(vec![steps::coverage_steps(report)])),
         "crap" => Some(Plan::Chains(vec![crap_steps(report)])),
+        "property" | "acceptance" => filters
+            .for_layer(id)
+            .map(|filter| Plan::Chains(vec![selected_tests(filter)])),
         _ => TOOL_LAYERS
             .iter()
             .find(|(layer_id, _)| *layer_id == id)
@@ -270,6 +312,8 @@ pub(crate) struct GatePlan<'a> {
     /// `report.json` live here, as an absolute path.
     pub(crate) report: PathBuf,
     pub(crate) tests: TestCommands,
+    /// The name prefixes of `property` and `acceptance`.
+    pub(crate) filters: Filters,
     pub(crate) crap_pin: Option<String>,
     pub(crate) units: Vec<Unit<'a>>,
 }
@@ -346,13 +390,17 @@ fn units_of<'a>(
     tests: &TestCommands,
     report: &Path,
     base: &Base,
+    filters: &Filters,
 ) -> Vec<Unit<'a>> {
     enabled
         .iter()
         .copied()
         .filter(|layer| layer.id != "laws")
         .map(|layer| {
-            let what = match (tests.shared_from(&layer.id), plan_for(layer, report, base)) {
+            let what = match (
+                tests.shared_from(&layer.id),
+                plan_for(layer, report, base, filters),
+            ) {
                 (Some(from), _) => What::Shared(from),
                 (None, Some(Plan::Chains(chains))) => What::Chains(chains),
                 (None, Some(Plan::Mutation(plan))) => What::Mutation(plan),
@@ -381,7 +429,8 @@ pub(crate) fn build<'a>(
         )));
     }
     let report = report_dir(dir)?;
-    let tests = TestCommands::new(&enabled, &report);
+    let filters = Filters::of(&cfg.gates);
+    let tests = TestCommands::new(&enabled, &report, &filters);
     let base = base_for(&enabled, dir, base_flag, cfg.gates.base_ref.as_deref());
     let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
         tool_pin(dir, "cargo-crap").map_err(Fault::config)?
@@ -396,17 +445,18 @@ pub(crate) fn build<'a>(
         above: ids(cfg, |l| l.enabled && crate::tiers::tier_for(l) > max_tier),
         // A layer turned off still shows in the run: it is not run, not omitted.
         disabled: ids(cfg, |l| !l.enabled),
-        units: units_of(&enabled, &tests, &report, &base),
+        units: units_of(&enabled, &tests, &report, &base, &filters),
         enabled,
         report,
         tests,
+        filters,
         crap_pin,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{base_for, GatePlan, TestCommands};
+    use super::{base_for, plan_for, Filters, GatePlan, Plan, TestCommands};
     use crate::config::Layer;
     use crate::steps::{Base, BaseSource};
     use std::path::PathBuf;
@@ -452,6 +502,43 @@ mod tests {
     }
 
     #[test]
+    fn the_selecting_layers_run_only_tests_with_a_name_prefix() {
+        let filters = Filters {
+            property: "prop_".to_string(),
+            acceptance: "a/b.c".to_string(),
+        };
+        let shared = ["cargo", "nextest", "run", "--workspace", "--all-features"]
+            .into_iter()
+            .chain(["--profile", "ci", "--no-tests=fail", "-E"]);
+        for (id, expr) in [
+            ("property", "test(/(^|::)prop_/)"),
+            ("acceptance", r"test(/(^|::)a\/b\.c/)"),
+        ] {
+            let Some(Plan::Chains(chains)) =
+                plan_for(&layer(id), &PathBuf::new(), &Base::unused(), &filters)
+            else {
+                panic!("{id} has no plan");
+            };
+            let argv: Vec<String> = chains
+                .into_iter()
+                .flatten()
+                .flat_map(|step| step.argv)
+                .collect();
+            let want: Vec<String> = shared.clone().chain([expr]).map(str::to_string).collect();
+            assert_eq!(argv, want, "{id}");
+        }
+    }
+
+    #[test]
+    fn only_the_two_selecting_layers_have_a_filter() {
+        let filters = Filters::default();
+        assert_eq!(filters.for_layer("property"), Some("property"));
+        assert_eq!(filters.for_layer("acceptance"), Some("acceptance"));
+        assert_eq!(filters.for_layer("unit"), None);
+        assert_eq!(filters.for_layer("integration"), None);
+    }
+
+    #[test]
     fn a_layer_with_no_unit_in_the_plan_has_no_commands() {
         let plan = GatePlan {
             max_tier: 0,
@@ -466,6 +553,7 @@ mod tests {
                 unit: Vec::new(),
                 integration: Vec::new(),
             },
+            filters: super::Filters::default(),
             crap_pin: None,
             units: Vec::new(),
         };

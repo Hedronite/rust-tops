@@ -37,7 +37,10 @@ const INIT_CLASSES: [&str; 8] = [
 /// `cargo llvm-cov` and `cargo crap` do. Logs its argv to `$CARGO_STUB_LOG`.
 /// The file is one JSON document that reads as a coverage summary (one
 /// fully covered `src/lib.rs`) and as a CRAP report with no function, so
-/// the coverage floors and the CRAP ratchet pass.
+/// the coverage floors and the CRAP ratchet pass. A `llvm-cov nextest` run
+/// also writes the JUnit report nextest writes, holding one passed `property`
+/// and one passed `acceptance` test, so a layer that takes the coverage run
+/// has the evidence it needs (PROTOCOL.md §6, §9).
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ -n "${CARGO_STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$CARGO_STUB_LOG"
@@ -53,6 +56,11 @@ for arg in "$@"; do
     --output-path | --output)
       mkdir -p "$(dirname "$arg")"
       printf '%s\n' '{"data":[{"files":[{"filename":"src/lib.rs","summary":{"lines":{"count":1,"covered":1},"regions":{"count":1,"covered":1}}}]}],"entries":[]}' > "$arg"
+      if [ "$1 $2" = "llvm-cov nextest" ]; then
+        j="$(dirname "$arg")/../nextest/ci"
+        mkdir -p "$j"
+        printf '%s\n' '<testsuites><testsuite name="s"><testcase name="property_stub" classname="s"/><testcase name="acceptance_stub" classname="s"/></testsuite></testsuites>' > "$j/junit.xml"
+      fi
       ;;
   esac
   prev=$arg
@@ -486,7 +494,7 @@ fn coverage_run(fixture: &Fixture) -> String {
     )
 }
 const PROPERTY_RUN: &str =
-    "nextest run --workspace --all-features --profile ci --no-tests=fail property";
+    "nextest run --workspace --all-features --profile ci --no-tests=fail -E test(/(^|::)property/)";
 
 /// `laws evaluated: N/53` from gate output.
 fn laws_evaluated(text: &str) -> (usize, usize) {
@@ -1413,7 +1421,7 @@ fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself()
         "{text}"
     );
     assert!(
-        text.contains("\n==> [property] cargo nextest run --workspace --all-features --profile ci --no-tests=fail property\n"),
+        text.contains("\n==> [property] cargo nextest run --workspace --all-features --profile ci --no-tests=fail -E test(/(^|::)property/)\n"),
         "{text}"
     );
     assert!(!text.contains("==> [coverage]"), "{text}");
@@ -1451,12 +1459,12 @@ fn below_coverage_unit_runs_once_integration_takes_it_and_property_runs_itself()
 fn a_property_filter_that_matches_nothing_fails() {
     // nextest exits 4 when `--no-tests=fail` finds no test; the stub does too.
     let fixture = fixture_with("one-run-empty-filter", &["property"]);
-    stub_cargo_failing(&fixture, "*' --no-tests=fail property'", 4);
+    stub_cargo_failing(&fixture, "*' --no-tests=fail -E test(/(^|::)property/)'", 4);
     let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert_eq!(nextest_runs(&fixture), [PROPERTY_RUN], "{text}");
     assert!(
-        text.contains("\n  - property: `cargo nextest run --workspace --all-features --profile ci --no-tests=fail property` failed\n"),
+        text.contains("\n  - property: `cargo nextest run --workspace --all-features --profile ci --no-tests=fail -E test(/(^|::)property/)` failed\n"),
         "{text}"
     );
     assert!(!text.contains("\nok: "), "{text}");
@@ -1858,23 +1866,29 @@ fn a_real_diff_runs_mutants_on_the_report_dir_diff() {
 
 #[test]
 fn an_enabled_unmapped_layer_in_range_is_not_run_and_fails() {
-    // `init` writes `acceptance` off. Turned on, it is in range at tier 1
-    // and has no command: NotRun, and the gate exits 1. No exemption.
-    let fixture = fixture_with("not-run", &["static-lint", "acceptance", "laws"]);
+    // `miri` has no command in the gate. Turned on and in range at tier 3 it
+    // is NotRun, and the gate exits 1. No exemption. (This was `acceptance`
+    // at tier 1 until protocol 1.4.0 gave that layer `property`'s command.)
+    let fixture = fixture_with("not-run", &["static-lint", "miri", "laws"]);
     adopt(&fixture, Origin::None);
     stub_bend(&fixture);
-    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    let (out, text) = gate_with(
+        &fixture,
+        path_without_bend(&fixture.bin),
+        None,
+        &["--max-tier", "3"],
+    );
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(
-        text.contains("NotRun [acceptance]: enabled at tier 1 (<= --max-tier 1)"),
+        text.contains("NotRun [miri]: enabled at tier 3 (<= --max-tier 3)"),
         "{text}"
     );
     assert!(
-        text.contains("  - acceptance: NotRun (enabled at tier 1, no command mapped"),
+        text.contains("  - miri: NotRun (enabled at tier 3, no command mapped"),
         "{text}"
     );
-    assert!(!text.contains("skip acceptance"), "{text}");
-    assert!(text.contains("none ran for: acceptance"), "{text}");
+    assert!(!text.contains("skip miri"), "{text}");
+    assert!(text.contains("none ran for: miri"), "{text}");
     let yaml = fs::read_to_string(fixture.repo.join("rust-tops.yaml")).expect("yaml");
     let doc: serde_json::Value = serde_saphyr::from_str(&yaml).expect("yaml parses");
     #[expect(
@@ -1889,7 +1903,7 @@ fn an_enabled_unmapped_layer_in_range_is_not_run_and_fails() {
         &fixture,
         path_without_bend(&fixture.bin),
         None,
-        &["--dry-run"],
+        &["--max-tier", "3", "--dry-run"],
     );
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(

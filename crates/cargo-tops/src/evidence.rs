@@ -131,7 +131,7 @@ pub(crate) fn junit_path(root: &Path, target: &Path) -> Result<PathBuf, String> 
 /// Returns how many matching tests passed.
 ///
 /// # Errors
-/// The detail for a `fail`: it names the filter, and the report path read
+/// The detail for a `fail` (the judge adds the layer): it names the filter, and the report path read
 /// (relative to `root`) or the `[profile.ci.junit]` setting.
 pub(crate) fn credit(
     layer: &str,
@@ -139,7 +139,7 @@ pub(crate) fn credit(
     target: &Path,
     filter: &str,
 ) -> Result<usize, String> {
-    let path = junit_path(root, target).map_err(|why| format!("{layer}: {why}"))?;
+    let path = junit_path(root, target)?;
     let shown = path
         .strip_prefix(root)
         .unwrap_or(&path)
@@ -147,7 +147,7 @@ pub(crate) fn credit(
         .to_string();
     let xml = fs::read_to_string(&path).map_err(|_| {
         format!(
-            "{layer}: no JUnit report at {shown}; the credited run must write one \
+            "no JUnit report at {shown}; the credited run must write one \
              (`[profile.ci.junit]` in .config/nextest.toml)"
         )
     })?;
@@ -161,7 +161,7 @@ pub(crate) fn credit(
         "no test matches"
     };
     Err(format!(
-        "{layer}: the credited run's report {shown} holds no passed test whose name has a `::` segment starting with \
+        "the credited run's report {shown} holds no passed test whose name has a `::` segment starting with \
          `{filter}` ({why}); add one, or set gates.{layer}.test_filter"
     ))
 }
@@ -322,10 +322,7 @@ mod tests {
     fn no_junit_setting_names_the_junit_setting() {
         let dir = fixture(None, Some(REPORT));
         let why = run(&dir, "property").unwrap_err();
-        assert!(
-            why.starts_with("property: no JUnit report is configured"),
-            "{why}"
-        );
+        assert!(why.starts_with("no JUnit report is configured"), "{why}");
         assert!(why.contains("[profile.ci.junit]"), "{why}");
         let bare = fixture(Some("[profile.ci]\nretries = 0\n"), Some(REPORT));
         assert!(run(&bare, "property").is_err());

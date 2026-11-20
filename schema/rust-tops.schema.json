@@ -221,6 +221,21 @@
             "required_on_classes": {
               "type": "array",
               "items": { "type": "string" }
+            },
+            "test_filter": {
+              "type": "string",
+              "minLength": 1,
+              "description": "A test counts for the property layer when a :: separated segment of its nextest name starts with this text. Default: property. A credited run must hold a passed test that matches (PROTOCOL.md section 9)."
+            }
+          }
+        },
+        "acceptance": {
+          "type": "object",
+          "properties": {
+            "test_filter": {
+              "type": "string",
+              "minLength": 1,
+              "description": "A test counts for the acceptance layer when a :: separated segment of its nextest name starts with this text. Default: acceptance. A credited run must hold a passed test that matches (PROTOCOL.md section 6)."
             }
           }
         },

@@ -420,6 +420,15 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
     if let Some(numbers) = numbers {
         entry.insert("judged".into(), numbers);
     }
+    // A layer stopped on a note (the credit evidence of `property`) says why.
+    let noted = done
+        .runs
+        .iter()
+        .find(|run| run.layer == id)
+        .and_then(|run| run.note.clone());
+    if let Some(note) = noted {
+        entry.insert("detail".into(), json!(note));
+    }
     if id == "mutation" {
         name_the_base(plan, done, &mut entry);
     }
