@@ -137,11 +137,12 @@ pub(crate) fn parse_version(row: &Row, output: &str) -> Option<String> {
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
     let version = version.trim_end_matches('.');
-    let well_formed = !version.is_empty()
-        && version
-            .split('.')
-            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
-    well_formed.then(|| version.to_string())
+    // Only digits and dots are left, so a malformed version has an empty part:
+    // `1..2`, `.5`, or nothing at all.
+    version
+        .split('.')
+        .all(|part| !part.is_empty())
+        .then(|| version.to_string())
 }
 
 /// Whether `found` satisfies `pin`. Whole dot-separated parts only: `0.12`
@@ -257,19 +258,11 @@ pub(crate) fn check_row(
         None => Verdict::Missing {
             asked: row.argv.join(" "),
         },
-        Some(_) if row.present.iter().any(|argv| probe(argv).is_none()) => Verdict::Missing {
-            asked: row
-                .present
-                .iter()
-                .find(|argv| probe(argv).is_none())
-                .map_or_else(String::new, |argv| argv.join(" ")),
-        },
-        Some(out) => match parse_version(row, &out) {
-            Some(found) if pin_matches(pin, &found) => Verdict::Ok { found },
-            Some(found) => Verdict::Mismatch { found },
-            None => Verdict::Mismatch {
-                found: out.lines().next().unwrap_or_default().trim().to_string(),
+        Some(out) => match row.present.iter().find(|argv| probe(argv).is_none()) {
+            Some(argv) => Verdict::Missing {
+                asked: argv.join(" "),
             },
+            None => version_verdict(row, pin, &out),
         },
     };
     Line {
@@ -279,44 +272,69 @@ pub(crate) fn check_row(
     }
 }
 
+/// What the line a tool printed says about its pin. A line with no version in
+/// the shape of the row is a mismatch, and the line is named as found.
+fn version_verdict(row: &Row, pin: &str, out: &str) -> Verdict {
+    let Some(found) = parse_version(row, out) else {
+        return Verdict::Mismatch {
+            found: out.lines().next().unwrap_or_default().trim().to_string(),
+        };
+    };
+    if pin_matches(pin, &found) {
+        Verdict::Ok { found }
+    } else {
+        Verdict::Mismatch { found }
+    }
+}
+
 /// Checks the pins. With `only`, the tools in it (a tool with no pin is
-/// skipped); without, every pin in the lock. A lock key with no row is skipped.
+/// skipped); without, every pin in the lock, and a lock key with no row is
+/// skipped.
 pub(crate) fn verify(
     pins: &BTreeMap<String, String>,
     only: Option<&[&str]>,
     probe: &mut dyn FnMut(&[&str]) -> Option<String>,
 ) -> Vec<Line> {
-    let mut lines = Vec::new();
-    for row in &ROWS {
-        if only.is_some_and(|only| !only.contains(&row.key)) {
-            continue;
-        }
-        match pins.get(row.key) {
-            Some(pin) => lines.push(check_row(row, pin, probe)),
-            None if only.is_some() => lines.push(Line {
+    let mut lines = tool_lines(pins, only, probe);
+    if only.is_none() {
+        lines.extend(unmatched_keys(pins));
+    }
+    lines
+}
+
+/// One line for each table row the check is about, in table order.
+fn tool_lines(
+    pins: &BTreeMap<String, String>,
+    only: Option<&[&str]>,
+    probe: &mut dyn FnMut(&[&str]) -> Option<String>,
+) -> Vec<Line> {
+    ROWS.iter()
+        .filter(|row| only.is_none_or(|only| only.contains(&row.key)))
+        .filter_map(|row| match pins.get(row.key) {
+            Some(pin) => Some(check_row(row, pin, probe)),
+            None => only.map(|_| Line {
                 key: row.key.to_string(),
                 pin: String::new(),
                 verdict: Verdict::Skipped {
                     why: "no pin in rust-tops.lock",
                 },
             }),
-            None => {}
-        }
-    }
-    if only.is_none() {
-        for (key, pin) in pins {
-            if !ROWS.iter().any(|row| row.key == key) {
-                lines.push(Line {
-                    key: key.clone(),
-                    pin: pin.clone(),
-                    verdict: Verdict::Skipped {
-                        why: "a library or name, not a tool on PATH",
-                    },
-                });
-            }
-        }
-    }
-    lines
+        })
+        .collect()
+}
+
+/// The lock keys that name no tool: a library or a runner. Skipped.
+fn unmatched_keys(pins: &BTreeMap<String, String>) -> Vec<Line> {
+    pins.iter()
+        .filter(|(key, _)| row(key).is_none())
+        .map(|(key, pin)| Line {
+            key: key.clone(),
+            pin: pin.clone(),
+            verdict: Verdict::Skipped {
+                why: "a library or name, not a tool on PATH",
+            },
+        })
+        .collect()
 }
 
 /// The version each pinned tool prints now, for `--write`. A tool that is
@@ -420,6 +438,19 @@ fn verify_command(
     })
 }
 
+/// One line for each pinned tool `--write` is about: the old and new value
+/// when they differ, and that a tool that could not be run keeps its value.
+fn write_lines(pins: &BTreeMap<String, String>, found: &BTreeMap<String, String>) -> Vec<String> {
+    pins.iter()
+        .filter(|(key, _)| row(key).is_some())
+        .map(|(key, pin)| match found.get(key) {
+            Some(now) if now != pin => format!("wrote    {key}: {pin} -> {now}"),
+            Some(_) => format!("kept     {key} {pin}"),
+            None => format!("kept     {key} {pin}: not found"),
+        })
+        .collect()
+}
+
 fn write_command(
     dir: &Path,
     path: &Path,
@@ -427,13 +458,8 @@ fn write_command(
     pins: &BTreeMap<String, String>,
 ) -> anyhow::Result<ExitCode> {
     let found = found_versions(pins, &mut probe_in(dir));
-    for (key, pin) in pins {
-        match found.get(key) {
-            Some(now) if now == pin => println!("kept     {key} {pin}"),
-            Some(now) => println!("wrote    {key}: {pin} -> {now}"),
-            None if row(key).is_some() => println!("kept     {key} {pin}: not found"),
-            None => println!("skipped  {key}: a library or name, not a tool on PATH"),
-        }
+    for line in write_lines(pins, &found) {
+        println!("{line}");
     }
     let written = write_values(text, &found);
     if written != text {
@@ -531,6 +557,50 @@ mod tests {
             [
                 "missing  clippy: pin 1.99.1, not found",
                 "ok       rustfmt 1.99.1 (pin 1.99.1)",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_version_with_an_empty_part_reads_as_none() {
+        for out in [
+            "cargo-nextest 1..2\n",
+            "cargo-nextest .5\n",
+            "cargo-nextest \n",
+        ] {
+            assert_eq!(parse_version(row("cargo-nextest"), out), None, "{out:?}");
+        }
+        // A suffix after the digits and dots is cut, and a trailing dot goes.
+        for (out, want) in [
+            ("cargo-nextest 1.2-rc\n", "1.2"),
+            ("cargo-nextest 1.\n", "1"),
+        ] {
+            assert_eq!(
+                parse_version(row("cargo-nextest"), out).as_deref(),
+                Some(want),
+                "{out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_lines_say_what_changed_and_leave_library_rows_out() {
+        let pins = BTreeMap::from([
+            ("cargo-crap".to_string(), "0.9.0".to_string()),
+            ("cargo-deny".to_string(), "0.18.9".to_string()),
+            ("cargo-nextest".to_string(), "0.9.145".to_string()),
+            ("proptest".to_string(), "1".to_string()),
+        ]);
+        let found = BTreeMap::from([
+            ("cargo-deny".to_string(), "0.18.9".to_string()),
+            ("cargo-nextest".to_string(), "0.9.150".to_string()),
+        ]);
+        assert_eq!(
+            write_lines(&pins, &found),
+            [
+                "kept     cargo-crap 0.9.0: not found",
+                "kept     cargo-deny 0.18.9",
+                "wrote    cargo-nextest: 0.9.145 -> 0.9.150",
             ]
         );
     }

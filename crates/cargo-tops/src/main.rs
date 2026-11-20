@@ -110,10 +110,10 @@ impl LockArgs {
     }
 }
 
+/// The commands that act on a project: the directory `--path` names, with its
+/// `rust-tops.yaml` and `rust-tops.lock`.
 #[derive(Subcommand)]
-enum Commands {
-    /// Write rust-tops.yaml, rust-tops.lock, AGENTS.md, RUST-TOPS.md and the drop-in tool configs, read from the crate's Cargo.toml
-    Init(InitArgs),
+enum ProjectCommand {
     /// Validate rust-tops.yaml against the protocol schema (typed check)
     Check {
         #[arg(long, default_value = ".")]
@@ -157,6 +157,14 @@ Where more than one applies, 2 wins over 3, and 3 over 1.")]
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Write rust-tops.yaml, rust-tops.lock, AGENTS.md, RUST-TOPS.md and the drop-in tool configs, read from the crate's Cargo.toml
+    Init(InitArgs),
+    #[command(flatten)]
+    Project(ProjectCommand),
     /// Print the package version, the protocol it implements, and the pins in ./rust-tops.lock
     Version,
 }
@@ -223,8 +231,19 @@ fn run() -> Result<ExitCode> {
             init(&args)?;
             Ok(ExitCode::SUCCESS)
         }
-        Commands::Check { path } => check_command(&path),
-        Commands::Gate {
+        Commands::Project(command) => run_project(command),
+        Commands::Version => {
+            print_version();
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+/// A command that acts on a project.
+fn run_project(command: ProjectCommand) -> Result<ExitCode> {
+    match command {
+        ProjectCommand::Check { path } => check_command(&path),
+        ProjectCommand::Gate {
             path,
             max_tier,
             dry_run,
@@ -237,14 +256,10 @@ fn run() -> Result<ExitCode> {
             },
             base.as_deref(),
         )),
-        Commands::Lock(args) => lock::command(&args.path, &args.action()),
-        Commands::CrapBaseline { path } => {
+        ProjectCommand::Lock(args) => lock::command(&args.path, &args.action()),
+        ProjectCommand::CrapBaseline { path } => {
             let cfg = load_config(&path)?;
             floors::record_baseline(&path, &cfg)?;
-            Ok(ExitCode::SUCCESS)
-        }
-        Commands::Version => {
-            print_version();
             Ok(ExitCode::SUCCESS)
         }
     }

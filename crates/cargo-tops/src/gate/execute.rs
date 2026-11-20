@@ -162,7 +162,10 @@ pub(crate) fn run<'a>(dir: &Path, plan: &GatePlan<'a>, mode: Mode) -> Result<Exe
         asked: HashMap::new(),
     };
     for unit in &plan.units {
-        runner.unit(unit)?;
+        // A layer that needs no pinned tool has no pins to ask.
+        if !runner.pinned_tools_stop(unit.layer) {
+            runner.unit(unit)?;
+        }
     }
     if runner.live {
         runner.take_shared();
@@ -190,16 +193,10 @@ impl<'a> Runner<'_, 'a> {
         match &unit.what {
             What::Shared(from) => self.shared(layer, from),
             What::NotRun => self.not_run(layer),
-            What::Mutation(mutation) => {
-                if !self.pinned_tools_stop(layer) {
-                    self.mutation(layer, mutation)?;
-                }
-            }
+            What::Mutation(mutation) => self.mutation(layer, mutation)?,
             What::Chains(chains) => {
-                if !self.pinned_tools_stop(layer) {
-                    for chain in chains {
-                        self.chain(layer, chain)?;
-                    }
+                for chain in chains {
+                    self.chain(layer, chain)?;
                 }
             }
         }

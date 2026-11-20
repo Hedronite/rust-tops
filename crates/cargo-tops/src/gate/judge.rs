@@ -485,7 +485,8 @@ pub(crate) fn laws_evaluated(cases: &Path) -> Option<(usize, usize)> {
 pub(crate) fn run_failure(run: &Run) -> Option<String> {
     match run.outcome {
         Outcome::Passed | Outcome::Vacuous => None,
-        Outcome::Failed => Some(match &run.note {
+        // A tool at another version always carries its note: tool, pin, found.
+        Outcome::Failed | Outcome::ToolMismatch => Some(match &run.note {
             Some(note) => format!("{}: {note}", run.layer),
             None => format!("{}: `{}` failed", run.layer, run.step),
         }),
@@ -496,13 +497,6 @@ pub(crate) fn run_failure(run: &Run) -> Option<String> {
             };
             Some(format!("{}: {missing}", run.layer))
         }
-        Outcome::ToolMismatch => Some(format!(
-            "{}: {}",
-            run.layer,
-            run.note
-                .as_deref()
-                .unwrap_or("a tool is not its pinned version")
-        )),
     }
 }
 

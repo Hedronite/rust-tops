@@ -148,15 +148,22 @@ impl Outcome {
     }
 }
 
-impl fmt::Display for Outcome {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Outcome {
+    /// The words a run's outcome is named by in a problem line.
+    fn label(self) -> &'static str {
+        match self {
             Self::Passed => "passed",
             Self::Failed => "Failed",
             Self::ToolMissing => "not on PATH",
             Self::ToolMismatch => "not the pinned version",
             Self::Vacuous => "Vacuous",
-        })
+        }
+    }
+}
+
+impl fmt::Display for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
     }
 }
 
@@ -999,6 +1006,36 @@ fn is_env_assign(token: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+#[cfg(test)]
+mod outcome_words {
+    use super::Outcome;
+
+    #[test]
+    fn each_outcome_is_named_in_its_own_words() {
+        for (outcome, words) in [
+            (Outcome::Passed, "passed"),
+            (Outcome::Failed, "Failed"),
+            (Outcome::ToolMissing, "not on PATH"),
+            (Outcome::ToolMismatch, "not the pinned version"),
+            (Outcome::Vacuous, "Vacuous"),
+        ] {
+            assert_eq!(outcome.to_string(), words);
+        }
+    }
+
+    #[test]
+    fn a_missing_or_mismatched_tool_fails_the_gate_and_is_a_lacking_tool() {
+        for outcome in [Outcome::ToolMissing, Outcome::ToolMismatch] {
+            assert!(outcome.lacks_tool(), "{outcome}");
+            assert!(outcome.fails_the_gate(), "{outcome}");
+            assert_eq!(outcome.law_verdict(), Some(false), "{outcome}");
+        }
+        for outcome in [Outcome::Passed, Outcome::Failed, Outcome::Vacuous] {
+            assert!(!outcome.lacks_tool(), "{outcome}");
+        }
+    }
 }
 
 #[cfg(test)]
