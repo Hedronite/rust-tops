@@ -491,7 +491,7 @@ cargo mutants --in-diff /tmp/pr.diff -j 2 -- --skip ignored
 
 The first source that is set wins. A ref that is named by the flag or the key and does not name a commit fails the layer, and the failure names the ref. The diff is from `git merge-base <base> HEAD` to `HEAD`. The report names the base and its source (`flag`, `key` or `origin/HEAD`).
 
-When no source gives a base, the layer is `fail` if the `CI` environment variable is set and is not empty, `false` or `0`. The detail names `fetch-depth: 0` and `--base`: a checkout that never fetched the base must not read as a clean diff. When `CI` is unset, `false` or `0`, the layer is `vacuous`, and the detail lists each source tried. CI workflows pass `--base "origin/${{ github.base_ref || github.event.repository.default_branch }}"` from a checkout with `fetch-depth: 0`, because `actions/checkout` may not create `origin/HEAD`.
+`CI` counts as set when it is not empty and is not `0` or `false` (in any case). When no source gives a base, the layer is `fail` if `CI` is set. The report's `detail` and the gate's problem line name `fetch-depth: 0` and `--base`: a checkout that never fetched the base must not read as a clean diff. When `CI` is not set, the layer is `vacuous`, and the detail lists each source tried. A base that resolves but shares no history with `HEAD`, as in a shallow checkout, fails the diff and names `fetch-depth: 0` too. CI workflows pass `--base "origin/${{ github.base_ref || github.event.repository.default_branch }}"` from a checkout with `fetch-depth: 0`, because `actions/checkout` may not create `origin/HEAD`.
 
 Pass criteria:
 
@@ -1021,7 +1021,7 @@ cargo test --doc --workspace
 cargo llvm-cov nextest --workspace --all-features \
   --lcov --output-path target/coverage/lcov.info --fail-under-lines 90
 cargo crap
-git diff origin/main...HEAD --unified=0 > /tmp/pr.diff
+git diff "$(git merge-base "$BASE" HEAD)" HEAD --unified=0 > /tmp/pr.diff   # BASE: section 8.3
 cargo mutants --in-diff /tmp/pr.diff
 
 # extra by class

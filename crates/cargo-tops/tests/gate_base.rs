@@ -251,6 +251,18 @@ fn mutation(report: &Value) -> &Value {
         .unwrap_or_else(|| at(report, "/missing"))
 }
 
+/// The entries of `problems` that start with `mutation:`.
+fn mutation_problems(report: &Value) -> Vec<String> {
+    at(report, "/problems")
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|problem| problem.starts_with("mutation:"))
+        .map(str::to_string)
+        .collect()
+}
+
 fn cargo_log(fixture: &Fixture) -> String {
     fs::read_to_string(fixture.root.join("cargo.log")).unwrap_or_default()
 }
@@ -411,6 +423,22 @@ fn expect_unresolved(fixture: &Fixture, text: &str, out: &Output, name: &str, so
         &json!({ "ref": name, "source": source, "resolved": false }),
         "{row}"
     );
+    // Git never ran: the problem says what happened, and no command is
+    // reported as failed or counted as run.
+    let problems = mutation_problems(&report);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .all(|p| p.contains(name) && !p.contains("failed") && !p.contains("merge-base")),
+        "{problems:?}"
+    );
+    assert!(
+        at(&report, "/count")
+            .as_str()
+            .is_some_and(|c| c.contains("none ran for: mutation")),
+        "{report}"
+    );
 }
 
 #[test]
@@ -470,6 +498,21 @@ fn no_base_under_ci_fails_naming_fetch_depth_and_the_flag() {
         let row = mutation(&report);
         assert_eq!(at(row, "/verdict"), "fail", "{row}");
         assert_eq!(at(&report, "/ok"), &json!(false));
+        // The report says what stdout says: the remedy, and no command that
+        // failed, because none did.
+        let detail = at(row, "/detail").as_str().unwrap_or_default();
+        assert!(
+            detail.contains("fetch-depth: 0") && detail.contains("--base"),
+            "{row}"
+        );
+        let problems = mutation_problems(&report);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems.iter().all(|p| p.contains("fetch-depth: 0")
+                && p.contains("--base")
+                && !p.contains("failed")),
+            "{problems:?}"
+        );
     }
 }
 
@@ -610,4 +653,90 @@ fn the_flag_is_in_the_gate_help() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("--base <REF>"), "{text}");
     assert!(text.contains("fetch-depth: 0"), "{text}");
+}
+
+#[test]
+fn a_dry_run_with_no_base_gives_the_same_remedy_in_the_report() {
+    let fixture = fixture("dry-ci", "main");
+    let (out, text) = gate(&fixture, &["--dry-run"], Some("true"));
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    let doc = report(&fixture);
+    let detail = at(mutation(&doc), "/detail").as_str().unwrap_or_default();
+    assert!(
+        detail.contains("fetch-depth: 0") && detail.contains("--base"),
+        "{detail}"
+    );
+    let (_, _) = gate(&fixture, &["--dry-run"], None);
+    let doc = report(&fixture);
+    let detail = at(mutation(&doc), "/detail").as_str().unwrap_or_default();
+    assert!(
+        detail.contains("no mutation base") && !detail.contains("fetch-depth"),
+        "{detail}"
+    );
+}
+
+#[test]
+fn an_origin_head_that_is_not_a_symbolic_ref_is_still_a_base() {
+    let fixture = fixture("direct-head", "main");
+    let base = git(&fixture, &fixture.repo, &["rev-parse", "HEAD"]);
+    commit_file(&fixture, "b.rs");
+    git(
+        &fixture,
+        &fixture.repo,
+        &[
+            "update-ref",
+            "--no-deref",
+            "refs/remotes/origin/HEAD",
+            &base,
+        ],
+    );
+    let (out, text) = gate(&fixture, &[], Some("true"));
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(mutants_ran(&fixture), "{}", cargo_log(&fixture));
+    assert!(!text.contains("not set"), "{text}");
+    let report = report(&fixture);
+    assert_eq!(
+        at(mutation(&report), "/judged/base"),
+        &json!({ "ref": "origin/HEAD", "source": "origin/HEAD" })
+    );
+}
+
+#[test]
+fn a_base_with_no_common_history_says_why_and_names_fetch_depth() {
+    // What a shallow checkout leaves: the base is a commit, and
+    // `git merge-base` finds nothing in common with HEAD.
+    let fixture = fixture("no-merge-base", "main");
+    let orphan = git(
+        &fixture,
+        &fixture.repo,
+        &[
+            "commit-tree",
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            "-m",
+            "unrelated",
+        ],
+    );
+    remote_ref(&fixture, "orph", &orphan);
+    let (out, text) = gate(&fixture, &["--base", "origin/orph"], None);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("a failed diff is never waived"), "{text}");
+    assert!(
+        text.contains("fetch-depth: 0") && text.contains("origin/orph"),
+        "{text}"
+    );
+    assert!(!mutants_ran(&fixture));
+    let report = report(&fixture);
+    let detail = at(mutation(&report), "/detail")
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        detail.contains("fetch-depth: 0") && detail.contains("origin/orph"),
+        "{detail}"
+    );
+    let problems = mutation_problems(&report);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems.iter().all(|p| p.contains("fetch-depth: 0")),
+        "{problems:?}"
+    );
 }

@@ -109,6 +109,7 @@ impl TestCommands {
             cmd: source.map(|run| run.cmd.clone()).unwrap_or_default(),
             step: source.map(|run| run.step.clone()).unwrap_or_default(),
             outcome,
+            note: None,
         }
     }
 }

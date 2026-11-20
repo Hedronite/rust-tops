@@ -269,6 +269,7 @@ mod tests {
             cmd: format!("{layer} cmd"),
             step: format!("{layer} step"),
             outcome,
+            note: None,
         }
     }
 

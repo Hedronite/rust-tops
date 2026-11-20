@@ -16,7 +16,7 @@ use super::{Fault, Mode, Options};
 use crate::config::TopsConfig;
 use crate::facts::{Outcome, Run};
 use crate::floors::{CoverageNumbers, CrapNumbers};
-use crate::steps::Base;
+use crate::steps::{self, Base};
 use crate::{laws, PROTOCOL_VERSION};
 
 /// The file name under the gate's report directory.
@@ -421,15 +421,17 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
         entry.insert("judged".into(), numbers);
     }
     if id == "mutation" {
-        name_the_base(plan, &mut entry);
+        name_the_base(plan, done, &mut entry);
     }
     entry
 }
 
 /// The mutation row names the base the diff started from and where it came
-/// from (`flag`, `key` or `origin/HEAD`), under `judged.base`. A base that
-/// was named and is not a commit, or none at all, also says so in `detail`.
-fn name_the_base(plan: &GatePlan<'_>, entry: &mut Map<String, Value>) {
+/// from (`flag`, `key` or `origin/HEAD`), under `judged.base`. When the
+/// layer stopped before `cargo mutants`, `detail` says why, in the words the
+/// run printed. A dry run has no run, so a base that is missing or not a
+/// commit is worded by [`steps::stop_note`] from the plan alone.
+fn name_the_base(plan: &GatePlan<'_>, done: &Executed<'_>, entry: &mut Map<String, Value>) {
     let Some(What::Mutation(mutation)) = plan
         .units
         .iter()
@@ -438,25 +440,34 @@ fn name_the_base(plan: &GatePlan<'_>, entry: &mut Map<String, Value>) {
     else {
         return;
     };
-    let (base, detail) = match &mutation.base {
-        Base::Found { source, name } => {
-            (json!({ "ref": name, "source": source.report_name() }), None)
+    let base = match &mutation.base {
+        Base::Found { source, name } => json!({ "ref": name, "source": source.report_name() }),
+        Base::Unresolved { source, name } => {
+            json!({ "ref": name, "source": source.report_name(), "resolved": false })
         }
-        Base::Unresolved { source, name } => (
-            json!({ "ref": name, "source": source.report_name(), "resolved": false }),
-            Some(format!(
-                "{} names `{name}`, which is not a commit",
-                source.label()
-            )),
-        ),
-        Base::Missing { tried } => (
-            json!({ "ref": null, "source": null, "tried": tried }),
-            Some(format!("no mutation base: {}", tried.join("; "))),
-        ),
+        Base::Missing { tried, .. } => json!({ "ref": null, "source": null, "tried": tried }),
     };
-    entry.insert("judged".into(), json!({ "base": base }));
-    if let Some(detail) = detail {
+    put_judged(entry, "base", base);
+    let ran = done
+        .runs
+        .iter()
+        .find(|run| run.layer == "mutation")
+        .and_then(|run| run.note.clone());
+    let planned = (!matches!(mutation.base, Base::Found { .. }))
+        .then(|| steps::stop_note(&mutation.base, Outcome::Vacuous).map(|(_, note)| note))
+        .flatten();
+    if let Some(detail) = ran.or(planned) {
         entry.insert("detail".into(), json!(detail));
+    }
+}
+
+/// Set `key` in the row's `judged` object, keeping what else is there.
+fn put_judged(entry: &mut Map<String, Value>, key: &str, value: Value) {
+    let judged = entry
+        .entry("judged".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(map) = judged.as_object_mut() {
+        map.insert(key.to_string(), value);
     }
 }
 
@@ -512,7 +523,8 @@ fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, Option<usize>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear, REPORT};
+    use super::{clear, put_judged, REPORT};
+    use serde_json::{json, Map};
     use std::fs;
 
     #[test]
@@ -524,5 +536,17 @@ mod tests {
         clear(&dir);
         assert!(!dir.join(REPORT).exists());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_judged_key_is_added_beside_the_ones_already_there() {
+        let mut row = Map::new();
+        put_judged(&mut row, "base", json!({ "ref": "x" }));
+        assert_eq!(row.get("judged"), Some(&json!({ "base": { "ref": "x" } })));
+        put_judged(&mut row, "caught", json!(3));
+        assert_eq!(
+            row.get("judged"),
+            Some(&json!({ "base": { "ref": "x" }, "caught": 3 }))
+        );
     }
 }
