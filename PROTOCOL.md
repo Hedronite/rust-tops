@@ -983,6 +983,19 @@ Expired exemptions fail CI. Reasons shorter than one clause are rejected.
 
 How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `mutation` exemption explains survivors per function. A missed mutant inside a function is explained only by a record whose `symbol` names that function (matched as for `crap`) and whose `path` covers its file. A missed mutant in no function (cargo-mutants writes `function: null` for a `const` or `static` initialiser, a type alias or a field type) is explained only by a record with no `symbol` whose `path` covers its file. No record, of any shape or path, explains every survivor, so `gates.mutation.unexplained_survivors_max` always decides. A record with no `symbol` and a whole-crate `path` (`**`, `./**`, `**/*`, `.` or `./`) still lifts the class floor on `unexplained_survivors_max` in `cargo tops check` (§4), as for the other floors; it explains no survivor inside a function. A `coverage` exemption takes a file out of the per-file floor; its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
 
+The `symbol` of a `crap` or `mutation` record matches the function name as cargo-mutants 27.1.0 writes it, either in full or as a `::` suffix. A bare `run` therefore matches every function called `run` under the record's `path`, and a bare `twice` matches that method in every impl there. Write the qualified form. The forms 27.1.0 writes are:
+
+| Function | Name written |
+|---|---|
+| a free function `run` | `run` |
+| a method of `Cli` | `Cli::run` |
+| a function in an inline `mod inner` | `inner::run` |
+| a method in `impl Twice for Cli` | `<impl Twice for Cli>::twice` |
+| a method of a generic type | `Wrap<T>::get` |
+| a function in a file module (`src/a/b.rs`) | `run`, with no `a::b::` prefix |
+
+A `Cli::twice` record does not match the trait-impl form above, since that name ends in `Cli>::twice`; write it as the table shows. The `path` is what tells two file modules apart.
+
 ---
 
 ## 20. Worked protocol — a 40-line codec
