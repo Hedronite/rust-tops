@@ -479,7 +479,9 @@ pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Resu
 /// outcomes it wrote.
 fn settled(mut run: Run, ended: &Ended, output: &Path) -> Mutated {
     if ended.outcome != Outcome::Passed {
-        run.note = exit_note(&run.step, ended);
+        // A missing tool has its own line; a failed run says what its exit means.
+        run.note = (ended.outcome == Outcome::Failed)
+            .then(|| format!("`{}` {}", run.step, exit_meaning(ended.code)));
         return Mutated::without_outcomes(run);
     }
     let found = mutation::read(output, ended.code.unwrap_or_default(), &ended.stderr);
@@ -494,17 +496,15 @@ fn settled(mut run: Run, ended: &Ended, output: &Path) -> Mutated {
 }
 
 /// What a failed `cargo mutants` exit means, in cargo-mutants' own terms.
-fn exit_note(step: &str, ended: &Ended) -> Option<String> {
-    if ended.outcome != Outcome::Failed {
-        return None;
+fn exit_meaning(code: Option<i32>) -> String {
+    match code {
+        Some(1) => "exited 1: it was given arguments it does not accept".to_string(),
+        Some(4) => {
+            "exited 4: the tests fail in the unmutated tree, so no mutant was tested".to_string()
+        }
+        Some(code) => format!("exited {code}"),
+        None => "was ended by a signal".to_string(),
     }
-    let what = match ended.code {
-        Some(1) => "exited 1: it was given arguments it does not accept",
-        Some(4) => "exited 4: the tests fail in the unmutated tree, so no mutant was tested",
-        Some(code) => return Some(format!("`{step}` exited {code}")),
-        None => "was ended by a signal",
-    };
-    Some(format!("`{step}` {what}"))
 }
 
 /// The run of a layer that stopped on its base or its diff: prints the
@@ -653,7 +653,7 @@ fn spawn(dir: &Path, step: &Step) -> Result<Spawned> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_mutants, run_step, version_ask, Executed, Timing};
+    use super::{exit_meaning, run_mutants, run_step, version_ask, Executed, Timing};
     use crate::facts::Outcome;
     use crate::steps::Step;
     use std::fs;
@@ -757,5 +757,27 @@ mod tests {
                 .outcome,
             Outcome::ToolMissing
         );
+    }
+
+    #[test]
+    fn a_mutants_spawn_error_is_an_error_and_a_signal_is_named() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-mutexec-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let plain = dir.join("plain");
+        fs::write(&plain, "x").expect("write");
+        let blocked = Step::command([plain.display().to_string()]);
+        let err = run_mutants(Path::new("."), &blocked)
+            .err()
+            .expect("not spawnable");
+        assert!(format!("{err:#}").contains("spawn"), "{err:#}");
+        fs::remove_dir_all(&dir).ok();
+        let killed = Step::command(["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()]);
+        let ended = run_mutants(Path::new("."), &killed).expect("it ran");
+        assert_eq!((ended.outcome, ended.code), (Outcome::Failed, None));
+        assert!(exit_meaning(None).contains("signal"));
+        assert!(exit_meaning(Some(4)).contains("unmutated tree"));
+        assert!(exit_meaning(Some(1)).contains("exited 1"));
+        assert_eq!(exit_meaning(Some(77)), "exited 77");
     }
 }

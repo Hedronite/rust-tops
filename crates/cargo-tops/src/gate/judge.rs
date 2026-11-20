@@ -501,7 +501,8 @@ pub(crate) fn run_failure(run: &Run) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_cases, crate_prefix};
+    use super::{clear_cases, crate_prefix, laws_verdict, Judgement};
+    use crate::floors;
     use std::fs;
     use std::path::PathBuf;
 
@@ -559,5 +560,46 @@ mod tests {
         let empty = scratch("prefix-none");
         assert_eq!(crate_prefix(&empty, "cargo-tops"), "");
         fs::remove_dir_all(&empty).ok();
+    }
+
+    /// A judgement of a run in which the laws layer did not run.
+    fn quiet() -> Judgement {
+        Judgement {
+            failed: Vec::new(),
+            evaluated: String::new(),
+            count: String::new(),
+            ran: 0,
+            commands: 0,
+            vacuous: 0,
+            measured: floors::Judged::default(),
+            laws_seconds: 0.0,
+            bend_ran: false,
+            laws_failed: false,
+            environment: false,
+            law_total: 0,
+            survivors: None,
+        }
+    }
+
+    #[test]
+    fn the_laws_row_is_not_run_unless_bend_ran_and_then_pass_or_fail() {
+        assert_eq!(laws_verdict(None), "not-run");
+        assert_eq!(laws_verdict(Some(&quiet())), "not-run");
+        let failed_without_bend = Judgement {
+            laws_failed: true,
+            ..quiet()
+        };
+        assert_eq!(laws_verdict(Some(&failed_without_bend)), "not-run");
+        let passed = Judgement {
+            bend_ran: true,
+            ..quiet()
+        };
+        assert_eq!(laws_verdict(Some(&passed)), "pass");
+        let failed = Judgement {
+            bend_ran: true,
+            laws_failed: true,
+            ..quiet()
+        };
+        assert_eq!(laws_verdict(Some(&failed)), "fail");
     }
 }
