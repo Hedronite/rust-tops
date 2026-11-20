@@ -306,15 +306,58 @@ fn acceptance_follows_the_same_rule_with_its_own_filter() {
     assert_eq!(verdict, "pass", "its own filter, not property's");
 }
 
-/// The kit holds the property tests its own `property` layer credits. This is
-/// the cheap half of the plant: removing `tests/property.rs` leaves the kit's
-/// coverage run with no test named `property`, and the gate fails the layer.
+/// The kit holds the property tests its own `property` layer credits. A
+/// test cannot run the plant (remove `tests/property.rs` and the example
+/// crate's `property_*` tests, then gate: `property` fails; restore only
+/// `tests/property.rs`: it passes). It guards what the plant relies on: the
+/// file has at least three proptest properties, each starting with
+/// `property`, and no other test in this crate starts a name segment with
+/// `property`, so the file is what the layer's evidence rests on here.
 #[test]
 fn the_kit_has_at_least_three_property_tests() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/property.rs"))
-            .expect("the kit's tests/property.rs");
+        fs::read_to_string(root.join("tests/property.rs")).expect("the kit's tests/property.rs");
     let named = source.matches("fn property_").count();
     assert!(named >= 3, "{named} property tests");
     assert!(source.contains("proptest!"), "they use proptest");
+    assert!(manifest_has_proptest(root), "proptest is a dev-dependency");
+    let strays = tests_named_property_elsewhere(root);
+    assert!(
+        strays.is_empty(),
+        "other kit tests start with property: {strays:?}"
+    );
+}
+
+fn manifest_has_proptest(root: &Path) -> bool {
+    fs::read_to_string(root.join("Cargo.toml")).is_ok_and(|text| text.contains("proptest"))
+}
+
+/// Test functions in this crate, outside `tests/property.rs`, whose name
+/// starts with `property` (or has a `property` module segment).
+fn tests_named_property_elsewhere(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for dir in ["src", "tests"] {
+        let mut stack = vec![root.join(dir)];
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                stack.extend(
+                    fs::read_dir(&path)
+                        .expect("read dir")
+                        .flatten()
+                        .map(|e| e.path()),
+                );
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && path.file_name().is_some_and(|name| name != "property.rs")
+            {
+                let text = fs::read_to_string(&path).unwrap_or_default();
+                found.extend(
+                    text.lines()
+                        .filter(|line| line.trim_start().starts_with("fn property"))
+                        .map(|line| format!("{}: {}", path.display(), line.trim())),
+                );
+            }
+        }
+    }
+    found
 }

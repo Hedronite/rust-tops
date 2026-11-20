@@ -3,7 +3,7 @@
 //!
 //! `property` and `acceptance` may take another layer's run (see
 //! [`crate::credit`]). That run passes for them only if its JUnit report
-//! holds a test whose name contains the layer's `test_filter` and that test
+//! holds a test whose name matches the layer's `test_filter` (see [`matches`]) and that test
 //! passed. This module reads that one file. It spawns nothing and builds
 //! nothing, so reading it costs no second test run.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
@@ -24,7 +24,16 @@ pub(crate) struct Tally {
     pub failed: usize,
 }
 
-/// Counts the tests in a JUnit report whose name contains `filter`.
+/// Whether a nextest test name matches `filter` (HN-L2): one `::`-separated
+/// segment of the name starts with it. `property_x` and `tests::property_x`
+/// match `property`; `a_property_x` does not. A layer that runs itself
+/// selects tests with the same rule.
+#[must_use]
+pub(crate) fn matches(name: &str, filter: &str) -> bool {
+    name.split("::").any(|segment| segment.starts_with(filter))
+}
+
+/// Counts the tests in a JUnit report whose name matches `filter`.
 ///
 /// A test with a `failure`, `error` or `skipped` child did not pass. An empty
 /// `filter` matches every test.
@@ -32,7 +41,7 @@ pub(crate) struct Tally {
 pub(crate) fn tally(xml: &str, filter: &str) -> Tally {
     let mut tally = Tally::default();
     for (name, passed) in testcases(xml) {
-        if !name.contains(filter) {
+        if !matches(&name, filter) {
             continue;
         }
         if passed {
@@ -152,14 +161,14 @@ pub(crate) fn credit(
         "no test matches"
     };
     Err(format!(
-        "{layer}: the credited run's report {shown} holds no passed test whose name contains \
+        "{layer}: the credited run's report {shown} holds no passed test whose name has a `::` segment starting with \
          `{filter}` ({why}); add one, or set gates.{layer}.test_filter"
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{credit, junit_name, junit_path, tally, Tally};
+    use super::{credit, junit_name, junit_path, matches, tally, Tally};
     use std::fs;
     use std::path::Path;
 
@@ -181,7 +190,7 @@ mod tests {
 </testsuites>"#;
 
     #[test]
-    fn only_a_passed_test_whose_name_contains_the_filter_counts() {
+    fn only_a_passed_test_whose_name_matches_the_filter_counts() {
         assert_eq!(
             tally(REPORT, "property"),
             Tally {
@@ -199,6 +208,23 @@ mod tests {
         assert_eq!(tally(REPORT, "acceptance"), Tally::default());
         assert_eq!(tally(REPORT, "Property"), Tally::default());
         assert_eq!(tally("", "property"), Tally::default());
+    }
+
+    #[test]
+    fn a_segment_must_start_with_the_filter() {
+        assert!(matches("property_x", "property"));
+        assert!(matches("tests::property_x", "property"));
+        assert!(matches("a::property::b", "property"));
+        assert!(!matches("a_property_x", "property"));
+        assert!(!matches("tests::a_property", "property"));
+        assert!(!matches("Property_x", "property"));
+        assert!(matches("anything", ""));
+    }
+
+    #[test]
+    fn a_meta_test_that_only_mentions_the_filter_is_not_evidence() {
+        let xml = r#"<testcase name="a_property_filter_that_matches_nothing_fails"/>"#;
+        assert_eq!(tally(xml, "property"), Tally::default());
     }
 
     #[test]
