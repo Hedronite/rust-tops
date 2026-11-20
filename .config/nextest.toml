@@ -66,3 +66,14 @@ slow-timeout = { period = "10s", terminate-after = 6 }
 [[profile.ci.overrides]]
 filter = "binary(lock_verify)"
 slow-timeout = { period = "10s", terminate-after = 6 }
+
+# These tests run the whole gate against stub tools several times each, for
+# the kit suite only; they match nothing in an adopter. Since the gate asks each
+# pinned tool for its version, a gate runs about nine more commands. The slowest
+# test of them ran in 2.3 s on the base and 3.4 s to 3.9 s with the pins, alone
+# on the build machine. In the parallel run under coverage it timed out at 20 s
+# in 3 of 4 gates at a load of 6 to 13. They get 60 s; the profile timeout is not
+# raised.
+[[profile.ci.overrides]]
+filter = "binary(gate_survivors) | binary(gate_exemptions) | binary(gate_base)"
+slow-timeout = { period = "10s", terminate-after = 6 }
