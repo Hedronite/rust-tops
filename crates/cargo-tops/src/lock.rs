@@ -132,10 +132,10 @@ pub(crate) fn tools_for<'a>(layers: impl IntoIterator<Item = &'a str>) -> Vec<&'
 }
 
 /// The version on the first line of a tool's output, read by the row's rule:
-/// the first word after the prefix. The digits and dots at its front are the
-/// version; a `+build` part after them is cut. A word that goes on with
-/// anything else (`-rc.1`, `-nightly`) is a pre-release, and the whole word is
-/// the version, which no pin matches. `None` when the line does not have that
+/// the first word after the prefix. A word of digits and dots is the version
+/// (a trailing dot goes). A word that goes on with anything else (`-rc.1`,
+/// `-nightly`, `+build`) is a pre-release or a build, and the whole word is the
+/// version, which no pin matches. `None` when the line does not have that
 /// shape.
 pub(crate) fn parse_version(row: &Row, output: &str) -> Option<String> {
     let line = output.lines().next()?.trim();
@@ -148,11 +148,7 @@ pub(crate) fn parse_version(row: &Row, output: &str) -> Option<String> {
     if number.is_empty() {
         return None;
     }
-    let version = if rest.is_empty() || rest.starts_with('+') {
-        number
-    } else {
-        word
-    };
+    let version = if rest.is_empty() { number } else { word };
     // A malformed version has an empty part: `1..2`, `.5`, or nothing at all.
     version
         .split('.')
@@ -162,11 +158,12 @@ pub(crate) fn parse_version(row: &Row, output: &str) -> Option<String> {
 
 /// Whether `found` satisfies `pin`. Whole dot-separated parts only: `0.12`
 /// matches `0.12.3` and not `0.120.0`; `0.12.3` does not match `0.12`. A
-/// pre-release (`0.12.0-rc.1`) matches no pin.
+/// version that is not dot-separated digits (`0.12.0-rc.1`, `0.12.0+build`)
+/// matches no pin.
 pub(crate) fn pin_matches(pin: &str, found: &str) -> bool {
     let pin_parts: Vec<&str> = pin.split('.').collect();
     let found_parts: Vec<&str> = found.split('.').collect();
-    !found.contains('-') && found_parts.starts_with(&pin_parts)
+    is_dotted_digits(found) && found_parts.starts_with(&pin_parts)
 }
 
 /// Whether `text` is dot-separated digits, the only shape a pin or a version
@@ -294,9 +291,61 @@ fn pin_of(key: &str, value: &toml::Value) -> Result<String> {
     Ok(pin.to_string())
 }
 
-/// The pins of a lock text; no `[tools]` table is no pins.
-pub(crate) fn read_pins(text: &str) -> Result<BTreeMap<String, String>> {
-    Ok(read_lock(text)?.unwrap_or_default())
+/// The pins of a lock text read from `path`: an error for a lock that does not
+/// parse, holds a pin that cannot be read, or has no `[tools]` table (a
+/// misspelt `[tool]` header pins nothing, and must not look like no pins).
+fn pins_of_text(path: &Path, text: &str) -> Result<BTreeMap<String, String>> {
+    read_lock(text)
+        .with_context(|| format!("parse {}", path.display()))?
+        .ok_or_else(|| anyhow!("{} has no [tools] table", path.display()))
+}
+
+/// The pins of the lock file in `dir`: `None` when there is no such file, which
+/// pins nothing. A file that cannot be read (a directory, not UTF-8, no
+/// permission) or read as pins is an error.
+pub(crate) fn lock_file_pins(dir: &Path) -> Result<Option<BTreeMap<String, String>>> {
+    let path = dir.join(crate::TOOL_LOCK);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => pins_of_text(&path, &text).map(Some),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// The warnings about keys of the lock that no check will read: each key that
+/// is not a tool rust-tops knows (and not one of the three libraries and
+/// runners), and, when `needed` names a tool with no pin while such keys exist,
+/// both lists, so that a misspelt key is read against the tool it was meant
+/// for.
+pub(crate) fn pin_warnings(pins: &BTreeMap<String, String>, needed: &[&str]) -> Vec<String> {
+    let unknown: Vec<&str> = pins
+        .keys()
+        .map(String::as_str)
+        .filter(|key| row(key).is_none() && !NOT_TOOLS.contains(key))
+        .collect();
+    let unpinned: Vec<&str> = needed
+        .iter()
+        .copied()
+        .filter(|key| !pins.contains_key(*key))
+        .collect();
+    if unknown.is_empty() {
+        return Vec::new();
+    }
+    if unpinned.is_empty() {
+        return unknown
+            .iter()
+            .map(|key| {
+                format!(
+                    "warning: rust-tops.lock key {key} is not a tool rust-tops knows, not checked"
+                )
+            })
+            .collect();
+    }
+    vec![format!(
+        "warning: rust-tops.lock has no pin for {}, and holds {}, which rust-tops does not know as tools; nothing checks them",
+        unpinned.join(", "),
+        unknown.join(", ")
+    )]
 }
 
 /// What a probe returns: the stdout of the command, or why it did not answer.
@@ -364,17 +413,15 @@ fn version_verdict(row: &Row, pin: &str, out: &str) -> Verdict {
 }
 
 /// Checks the pins. With `only`, the tools in it (a tool with no pin is
-/// skipped); without, every pin in the lock, and a lock key with no row is
-/// skipped (a library or a runner) or unknown (anything else).
+/// skipped); without, every pin in the lock. A lock key with no row is skipped
+/// (a library or a runner) or unknown (anything else), whatever `only` says.
 pub(crate) fn verify(
     pins: &BTreeMap<String, String>,
     only: Option<&[&str]>,
     probe: &mut Probe<'_>,
 ) -> Vec<Line> {
     let mut lines = tool_lines(pins, only, probe);
-    if only.is_none() {
-        lines.extend(unmatched_keys(pins));
-    }
+    lines.extend(unmatched_keys(pins));
     lines
 }
 
@@ -405,7 +452,7 @@ fn tool_lines(
 /// and any other key (a misspelt tool, say) is named as unknown.
 const NOT_TOOLS: [&str; 3] = ["proptest", "criterion", "callgrind-runner"];
 
-fn unmatched_keys(pins: &BTreeMap<String, String>) -> Vec<Line> {
+pub(crate) fn unmatched_keys(pins: &BTreeMap<String, String>) -> Vec<Line> {
     pins.iter()
         .filter(|(key, _)| row(key).is_none())
         .map(|(key, pin)| Line {
@@ -462,9 +509,7 @@ pub(crate) fn command(dir: &Path, action: &Action) -> anyhow::Result<ExitCode> {
     let path = dir.join(crate::TOOL_LOCK);
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let pins = read_lock(&text)
-        .with_context(|| format!("read {}", path.display()))?
-        .ok_or_else(|| anyhow!("{} has no [tools] table", path.display()))?;
+    let pins = pins_of_text(&path, &text)?;
     match action {
         Action::Verify { max_tier } => verify_command(dir, &pins, *max_tier),
         Action::Write => write::write_command(dir, &path, &text, &pins),
@@ -604,10 +649,10 @@ mod tests {
         ] {
             assert_eq!(parse_version(row("cargo-nextest"), out), None, "{out:?}");
         }
-        // A build part is cut, and a trailing dot goes; a pre-release keeps its
-        // whole word, which no pin matches.
+        // A trailing dot goes; a pre-release or a build keeps its whole word,
+        // which no pin matches.
         for (out, want) in [
-            ("cargo-nextest 1.2+build.5\n", "1.2"),
+            ("cargo-nextest 1.2+build.5\n", "1.2+build.5"),
             ("cargo-nextest 1.\n", "1"),
             ("cargo-nextest 1.2-rc.1\n", "1.2-rc.1"),
             ("cargo-nextest 1.2.3-nightly (x)\n", "1.2.3-nightly"),
@@ -658,6 +703,7 @@ mod tests {
         for pin in ["0", "0.9", "0.9.0"] {
             assert!(!pin_matches(pin, "0.9.0-rc.1"), "{pin}");
             assert!(!pin_matches(pin, "0.9.0-nightly"), "{pin}");
+            assert!(!pin_matches(pin, "0.9.0+build.5"), "{pin}");
         }
     }
 
@@ -762,14 +808,14 @@ mod tests {
 
     #[test]
     fn read_lock_reads_strings_and_names_every_other_kind_of_value() {
-        let pins = read_pins("[tools]\nrustc = \"1.99.1\"\nproptest = \"1\"\ncallgrind-runner = \"gungraun-runner\"\n[notes]\nx = \"y\"\n").expect("pins");
+        let pins = read_lock("[tools]\nrustc = \"1.99.1\"\nproptest = \"1\"\ncallgrind-runner = \"gungraun-runner\"\n[notes]\nx = \"y\"\n").expect("pins");
+        let pins = pins.expect("a tools table");
         assert_eq!(pins.len(), 3);
         assert_eq!(
             pins.get("callgrind-runner").map(String::as_str),
             Some("gungraun-runner")
         );
         assert_eq!(read_lock("[notes]\nx = \"y\"\n").expect("no tools"), None);
-        assert!(read_pins("[notes]\n").expect("no pins").is_empty());
         for (lock, words) in [
             ("[tools\n", "parse"),
             (
@@ -890,5 +936,62 @@ mod tests {
                 ("rustc".to_string(), "1.99.2".to_string()),
             ])
         );
+    }
+
+    #[test]
+    fn an_unknown_key_is_a_warning_and_a_missing_pin_is_named_beside_it() {
+        let pins = |keys: &[&str]| -> BTreeMap<String, String> {
+            keys.iter()
+                .map(|key| ((*key).to_string(), "0.9.0".to_string()))
+                .collect()
+        };
+        // Nothing unknown, nothing to say, whatever is not pinned.
+        assert!(pin_warnings(&pins(&["cargo-crap"]), &["cargo-crap", "cargo-nextest"]).is_empty());
+        // The three libraries and runners are not unknown.
+        assert!(
+            pin_warnings(&pins(&["proptest", "criterion", "callgrind-runner"]), &[]).is_empty()
+        );
+        // An unknown key, every needed tool pinned: one line for the key.
+        assert_eq!(
+            pin_warnings(&pins(&["cargo-nextest", "cargo-nexttest", "foo"]), &["cargo-nextest"]),
+            [
+                "warning: rust-tops.lock key cargo-nexttest is not a tool rust-tops knows, not checked",
+                "warning: rust-tops.lock key foo is not a tool rust-tops knows, not checked",
+            ]
+        );
+        // An unknown key and a needed tool with no pin: both named, once.
+        assert_eq!(
+            pin_warnings(&pins(&["cargo-nexttest"]), &["cargo-nextest", "cargo-deny"]),
+            ["warning: rust-tops.lock has no pin for cargo-nextest, cargo-deny, and holds cargo-nexttest, which rust-tops does not know as tools; nothing checks them"]
+        );
+    }
+
+    #[test]
+    fn the_lock_file_is_none_when_it_is_missing_and_an_error_when_it_cannot_be_read_as_pins() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-lockfile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let lock = dir.join(crate::TOOL_LOCK);
+        assert_eq!(lock_file_pins(&dir).expect("no file"), None);
+        std::fs::write(&lock, "[tools]\nrustc = \"1.99.1\"\n").expect("write");
+        assert_eq!(
+            lock_file_pins(&dir).expect("pins").map(|pins| pins.len()),
+            Some(1)
+        );
+        for (text, words) in [
+            ("[tool]\nrustc = \"1.99.1\"\n", "has no [tools] table"),
+            ("[Tools]\n", "has no [tools] table"),
+            ("[tools\n", "parse"),
+        ] {
+            std::fs::write(&lock, text).expect("write");
+            let err = lock_file_pins(&dir).expect_err(text);
+            assert!(format!("{err:#}").contains(words), "{text}: {err:#}");
+        }
+        std::fs::write(&lock, [0xff, 0xfe, 0x00]).expect("write bytes");
+        let err = lock_file_pins(&dir).expect_err("not utf-8");
+        assert!(format!("{err:#}").contains("read "), "{err:#}");
+        std::fs::remove_file(&lock).expect("rm");
+        std::fs::create_dir(&lock).expect("mkdir lock");
+        assert!(lock_file_pins(&dir).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

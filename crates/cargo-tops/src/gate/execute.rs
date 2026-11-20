@@ -154,6 +154,9 @@ pub(crate) fn run<'a>(dir: &Path, plan: &GatePlan<'a>, mode: Mode) -> Result<Exe
         versions: HashMap::new(),
         asked: HashMap::new(),
     };
+    for warning in &plan.pin_warnings {
+        println!("{warning}");
+    }
     for unit in &plan.units {
         // A layer that needs no pinned tool has no pins to ask.
         if !runner.pinned_tools_stop(unit.layer) {

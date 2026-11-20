@@ -386,7 +386,7 @@ fn a_pin_that_is_not_dotted_digits_is_a_lock_error() {
 }
 
 #[test]
-fn a_pre_release_never_matches_a_release_pin_and_a_build_suffix_does() {
+fn a_pre_release_or_a_build_never_matches_a_release_pin() {
     for (shim, line, lock) in [
         (
             "cargo-crap",
@@ -418,12 +418,6 @@ fn a_pre_release_never_matches_a_release_pin_and_a_build_suffix_does() {
         assert_eq!(out.status.code(), Some(3), "{line}: {}", text(&out));
         assert!(text(&out).contains("mismatch"), "{line}: {}", text(&out));
     }
-    let (_scratch, out) = verify_lock(
-        "build-suffix",
-        "[tools]\ncargo-crap = \"0.9.0\"\n",
-        &[("cargo-crap", "cargo-crap 0.9.0+abc")],
-    );
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
 }
 
 #[test]
@@ -548,5 +542,77 @@ fn write_never_puts_a_pre_release_into_the_lock() {
     scratch.tool("cargo-crap", "cargo-crap 0.9.5-rc.1");
     let out = scratch.run(&["--write"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert_eq!(scratch.read_lock(), lock);
+}
+
+#[test]
+fn a_lock_with_no_tools_table_is_an_error_in_lock_and_in_check() {
+    for header in ["[tool]", "[Tools]", "[notes]"] {
+        let scratch = Scratch::new("no-tools-header");
+        init(&scratch, "library-core");
+        scratch.lock(&format!("{header}\ncargo-crap = \"0.9.0\"\n"));
+        let check = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+            .args(["check", "--path"])
+            .arg(scratch.repo())
+            .env("PATH", scratch.bin())
+            .output()
+            .expect("spawn check");
+        assert_eq!(check.status.code(), Some(2), "{header}: {}", text(&check));
+        assert!(
+            text(&check).contains("no [tools] table"),
+            "{header}: {}",
+            text(&check)
+        );
+        let lock = scratch.run(&["--verify"]);
+        assert_eq!(lock.status.code(), Some(2), "{header}: {}", text(&lock));
+    }
+}
+
+#[test]
+fn check_reads_the_lock_the_way_the_gate_does() {
+    let check = |scratch: &Scratch| {
+        Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+            .args(["check", "--path"])
+            .arg(scratch.repo())
+            .env("PATH", scratch.bin())
+            .output()
+            .expect("spawn check")
+    };
+    let scratch = Scratch::new("check-reads");
+    init(&scratch, "library-core");
+    let lock = scratch.repo().join("rust-tops.lock");
+    // No lock file pins nothing.
+    fs::remove_file(&lock).expect("rm lock");
+    assert_eq!(check(&scratch).status.code(), Some(0));
+    // A lock that cannot be read is an error, as in the gate.
+    fs::write(&lock, [0xff, 0xfe, 0x00]).expect("write bytes");
+    let bytes = check(&scratch);
+    assert_eq!(bytes.status.code(), Some(2), "{}", text(&bytes));
+    fs::remove_file(&lock).expect("rm lock");
+    fs::create_dir(&lock).expect("mkdir lock");
+    let dir = check(&scratch);
+    assert_eq!(dir.status.code(), Some(2), "{}", text(&dir));
+}
+
+#[test]
+fn an_unknown_key_is_named_at_every_tier_and_by_write() {
+    let lock = "[tools]\ncargo-nexttest = \"0.9.145\"\n";
+    let scratch = Scratch::new("unknown-tier");
+    init(&scratch, "library-core");
+    scratch.lock(lock);
+    let out = scratch.run(&["--verify", "--max-tier", "1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(
+        text(&out).contains("unknown  cargo-nexttest: not a tool rust-tops knows, not checked"),
+        "{}",
+        text(&out)
+    );
+    let out = scratch.run(&["--write"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(
+        text(&out).contains("unknown  cargo-nexttest"),
+        "{}",
+        text(&out)
+    );
     assert_eq!(scratch.read_lock(), lock);
 }

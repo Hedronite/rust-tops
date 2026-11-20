@@ -266,16 +266,12 @@ fn run_project(command: ProjectCommand) -> Result<ExitCode> {
     }
 }
 
-/// A `rust-tops.lock` that is there must read as pins: a pin that is not a
-/// string, a `tools` that is not a table, or a pin that is not dotted digits
-/// is an error naming the key. No lock is no pins.
+/// A `rust-tops.lock` that is there must read as pins, as it does in the gate
+/// and in `lock`: a pin that is not a string, a `tools` that is not a table, a
+/// pin that is not dotted digits, no `[tools]` table, or a file that cannot be
+/// read is an error naming the key or the file. No lock file is no pins.
 fn check_lock(path: &Path) -> Result<()> {
-    let file = path.join(TOOL_LOCK);
-    let Ok(text) = fs::read_to_string(&file) else {
-        return Ok(());
-    };
-    lock::read_pins(&text).with_context(|| format!("{}", file.display()))?;
-    Ok(())
+    lock::lock_file_pins(path).map(|_| ())
 }
 
 /// `cargo tops check`: an expired exemption is a warning here and a failure

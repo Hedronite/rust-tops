@@ -8,9 +8,8 @@ use super::Fault;
 use crate::config::{self, TopsConfig};
 use crate::facts::{Outcome, Run};
 use crate::lock::{self, Row};
-use crate::{credit, laws, steps, TOOL_LOCK};
-use anyhow::{Context, Result};
-use std::fs;
+use crate::{credit, laws, steps};
+use anyhow::Result;
 use steps::{Base, Kind, MutationPlan, Step};
 
 /// The pinned tools each layer needs, with the pin of each.
@@ -118,16 +117,11 @@ impl TestCommands {
     }
 }
 
-/// The `[tools]` pins of `dir/rust-tops.lock`. No lock is no pins. A lock
-/// that cannot be read or parsed is an error.
+/// The `[tools]` pins of `dir/rust-tops.lock`. No lock file is no pins. A lock
+/// that cannot be read, parsed or read as pins, or has no `[tools]` table, is
+/// an error.
 fn lock_pins(dir: &Path) -> Result<std::collections::BTreeMap<String, String>> {
-    let path = dir.join(TOOL_LOCK);
-    let raw = match fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
-        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
-    };
-    lock::read_pins(&raw).with_context(|| format!("parse {}", path.display()))
+    Ok(lock::lock_file_pins(dir)?.unwrap_or_default())
 }
 
 pub(crate) fn tool(argv: &[&str]) -> Vec<Step> {
@@ -315,6 +309,8 @@ pub(crate) struct GatePlan<'a> {
     /// The pinned tools each running layer needs, asked before the layer's
     /// commands run. A layer with none is absent.
     pub(crate) pins: LayerPins,
+    /// What to say about keys of the lock that nothing will check.
+    pub(crate) pin_warnings: Vec<String>,
     pub(crate) units: Vec<Unit<'a>>,
 }
 
@@ -434,10 +430,11 @@ fn units_of<'a>(
         .collect()
 }
 
-/// The pinned tools each unit that runs a command needs. The lock is read
-/// only when some such layer needs a tool; one that cannot be read is a
+/// The pinned tools each unit that runs a command needs, and the warnings
+/// about the lock's keys that nothing will check. The lock is read only when
+/// some such layer needs a tool; one that cannot be read is a
 /// [`Fault::config`].
-fn pins_of_units(dir: &Path, units: &[Unit<'_>]) -> Result<LayerPins, Fault> {
+fn pins_of_units(dir: &Path, units: &[Unit<'_>]) -> Result<(LayerPins, Vec<String>), Fault> {
     let running: Vec<&str> = units
         .iter()
         .filter(|unit| matches!(unit.what, What::Chains(_) | What::Mutation(_)))
@@ -445,14 +442,16 @@ fn pins_of_units(dir: &Path, units: &[Unit<'_>]) -> Result<LayerPins, Fault> {
         .filter(|id| !lock::tools_for([*id]).is_empty())
         .collect();
     if running.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let pins = lock_pins(dir).map_err(Fault::config)?;
-    Ok(running
+    let warnings = lock::pin_warnings(&pins, &lock::tools_for(running.iter().copied()));
+    let layers = running
         .into_iter()
         .map(|id| (id.to_string(), lock::pins_for([id], &pins)))
         .filter(|(_, needed)| !needed.is_empty())
-        .collect())
+        .collect();
+    Ok((layers, warnings))
 }
 
 /// The plan for `cfg` at `max_tier`. `base` is the `--base` flag; with a
@@ -477,7 +476,7 @@ pub(crate) fn build<'a>(
     let tests = TestCommands::new(&enabled, &report, &filters);
     let base = base_for(&enabled, dir, base_flag, cfg.gates.base_ref.as_deref());
     let units = units_of(&enabled, &tests, &report, &base, &filters);
-    let pins = pins_of_units(dir, &units)?;
+    let (pins, pin_warnings) = pins_of_units(dir, &units)?;
     Ok(GatePlan {
         max_tier,
         laws_on: enabled.iter().any(|l| l.id == "laws"),
@@ -492,6 +491,7 @@ pub(crate) fn build<'a>(
         tests,
         filters,
         pins,
+        pin_warnings,
     })
 }
 
@@ -598,6 +598,7 @@ mod tests {
             },
             filters: super::Filters::default(),
             pins: Vec::new(),
+            pin_warnings: Vec::new(),
             units: Vec::new(),
         };
         assert!(plan.argv_of("static-lint").is_empty());
@@ -619,7 +620,8 @@ mod tests {
             layer: &miri,
             what: What::NotRun,
         }];
-        assert!(pins_of_units(&dir, &none).is_ok_and(|pins| pins.is_empty()));
+        assert!(pins_of_units(&dir, &none)
+            .is_ok_and(|(pins, warnings)| pins.is_empty() && warnings.is_empty()));
         // A running layer that needs a pinned tool reads it.
         let lint = layer("static-lint");
         let some = vec![Unit {

@@ -823,6 +823,50 @@ fn a_pin_that_is_not_a_string_stops_the_gate_with_exit_2_naming_the_key() {
     assert!(!log.lines().any(|line| line.starts_with("deny ")), "{log}");
 }
 
+#[test]
+fn a_lock_with_no_tools_table_stops_the_gate_with_exit_2() {
+    for header in ["[tool]", "[Tools]"] {
+        let fixture = fixture("lock-no-tools");
+        fs::write(
+            fixture.repo.join("rust-tops.lock"),
+            format!("{header}\ncargo-deny = \"0.18.9\"\n"),
+        )
+        .expect("write lock");
+        let (out, text) = gate(&fixture, &[], None);
+        assert_eq!(out.status.code(), Some(2), "{header}: {text}");
+        assert!(text.contains("has no [tools] table"), "{header}: {text}");
+        let log = cargo_log(&fixture);
+        assert!(!log.lines().any(|line| line.starts_with("deny ")), "{log}");
+    }
+}
+
+#[test]
+fn an_unknown_key_is_a_warning_and_the_tool_it_was_meant_for_is_named() {
+    let fixture = fixture("unknown-key");
+    let pins = "[tools]\nrustc = \"1.99.1\"\nclippy = \"1.99.1\"\nrustfmt = \"1.99.1\"\ncargo-deny = \"0.18.9\"\ncargo-nextest = \"0.9.145\"\n";
+    let lock = fixture.repo.join("rust-tops.lock");
+    fs::write(&lock, format!("{pins}cargo-nexttest = \"0.9.145\"\n")).expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "warning: rust-tops.lock key cargo-nexttest is not a tool rust-tops knows, not checked"
+        ),
+        "{text}"
+    );
+    // The misspelt key stands where the right one is missing: both are named.
+    let without = pins.replace("cargo-nextest = \"0.9.145\"\n", "");
+    fs::write(&lock, format!("{without}cargo-nexttest = \"0.9.145\"\n")).expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "warning: rust-tops.lock has no pin for cargo-nextest, and holds cargo-nexttest"
+        ),
+        "{text}"
+    );
+}
+
 fn cargo_log(fixture: &Fixture) -> String {
     fs::read_to_string(fixture.root.join("cargo.log")).unwrap_or_default()
 }
