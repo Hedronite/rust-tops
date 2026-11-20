@@ -8,6 +8,9 @@ use std::time::{Duration, Instant};
 /// How long one `--version` ask may take.
 pub(crate) const PROBE_LIMIT: Duration = Duration::from_secs(10);
 
+/// How often a running ask is looked at.
+const POLL: Duration = Duration::from_millis(5);
+
 /// A probe that runs each argv in `dir` with the [`PROBE_LIMIT`].
 pub(crate) fn probe_in(dir: &Path) -> impl FnMut(&[&str]) -> Result<String, String> + '_ {
     move |argv| run_probe(dir, argv, PROBE_LIMIT)
@@ -42,8 +45,6 @@ pub(crate) fn run_probe(dir: &Path, argv: &[&str], limit: Duration) -> Result<St
 /// Waits for `child` to exit 0, or kills it when `limit` has passed.
 fn wait_within(child: &mut Child, limit: Duration) -> Result<(), String> {
     let deadline = Instant::now() + limit;
-    // Most asks answer within milliseconds, so look soon and back off.
-    let mut pause = Duration::from_millis(1);
     loop {
         let status = child
             .try_wait()
@@ -51,10 +52,7 @@ fn wait_within(child: &mut Child, limit: Duration) -> Result<(), String> {
         match status {
             Some(status) => return finished(status),
             None if Instant::now() >= deadline => return give_up(child, limit),
-            None => {
-                std::thread::sleep(pause);
-                pause = (pause * 2).min(Duration::from_millis(20));
-            }
+            None => std::thread::sleep(POLL),
         }
     }
 }
