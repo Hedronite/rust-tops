@@ -243,7 +243,7 @@ fn judge_laws(
 /// judged the laws layer. A layer that took another layer's run ran none.
 pub(crate) fn ran_commands(runs: &[Run], bend_ran: bool, shared: &[(&str, &str)]) -> usize {
     runs.iter()
-        .filter(|run| run.outcome != Outcome::ToolMissing)
+        .filter(|run| run.outcome != Outcome::ToolMissing && run.ran())
         .filter(|run| !shared.iter().any(|(layer, _)| *layer == run.layer))
         .count()
         + usize::from(bend_ran)
@@ -272,7 +272,7 @@ pub(crate) fn command_count(
             "laws" => !bend_ran,
             _ => !runs
                 .iter()
-                .any(|run| run.layer == *id && run.outcome != Outcome::ToolMissing),
+                .any(|run| run.layer == *id && run.outcome != Outcome::ToolMissing && run.ran()),
         })
         .collect();
     let mut line = format!(
@@ -320,7 +320,10 @@ pub(crate) fn laws_evaluated(cases: &Path) -> Option<(usize, usize)> {
 pub(crate) fn run_failure(run: &Run) -> Option<String> {
     match run.outcome {
         Outcome::Passed | Outcome::Vacuous => None,
-        Outcome::Failed => Some(format!("{}: `{}` failed", run.layer, run.step)),
+        Outcome::Failed => Some(match &run.note {
+            Some(note) => format!("{}: {note}", run.layer),
+            None => format!("{}: `{}` failed", run.layer, run.step),
+        }),
         Outcome::ToolMissing => {
             let missing = steps::MissingTool {
                 binary: steps::tool_binary(std::slice::from_ref(&run.step))

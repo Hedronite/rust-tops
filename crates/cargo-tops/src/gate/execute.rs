@@ -11,7 +11,7 @@ use super::plan::{GatePlan, Unit, What, CRAP_VERSION};
 use super::{Fault, Mode};
 use crate::config::Layer;
 use crate::facts::{Outcome, Run};
-use crate::steps::{self, Kind, MutationPlan, Step};
+use crate::steps::{self, Base, Kind, MutationPlan, Step};
 use crate::{laws, TOOL_LOCK};
 
 /// What the laws layer needs before any work starts.
@@ -313,6 +313,7 @@ pub(crate) fn finish(layer: &str, ran: &[String], outcome: Outcome) -> Run {
         cmd: ran.join(" && "),
         step: ran.last().cloned().unwrap_or_default(),
         outcome,
+        note: None,
     }
 }
 
@@ -360,8 +361,11 @@ pub(crate) fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str
 }
 
 /// `cargo-mutants` is looked up before the diff, so an empty diff cannot
-/// hide a missing tool. A failed diff is `Failed`; nothing waives it. An
-/// empty one is `Vacuous` and `cargo mutants` does not run.
+/// hide a missing tool. A base that was named and is not a commit fails the
+/// layer before any command runs. A failed diff is `Failed`; nothing waives
+/// it. An empty one is `Vacuous` and `cargo mutants` does not run, except
+/// that no base at all fails under CI. [`steps::stop_note`] words every one
+/// of these stops.
 pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
     if let Err(missing) = steps::check_tool(&plan.mutants.argv) {
         println!("{missing}");
@@ -371,44 +375,37 @@ pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Resu
             Outcome::ToolMissing,
         ));
     }
+    if matches!(plan.base, Base::Unresolved { .. }) {
+        return Ok(stopped(layer, &[], &plan.base, Outcome::Failed));
+    }
     let mut ran = vec![plan.diff.display()];
     let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
     let diff = steps::judge_diff(diff_ok, &plan.diff_path);
     let Some(mutants) = plan.after_diff(diff) else {
-        if diff == Outcome::Vacuous && has_origin_main(dir) {
-            println!(
-                "Vacuous: the diff from `git merge-base origin/main HEAD` is empty; \
-                 cargo mutants did not run and no law counts this layer"
-            );
-        } else if diff == Outcome::Vacuous {
-            println!(
-                "Vacuous: no origin/main; the mutation diff is empty; \
-                 cargo mutants did not run and no law counts this layer"
-            );
-        } else {
-            println!("Failed: the mutation diff did not succeed; a failed diff is never waived");
-        }
-        return Ok(finish(layer, &ran, diff));
+        return Ok(stopped(layer, &ran, &plan.base, diff));
     };
     ran.push(mutants.display());
     let outcome = run_step(dir, mutants)?;
     Ok(finish(layer, &ran, outcome))
 }
 
-/// Whether `refs/remotes/origin/main` exists, for the Vacuous wording only.
-pub(crate) fn has_origin_main(dir: &Path) -> bool {
-    Command::new("git")
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            "refs/remotes/origin/main",
-        ])
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// The run of a layer that stopped on its base or its diff: prints the
+/// note and keeps it with the run, so the report says the same. A diff
+/// command that ran and failed is named in the kept note, since it did fail;
+/// a base that was never tried, or an empty diff, names no command.
+fn stopped(layer: &str, ran: &[String], base: &Base, diff: Outcome) -> Run {
+    let (outcome, note) = steps::stop_note(base, diff)
+        .unwrap_or_else(|| (diff, format!("the mutation diff ended as {diff}")));
+    println!("{outcome}: {note}");
+    let command_failed = diff == Outcome::Failed && !matches!(base, Base::Unresolved { .. });
+    let kept = match ran.last() {
+        Some(step) if command_failed => format!("`{step}` failed: {note}"),
+        _ => note,
+    };
+    Run {
+        note: Some(kept),
+        ..finish(layer, ran, outcome)
+    }
 }
 
 pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {

@@ -29,6 +29,18 @@ pub(crate) struct Run {
     /// The last step that ran: the one that decided `outcome`.
     pub step: String,
     pub outcome: Outcome,
+    /// Why the layer stopped, when it stopped on something no command
+    /// reported: the mutation base. The report prints it as the layer's
+    /// detail and its problem, in place of "`step` failed".
+    pub note: Option<String>,
+}
+
+impl Run {
+    /// Whether a command ran. A layer that stopped on its note before any
+    /// command has an empty `cmd` and a note.
+    pub(crate) fn ran(&self) -> bool {
+        !self.cmd.is_empty() || self.note.is_none()
+    }
 }
 
 /// A run some law may count: `Passed`, `Failed` or `ToolMissing`, never
@@ -1047,7 +1059,19 @@ mod tests {
             cmd: cmd.into(),
             step: cmd.into(),
             outcome,
+            note: None,
         }
+    }
+
+    #[test]
+    fn a_run_with_a_note_and_no_command_ran_nothing() {
+        let mut stopped = run("mutation", "", Outcome::Failed);
+        assert!(stopped.ran());
+        stopped.note = Some("why".to_string());
+        assert!(!stopped.ran());
+        stopped.cmd = "git x".to_string();
+        assert!(stopped.ran());
+        assert!(run("unit", "cargo nextest", Outcome::Passed).ran());
     }
 
     fn ctx_with<'a>(cfg: &'a TopsConfig, runs: &'a [Run]) -> Ctx<'a> {
