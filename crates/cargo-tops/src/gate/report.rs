@@ -16,6 +16,7 @@ use super::{Fault, Mode, Options};
 use crate::config::TopsConfig;
 use crate::facts::{Outcome, Run};
 use crate::floors::{CoverageNumbers, CrapNumbers};
+use crate::steps::Base;
 use crate::{laws, PROTOCOL_VERSION};
 
 /// The file name under the gate's report directory.
@@ -419,7 +420,44 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
     if let Some(numbers) = numbers {
         entry.insert("judged".into(), numbers);
     }
+    if id == "mutation" {
+        name_the_base(plan, &mut entry);
+    }
     entry
+}
+
+/// The mutation row names the base the diff started from and where it came
+/// from (`flag`, `key` or `origin/HEAD`), under `judged.base`. A base that
+/// was named and is not a commit, or none at all, also says so in `detail`.
+fn name_the_base(plan: &GatePlan<'_>, entry: &mut Map<String, Value>) {
+    let Some(What::Mutation(mutation)) = plan
+        .units
+        .iter()
+        .find(|unit| unit.layer.id == "mutation")
+        .map(|unit| &unit.what)
+    else {
+        return;
+    };
+    let (base, detail) = match &mutation.base {
+        Base::Found { source, name } => {
+            (json!({ "ref": name, "source": source.report_name() }), None)
+        }
+        Base::Unresolved { source, name } => (
+            json!({ "ref": name, "source": source.report_name(), "resolved": false }),
+            Some(format!(
+                "{} names `{name}`, which is not a commit",
+                source.label()
+            )),
+        ),
+        Base::Missing { tried } => (
+            json!({ "ref": null, "source": null, "tried": tried }),
+            Some(format!("no mutation base: {}", tried.join("; "))),
+        ),
+    };
+    entry.insert("judged".into(), json!({ "base": base }));
+    if let Some(detail) = detail {
+        entry.insert("detail".into(), json!(detail));
+    }
 }
 
 fn laws_row(parts: &Parts<'_>, tier: u8) -> Map<String, Value> {

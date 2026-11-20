@@ -11,7 +11,7 @@ use super::plan::{GatePlan, Unit, What, CRAP_VERSION};
 use super::{Fault, Mode};
 use crate::config::Layer;
 use crate::facts::{Outcome, Run};
-use crate::steps::{self, Kind, MutationPlan, Step};
+use crate::steps::{self, Base, Kind, MutationPlan, Step};
 use crate::{laws, TOOL_LOCK};
 
 /// What the laws layer needs before any work starts.
@@ -360,8 +360,11 @@ pub(crate) fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str
 }
 
 /// `cargo-mutants` is looked up before the diff, so an empty diff cannot
-/// hide a missing tool. A failed diff is `Failed`; nothing waives it. An
-/// empty one is `Vacuous` and `cargo mutants` does not run.
+/// hide a missing tool. A base that was named and is not a commit fails the
+/// layer, naming it. A failed diff is `Failed`; nothing waives it. An empty
+/// one is `Vacuous` and `cargo mutants` does not run, except that no base at
+/// all is `Failed` when `CI` is set: a base that was never fetched must not
+/// read as a clean diff.
 pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
     if let Err(missing) = steps::check_tool(&plan.mutants.argv) {
         println!("{missing}");
@@ -372,43 +375,58 @@ pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Resu
         ));
     }
     let mut ran = vec![plan.diff.display()];
+    if let Base::Unresolved { source, name } = &plan.base {
+        println!(
+            "Failed: {} names `{name}`, which is not a commit; the mutation diff cannot start there",
+            source.label()
+        );
+        return Ok(finish(layer, &ran, Outcome::Failed));
+    }
     let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
     let diff = steps::judge_diff(diff_ok, &plan.diff_path);
     let Some(mutants) = plan.after_diff(diff) else {
-        if diff == Outcome::Vacuous && has_origin_main(dir) {
-            println!(
-                "Vacuous: the diff from `git merge-base origin/main HEAD` is empty; \
-                 cargo mutants did not run and no law counts this layer"
-            );
-        } else if diff == Outcome::Vacuous {
-            println!(
-                "Vacuous: no origin/main; the mutation diff is empty; \
-                 cargo mutants did not run and no law counts this layer"
-            );
-        } else {
-            println!("Failed: the mutation diff did not succeed; a failed diff is never waived");
-        }
-        return Ok(finish(layer, &ran, diff));
+        let ci = std::env::var("CI").ok();
+        let outcome = stopped_diff(&plan.base, diff, ci.as_deref());
+        return Ok(finish(layer, &ran, outcome));
     };
     ran.push(mutants.display());
     let outcome = run_step(dir, mutants)?;
     Ok(finish(layer, &ran, outcome))
 }
 
-/// Whether `refs/remotes/origin/main` exists, for the Vacuous wording only.
-pub(crate) fn has_origin_main(dir: &Path) -> bool {
-    Command::new("git")
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            "refs/remotes/origin/main",
-        ])
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// Say why the diff stopped the layer, and give its outcome: a failed diff
+/// stays failed, no base under CI (the value of `CI`) fails, and any other
+/// empty diff is vacuous.
+fn stopped_diff(base: &Base, diff: Outcome, ci: Option<&str>) -> Outcome {
+    match (diff, base) {
+        (Outcome::Vacuous, Base::Missing { tried }) => {
+            let sources = tried.join("; ");
+            if steps::ci_active(ci) {
+                println!(
+                    "Failed: no mutation base ({sources}); under CI that is never a clean diff. \
+                     Check out with `fetch-depth: 0` and pass `--base <ref>`, or set `gates.base_ref`"
+                );
+                Outcome::Failed
+            } else {
+                println!(
+                    "Vacuous: no mutation base ({sources}); the mutation diff is empty; \
+                     cargo mutants did not run and no law counts this layer"
+                );
+                Outcome::Vacuous
+            }
+        }
+        (Outcome::Vacuous, Base::Found { name, .. } | Base::Unresolved { name, .. }) => {
+            println!(
+                "Vacuous: the diff from `git merge-base {name} HEAD` is empty; \
+                 cargo mutants did not run and no law counts this layer"
+            );
+            Outcome::Vacuous
+        }
+        (other, _) => {
+            println!("Failed: the mutation diff did not succeed; a failed diff is never waived");
+            other
+        }
+    }
 }
 
 pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
@@ -447,9 +465,9 @@ pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_step, version_ask, Executed, Timing};
+    use super::{run_step, stopped_diff, version_ask, Executed, Timing};
     use crate::facts::Outcome;
-    use crate::steps::Step;
+    use crate::steps::{Base, BaseSource, Step};
     use std::fs;
     use std::path::Path;
     use std::time::SystemTime;
@@ -516,5 +534,37 @@ mod tests {
         let err = run_step(Path::new("."), &blocked).expect_err("not spawnable");
         assert!(format!("{err:#}").contains("spawn"), "{err:#}");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_empty_diff_is_vacuous_unless_no_base_was_found_under_ci() {
+        let missing = Base::Missing {
+            tried: vec!["origin/HEAD: not set".to_string()],
+        };
+        let found = Base::Found {
+            source: BaseSource::Flag,
+            name: "origin/main".to_string(),
+        };
+        let vacuous = Outcome::Vacuous;
+        assert_eq!(stopped_diff(&missing, vacuous, None), Outcome::Vacuous);
+        assert_eq!(
+            stopped_diff(&missing, vacuous, Some("false")),
+            Outcome::Vacuous
+        );
+        assert_eq!(
+            stopped_diff(&missing, vacuous, Some("true")),
+            Outcome::Failed
+        );
+        // A named base that gave an empty diff is vacuous even under CI.
+        assert_eq!(
+            stopped_diff(&found, vacuous, Some("true")),
+            Outcome::Vacuous
+        );
+        // A failed diff stays failed, whatever the base and CI.
+        for base in [&missing, &found] {
+            for ci in [None, Some("true")] {
+                assert_eq!(stopped_diff(base, Outcome::Failed, ci), Outcome::Failed);
+            }
+        }
     }
 }

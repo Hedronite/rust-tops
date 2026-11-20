@@ -10,7 +10,7 @@ use crate::facts::{Outcome, Run};
 use crate::{credit, laws, steps, TOOL_LOCK};
 use anyhow::{Context, Result};
 use std::fs;
-use steps::{Kind, MutationPlan, Step};
+use steps::{Base, Kind, MutationPlan, Step};
 
 /// The command whose first line must name the pinned cargo-crap.
 pub(crate) const CRAP_VERSION: [&str; 3] = ["cargo", "crap", "--version"];
@@ -40,7 +40,7 @@ impl TestCommands {
             enabled
                 .iter()
                 .find(|layer| layer.id == id)
-                .and_then(|layer| plan_for(layer, report))
+                .and_then(|layer| tool_plan(layer, report))
                 .and_then(|plan| match plan {
                     Plan::Chains(chains) => chains
                         .into_iter()
@@ -214,11 +214,20 @@ fn crap_steps(report: &Path) -> Vec<Step> {
 }
 
 /// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
-/// and the mutation diff are written there.
-pub(crate) fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
+/// and the mutation diff are written there. `base` is where the mutation
+/// diff starts.
+pub(crate) fn plan_for(layer: &config::Layer, report: &Path, base: &Base) -> Option<Plan> {
+    if layer.id == "mutation" {
+        Some(Plan::Mutation(MutationPlan::new(report, base.clone())))
+    } else {
+        tool_plan(layer, report)
+    }
+}
+
+/// The plan of every layer but `mutation`, which also needs a base.
+fn tool_plan(layer: &config::Layer, report: &Path) -> Option<Plan> {
     let id = layer.id.as_str();
     match id {
-        "mutation" => Some(Plan::Mutation(MutationPlan::new(report))),
         "coverage" => Some(Plan::Chains(vec![steps::coverage_steps(report)])),
         "crap" => Some(Plan::Chains(vec![crap_steps(report)])),
         _ => TOOL_LAYERS
@@ -326,13 +335,14 @@ fn units_of<'a>(
     enabled: &[&'a config::Layer],
     tests: &TestCommands,
     report: &Path,
+    base: &Base,
 ) -> Vec<Unit<'a>> {
     enabled
         .iter()
         .copied()
         .filter(|layer| layer.id != "laws")
         .map(|layer| {
-            let what = match (tests.shared_from(&layer.id), plan_for(layer, report)) {
+            let what = match (tests.shared_from(&layer.id), plan_for(layer, report, base)) {
                 (Some(from), _) => What::Shared(from),
                 (None, Some(Plan::Chains(chains))) => What::Chains(chains),
                 (None, Some(Plan::Mutation(plan))) => What::Mutation(plan),
@@ -343,13 +353,16 @@ fn units_of<'a>(
         .collect()
 }
 
-/// The plan for `cfg` at `max_tier`. A config the gate cannot plan from is
+/// The plan for `cfg` at `max_tier`. `base` is the `--base` flag; with a
+/// mutation layer in range it and `gates.base_ref` decide where the diff
+/// starts. A config the gate cannot plan from is
 /// a [`Fault::config`]; a project whose Cargo metadata cannot be read, or
 /// whose report directory cannot be resolved, is a [`Fault::env`].
 pub(crate) fn build<'a>(
     dir: &Path,
     cfg: &'a TopsConfig,
     max_tier: u8,
+    base_flag: Option<&str>,
 ) -> Result<GatePlan<'a>, Fault> {
     let enabled = in_range(cfg, max_tier);
     if enabled.is_empty() {
@@ -359,6 +372,11 @@ pub(crate) fn build<'a>(
     }
     let report = report_dir(dir)?;
     let tests = TestCommands::new(&enabled, &report);
+    let base = if enabled.iter().any(|layer| layer.id == "mutation") {
+        steps::resolve_base(dir, base_flag, cfg.gates.base_ref.as_deref())
+    } else {
+        Base::unused()
+    };
     let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
         tool_pin(dir, "cargo-crap").map_err(Fault::config)?
     } else {
@@ -372,7 +390,7 @@ pub(crate) fn build<'a>(
         above: ids(cfg, |l| l.enabled && crate::tiers::tier_for(l) > max_tier),
         // A layer turned off still shows in the run: it is not run, not omitted.
         disabled: ids(cfg, |l| !l.enabled),
-        units: units_of(&enabled, &tests, &report),
+        units: units_of(&enabled, &tests, &report, &base),
         enabled,
         report,
         tests,

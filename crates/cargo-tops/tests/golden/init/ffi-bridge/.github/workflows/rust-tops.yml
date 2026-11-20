@@ -174,8 +174,9 @@ jobs:
 
   # Runs the gate rust-tops.yaml declares: every enabled layer at tier <= 1,
   # laws included when they are on. Not a --dry-run. fetch-depth: 0 because
-  # the mutation layer diffs against origin/main, which a depth-1 checkout
-  # does not have. cargo-tops builds with Rust 1.99.1 (its rust-version),
+  # the mutation layer diffs against the base branch, which a depth-1 checkout
+  # does not have. --base names that branch: actions/checkout may not create
+  # origin/HEAD, and a gate with no base fails under CI. cargo-tops builds with Rust 1.99.1 (its rust-version),
   # which can be newer than crate.msrv; the layers run on the pinned channel.
   # The cargo-tops version is pinned; bump it when the kit publishes.
   # Since 0.4.0 the gate enforces the coverage floors and the CRAP threshold
@@ -220,7 +221,7 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
           fallback: none
-      - run: cargo tops gate --max-tier 1
+      - run: cargo tops gate --max-tier 1 --base "origin/${{ github.base_ref || github.event.repository.default_branch }}"
 
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
   # features usually need no FFI sysdeps. Do not mark required until one

@@ -479,9 +479,19 @@ Coverage says a line ran. A survivor says no test *cared*.
 On every PR that touches `src/`:
 
 ```bash
-git diff origin/main...HEAD --unified=0 > /tmp/pr.diff
+git diff "$(git merge-base "$BASE" HEAD)" HEAD --unified=0 > /tmp/pr.diff
 cargo mutants --in-diff /tmp/pr.diff -j 2 -- --skip ignored
 ```
+
+`$BASE` is the PR's base ref, such as `origin/main`. `cargo tops gate` takes it, in this order:
+
+1. `--base <ref>`.
+2. `gates.base_ref` in `rust-tops.yaml`.
+3. `origin/HEAD`, the remote's default branch.
+
+The first source that is set wins. A ref that is named by the flag or the key and does not name a commit fails the layer, and the failure names the ref. The diff is from `git merge-base <base> HEAD` to `HEAD`. The report names the base and its source (`flag`, `key` or `origin/HEAD`).
+
+When no source gives a base, the layer is `fail` if the `CI` environment variable is set and is not empty, `false` or `0`. The detail names `fetch-depth: 0` and `--base`: a checkout that never fetched the base must not read as a clean diff. When `CI` is unset, `false` or `0`, the layer is `vacuous`, and the detail lists each source tried. CI workflows pass `--base "origin/${{ github.base_ref || github.event.repository.default_branch }}"` from a checkout with `fetch-depth: 0`, because `actions/checkout` may not create `origin/HEAD`.
 
 Pass criteria:
 

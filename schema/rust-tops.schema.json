@@ -137,6 +137,11 @@
       "additionalProperties": false,
       "required": ["unit", "coverage", "crap", "mutation", "lint"],
       "properties": {
+        "base_ref": {
+          "description": "The ref the mutation diff starts from when --base is not given: a branch, tag or commit that resolves in the checkout, such as origin/main. Absent means the remote's default branch (origin/HEAD).",
+          "type": "string",
+          "minLength": 1
+        },
         "lint": {
           "type": "object",
           "properties": {

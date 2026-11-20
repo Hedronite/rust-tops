@@ -82,10 +82,16 @@ impl Fault {
 }
 
 /// Run the gate for `cfg` under `dir`: always writes `report.json`.
-pub(crate) fn run(dir: &Path, cfg: &TopsConfig, opts: Options) -> ExitCode {
+/// `base_flag` is `--base`, the first source of the mutation base.
+pub(crate) fn run(
+    dir: &Path,
+    cfg: &TopsConfig,
+    opts: Options,
+    base_flag: Option<&str>,
+) -> ExitCode {
     // A gate resolves `cargo metadata` afresh, once per project.
     laws::begin_gate();
-    let plan = match plan::build(dir, cfg, opts.max_tier) {
+    let plan = match plan::build(dir, cfg, opts.max_tier, base_flag) {
         Ok(plan) => plan,
         Err(fault) => return report::fault(dir, Some(cfg), opts, None, &fault),
     };
@@ -123,7 +129,7 @@ mod tests {
     use super::judge::{command_count, ran_commands};
     use super::plan::{plan_for, Plan, TestCommands};
     use crate::facts::{Outcome, Run};
-    use crate::steps::{self, Kind, Step};
+    use crate::steps::{self, Base, Kind, Step};
     use crate::{config, credit};
     use std::fs;
     use std::path::Path;
@@ -136,7 +142,7 @@ mod tests {
     }
 
     fn chains(id: &str) -> Vec<Vec<Step>> {
-        match plan_for(&layer(id), Path::new("/r")) {
+        match plan_for(&layer(id), Path::new("/r"), &Base::unused()) {
             Some(Plan::Chains(chains)) => chains,
             _ => panic!("{id} has no chains"),
         }
@@ -152,7 +158,7 @@ mod tests {
     #[test]
     fn the_g0_strings_name_the_tool_they_run() {
         let coverage = "mkdir -p target/coverage && cargo llvm-cov nextest --workspace --all-features --profile ci --lcov --output-path target/coverage/lcov.info && test -s target/coverage/lcov.info";
-        let mutation = "sh -c 'git diff origin/main...HEAD --unified=0 > /tmp/rust-tops.diff; cargo mutants --in-diff /tmp/rust-tops.diff -j 2'";
+        let mutation = "sh -c 'git diff base...HEAD --unified=0 > /tmp/rust-tops.diff; cargo mutants --in-diff /tmp/rust-tops.diff -j 2'";
         assert_eq!(
             steps::tool_binary(&[coverage.to_string()]).as_deref(),
             Some("cargo-llvm-cov")
@@ -391,16 +397,20 @@ mod tests {
     #[test]
     fn the_mutation_diff_uses_merge_base_and_the_report_dir() {
         let report = Path::new("/work/target/rust-tops");
-        let Some(Plan::Mutation(plan)) = plan_for(&layer("mutation"), report) else {
+        let base = Base::Found {
+            source: steps::BaseSource::Flag,
+            name: "origin/trunk".to_string(),
+        };
+        let Some(Plan::Mutation(plan)) = plan_for(&layer("mutation"), report, &base) else {
             panic!("mutation has no plan");
         };
         assert_eq!(plan.diff_path, report.join("rust-tops.diff"));
         let script = plan.diff.argv.join(" ");
         assert!(
-            script.contains("git merge-base origin/main HEAD"),
+            script.contains("git merge-base 'origin/trunk' HEAD"),
             "{script}"
         );
-        assert!(script.contains("refs/remotes/origin/main"), "{script}");
+        assert!(!script.contains("origin/main"), "{script}");
         assert!(script.contains("&& git diff"), "{script}");
         assert!(!script.contains("mutants"), "{script}");
         assert!(!script.contains("/tmp"), "{script}");
@@ -446,7 +456,10 @@ mod tests {
             "density-audit",
             "laws",
         ] {
-            assert!(plan_for(&layer(id), Path::new("/r")).is_none(), "{id}");
+            assert!(
+                plan_for(&layer(id), Path::new("/r"), &Base::unused()).is_none(),
+                "{id}"
+            );
         }
     }
 
