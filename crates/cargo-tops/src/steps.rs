@@ -461,33 +461,49 @@ fn origin_head(dir: &Path) -> Result<String, String> {
 /// diff command, or `Failed` for a base that was never tried. `None` means
 /// the diff passed and mutants runs.
 pub(crate) fn stop_note(base: &Base, diff: Outcome) -> Option<(Outcome, String)> {
-    match (base, diff) {
-        (Base::Unresolved { source, name }, _) => Some((
+    match base {
+        Base::Unresolved { source, name } => Some((
             Outcome::Failed,
             format!(
                 "{} names `{name}`, which is not a commit; the mutation diff cannot start there",
                 source.label()
             ),
         )),
-        (Base::Missing { tried, ci: true }, Outcome::Vacuous) => Some(no_base_in_ci(tried)),
-        (Base::Missing { tried, ci: false }, Outcome::Vacuous) => Some(no_base_outside_ci(tried)),
-        (Base::Found { name, .. }, Outcome::Vacuous) => Some((
+        Base::Missing { tried, ci: true } => missing_stop(diff, no_base_in_ci(tried)),
+        Base::Missing { tried, ci: false } => missing_stop(diff, no_base_outside_ci(tried)),
+        Base::Found { name, .. } => found_stop(name, diff),
+    }
+}
+
+/// A stop with no base: the empty diff gives `empty`, a failed one is never
+/// waived.
+fn missing_stop(diff: Outcome, empty: (Outcome, String)) -> Option<(Outcome, String)> {
+    match diff {
+        Outcome::Vacuous => Some(empty),
+        Outcome::Failed => Some((
+            Outcome::Failed,
+            "the mutation diff did not succeed; a failed diff is never waived".to_string(),
+        )),
+        _ => None,
+    }
+}
+
+/// A stop with a base that is a commit: an empty diff, or no merge-base.
+fn found_stop(name: &str, diff: Outcome) -> Option<(Outcome, String)> {
+    match diff {
+        Outcome::Vacuous => Some((
             Outcome::Vacuous,
             format!(
                 "the diff from `git merge-base {name} HEAD` is empty; \
                  cargo mutants did not run and no law counts this layer"
             ),
         )),
-        (Base::Found { name, .. }, Outcome::Failed) => Some((
+        Outcome::Failed => Some((
             Outcome::Failed,
             format!(
                 "the mutation diff did not succeed: `{name}` and HEAD share no history, \
                  as in a shallow checkout (use `fetch-depth: 0`); a failed diff is never waived"
             ),
-        )),
-        (Base::Missing { .. }, Outcome::Failed) => Some((
-            Outcome::Failed,
-            "the mutation diff did not succeed; a failed diff is never waived".to_string(),
         )),
         _ => None,
     }
