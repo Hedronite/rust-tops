@@ -40,6 +40,10 @@ pub(crate) struct Gates {
     pub coverage: CoverageGate,
     pub crap: CrapGate,
     pub mutation: MutationGate,
+    /// The ref the mutation diff starts from, when `--base` is not given.
+    /// Absent means the remote's default branch (`origin/HEAD`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]

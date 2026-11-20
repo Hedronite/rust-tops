@@ -10,7 +10,7 @@ use crate::facts::{Outcome, Run};
 use crate::{credit, laws, steps, TOOL_LOCK};
 use anyhow::{Context, Result};
 use std::fs;
-use steps::{Kind, MutationPlan, Step};
+use steps::{Base, Kind, MutationPlan, Step};
 
 /// The command whose first line must name the pinned cargo-crap.
 pub(crate) const CRAP_VERSION: [&str; 3] = ["cargo", "crap", "--version"];
@@ -40,7 +40,7 @@ impl TestCommands {
             enabled
                 .iter()
                 .find(|layer| layer.id == id)
-                .and_then(|layer| plan_for(layer, report))
+                .and_then(|layer| tool_plan(layer, report))
                 .and_then(|plan| match plan {
                     Plan::Chains(chains) => chains
                         .into_iter()
@@ -109,6 +109,7 @@ impl TestCommands {
             cmd: source.map(|run| run.cmd.clone()).unwrap_or_default(),
             step: source.map(|run| run.step.clone()).unwrap_or_default(),
             outcome,
+            note: None,
         }
     }
 }
@@ -214,11 +215,20 @@ fn crap_steps(report: &Path) -> Vec<Step> {
 }
 
 /// `report` is [`laws::artifact_dir`]: the coverage LCOV, the CRAP report
-/// and the mutation diff are written there.
-pub(crate) fn plan_for(layer: &config::Layer, report: &Path) -> Option<Plan> {
+/// and the mutation diff are written there. `base` is where the mutation
+/// diff starts.
+pub(crate) fn plan_for(layer: &config::Layer, report: &Path, base: &Base) -> Option<Plan> {
+    if layer.id == "mutation" {
+        Some(Plan::Mutation(MutationPlan::new(report, base.clone())))
+    } else {
+        tool_plan(layer, report)
+    }
+}
+
+/// The plan of every layer but `mutation`, which also needs a base.
+fn tool_plan(layer: &config::Layer, report: &Path) -> Option<Plan> {
     let id = layer.id.as_str();
     match id {
-        "mutation" => Some(Plan::Mutation(MutationPlan::new(report))),
         "coverage" => Some(Plan::Chains(vec![steps::coverage_steps(report)])),
         "crap" => Some(Plan::Chains(vec![crap_steps(report)])),
         _ => TOOL_LAYERS
@@ -321,18 +331,28 @@ fn report_dir(dir: &Path) -> Result<PathBuf, Fault> {
     Ok(report)
 }
 
+/// The mutation base, looked up only when a mutation layer is in range.
+fn base_for(enabled: &[&config::Layer], dir: &Path, flag: Option<&str>, key: Option<&str>) -> Base {
+    if enabled.iter().any(|layer| layer.id == "mutation") {
+        steps::resolve_base(dir, flag, key)
+    } else {
+        Base::unused()
+    }
+}
+
 /// What each enabled layer other than `laws` does.
 fn units_of<'a>(
     enabled: &[&'a config::Layer],
     tests: &TestCommands,
     report: &Path,
+    base: &Base,
 ) -> Vec<Unit<'a>> {
     enabled
         .iter()
         .copied()
         .filter(|layer| layer.id != "laws")
         .map(|layer| {
-            let what = match (tests.shared_from(&layer.id), plan_for(layer, report)) {
+            let what = match (tests.shared_from(&layer.id), plan_for(layer, report, base)) {
                 (Some(from), _) => What::Shared(from),
                 (None, Some(Plan::Chains(chains))) => What::Chains(chains),
                 (None, Some(Plan::Mutation(plan))) => What::Mutation(plan),
@@ -343,13 +363,16 @@ fn units_of<'a>(
         .collect()
 }
 
-/// The plan for `cfg` at `max_tier`. A config the gate cannot plan from is
+/// The plan for `cfg` at `max_tier`. `base` is the `--base` flag; with a
+/// mutation layer in range it and `gates.base_ref` decide where the diff
+/// starts. A config the gate cannot plan from is
 /// a [`Fault::config`]; a project whose Cargo metadata cannot be read, or
 /// whose report directory cannot be resolved, is a [`Fault::env`].
 pub(crate) fn build<'a>(
     dir: &Path,
     cfg: &'a TopsConfig,
     max_tier: u8,
+    base_flag: Option<&str>,
 ) -> Result<GatePlan<'a>, Fault> {
     let enabled = in_range(cfg, max_tier);
     if enabled.is_empty() {
@@ -359,6 +382,7 @@ pub(crate) fn build<'a>(
     }
     let report = report_dir(dir)?;
     let tests = TestCommands::new(&enabled, &report);
+    let base = base_for(&enabled, dir, base_flag, cfg.gates.base_ref.as_deref());
     let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
         tool_pin(dir, "cargo-crap").map_err(Fault::config)?
     } else {
@@ -372,7 +396,7 @@ pub(crate) fn build<'a>(
         above: ids(cfg, |l| l.enabled && crate::tiers::tier_for(l) > max_tier),
         // A layer turned off still shows in the run: it is not run, not omitted.
         disabled: ids(cfg, |l| !l.enabled),
-        units: units_of(&enabled, &tests, &report),
+        units: units_of(&enabled, &tests, &report, &base),
         enabled,
         report,
         tests,
@@ -382,8 +406,50 @@ pub(crate) fn build<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{GatePlan, TestCommands};
+    use super::{base_for, GatePlan, TestCommands};
+    use crate::config::Layer;
+    use crate::steps::{Base, BaseSource};
     use std::path::PathBuf;
+    use std::process::Command;
+
+    fn layer(id: &str) -> Layer {
+        serde_saphyr::from_str(&format!(
+            "{{ id: {id}, enabled: true, tier: 0, runner: x }}"
+        ))
+        .expect("layer")
+    }
+
+    #[test]
+    fn the_base_is_looked_up_only_with_a_mutation_layer_in_range() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-base-for-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .expect("spawn git");
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+        let mutation = layer("mutation");
+        let unit = layer("unit");
+        let found = Base::Found {
+            source: BaseSource::Flag,
+            name: "HEAD".to_string(),
+        };
+        assert_eq!(base_for(&[&mutation], &dir, Some("HEAD"), None), found);
+        assert_eq!(
+            base_for(&[&unit, &mutation], &dir, Some("HEAD"), None),
+            found
+        );
+        assert_eq!(base_for(&[&unit], &dir, Some("HEAD"), None), Base::unused());
+        assert_eq!(base_for(&[], &dir, Some("HEAD"), None), Base::unused());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn a_layer_with_no_unit_in_the_plan_has_no_commands() {

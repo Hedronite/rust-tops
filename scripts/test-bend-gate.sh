@@ -296,25 +296,25 @@ laws = (root / "laws/LAWS.bend").read_text()
 if not laws.endswith("\n"):
     laws += "\n"
 laws += """
-type HaloWitness is Data:
-  HaloOk{}
+type ExtraWitness is Data:
+  ExtraOk{}
 
-def halo_witness_verdict(x: HaloWitness) -> Verdict:
+def extra_witness_verdict(x: ExtraWitness) -> Verdict:
   match x:
-    case HaloOk{}:
+    case ExtraOk{}:
       Allow{}
 
-law halo_witness_appended:
-  {halo_witness_verdict(HaloOk{}) == Allow{} : Verdict}
+law extra_witness_appended:
+  {extra_witness_verdict(ExtraOk{}) == Allow{} : Verdict}
 
-def halo_witness_appended():
+def extra_witness_appended():
   {==}
 """
 (root / "laws/LAWS.bend").write_text(laws)
 names = (root / "laws/NAMES").read_text()
 if not names.endswith("\n"):
     names += "\n"
-(root / "laws/NAMES").write_text(names + "halo_witness_appended\n")
+(root / "laws/NAMES").write_text(names + "extra_witness_appended\n")
 proof = (root / "laws/PROOF.bend").read_text()
 lines = proof.splitlines(keepends=True)
 # The signature runs from `def main(` to the line ending in the header colon.
@@ -329,7 +329,7 @@ for i, line in enumerate(lines):
     nl = "\n" if line.endswith("\n") else ""
     body = line.rstrip("\n")
     if body.endswith(suffix):
-        body = body[: -len(suffix)] + ": Laws.Verdict}\n  & {Laws.halo_witness_verdict(Laws.HaloOk{}) == Laws.Allow{} : Laws.Verdict}:"
+        body = body[: -len(suffix)] + ": Laws.Verdict}\n  & {Laws.extra_witness_verdict(Laws.ExtraOk{}) == Laws.Allow{} : Laws.Verdict}:"
         lines[i] = body + nl
         found = True
         break
@@ -337,7 +337,7 @@ if not found:
     raise SystemExit("no main signature ending in " + suffix)
 text = "".join(lines)
 old_call = "Laws.single_deny_site()"
-new_call = "(Laws.single_deny_site(), Laws.halo_witness_appended())"
+new_call = "(Laws.single_deny_site(), Laws.extra_witness_appended())"
 assert text.count(old_call) == 1
 (root / "laws/PROOF.bend").write_text(text.replace(old_call, new_call, 1))
 PY
@@ -353,7 +353,7 @@ from pathlib import Path
 p = Path("$work/ip/laws/LAWS.bend")
 text = p.read_text()
 needle = "law evidence_not_self_served:\n"
-insert = needle + "  {evidence_verdict(FromImpl{}) == Refuse{} : Verdict}\n\nlaw halo_mid_insert:\n  {evidence_verdict(FromImpl{}) == Refuse{} : Verdict}\n\n"
+insert = needle + "  {evidence_verdict(FromImpl{}) == Refuse{} : Verdict}\n\nlaw extra_mid_insert:\n  {evidence_verdict(FromImpl{}) == Refuse{} : Verdict}\n\n"
 assert needle in text
 p.write_text(text.replace(needle, insert, 1))
 PY

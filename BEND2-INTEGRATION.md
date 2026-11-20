@@ -6,8 +6,8 @@ run. `not-evaluated` is never a pass. This file is the catalog. Promoting a
 row's text into `PROTOCOL.md` still takes an explicit spec bump. Hard/soft
 is the `Refuse` / `Ack` encoding.
 
-Sketch mapping: protocol intents → fail-closed agent laws → Halo / agent
-editing Rust. Humans read this as advisory. Agents under an AI-ops seat
+Sketch mapping: protocol intents → fail-closed agent laws → an agent
+editing Rust. Humans read this as advisory. Agents run under AI-ops rules
 treat `hard` rows as fail-closed once encoded.
 
 ## Layout

@@ -351,7 +351,8 @@ jobs:
 
   # Runs this repository's own gate: every enabled layer at tier <= 1 in
   # rust-tops.yaml, laws included. Not a --dry-run. fetch-depth: 0 because
-  # the mutation layer diffs against origin/main. cargo-tops is built from
+  # the mutation layer diffs against the base branch, which --base names
+  # (a gate with no base fails under CI). cargo-tops is built from
   # this checkout, so the gate under test is the one on this commit. Bend is
   # not preinstalled: the laws layer fetches it by laws/bend.lock, as it
   # does on an adopter.
@@ -384,7 +385,7 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
       - run: cargo install --path crates/cargo-tops --locked
-      - run: cargo tops gate --max-tier 1
+      - run: cargo tops gate --max-tier 1 --base "origin/${{ github.base_ref || github.event.repository.default_branch }}"
 
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
   # features usually need no FFI sysdeps. Do not mark required until one

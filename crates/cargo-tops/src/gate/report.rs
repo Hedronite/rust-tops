@@ -16,6 +16,7 @@ use super::{Fault, Mode, Options};
 use crate::config::TopsConfig;
 use crate::facts::{Outcome, Run};
 use crate::floors::{CoverageNumbers, CrapNumbers};
+use crate::steps::{self, Base};
 use crate::{laws, PROTOCOL_VERSION};
 
 /// The file name under the gate's report directory.
@@ -419,7 +420,55 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
     if let Some(numbers) = numbers {
         entry.insert("judged".into(), numbers);
     }
+    if id == "mutation" {
+        name_the_base(plan, done, &mut entry);
+    }
     entry
+}
+
+/// The mutation row names the base the diff started from and where it came
+/// from (`flag`, `key` or `origin/HEAD`), under `judged.base`. When the
+/// layer stopped before `cargo mutants`, `detail` says why, in the words the
+/// run printed. A dry run has no run, so a base that is missing or not a
+/// commit is worded by [`steps::stop_note`] from the plan alone.
+fn name_the_base(plan: &GatePlan<'_>, done: &Executed<'_>, entry: &mut Map<String, Value>) {
+    let Some(What::Mutation(mutation)) = plan
+        .units
+        .iter()
+        .find(|unit| unit.layer.id == "mutation")
+        .map(|unit| &unit.what)
+    else {
+        return;
+    };
+    let base = match &mutation.base {
+        Base::Found { source, name } => json!({ "ref": name, "source": source.report_name() }),
+        Base::Unresolved { source, name } => {
+            json!({ "ref": name, "source": source.report_name(), "resolved": false })
+        }
+        Base::Missing { tried, .. } => json!({ "ref": null, "source": null, "tried": tried }),
+    };
+    put_judged(entry, "base", base);
+    let ran = done
+        .runs
+        .iter()
+        .find(|run| run.layer == "mutation")
+        .and_then(|run| run.note.clone());
+    let planned = (!matches!(mutation.base, Base::Found { .. }))
+        .then(|| steps::stop_note(&mutation.base, Outcome::Vacuous).map(|(_, note)| note))
+        .flatten();
+    if let Some(detail) = ran.or(planned) {
+        entry.insert("detail".into(), json!(detail));
+    }
+}
+
+/// Set `key` in the row's `judged` object, keeping what else is there.
+fn put_judged(entry: &mut Map<String, Value>, key: &str, value: Value) {
+    let judged = entry
+        .entry("judged".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(map) = judged.as_object_mut() {
+        map.insert(key.to_string(), value);
+    }
 }
 
 fn laws_row(parts: &Parts<'_>, tier: u8) -> Map<String, Value> {
@@ -474,7 +523,8 @@ fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, Option<usize>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear, REPORT};
+    use super::{clear, put_judged, REPORT};
+    use serde_json::{json, Map};
     use std::fs;
 
     #[test]
@@ -486,5 +536,17 @@ mod tests {
         clear(&dir);
         assert!(!dir.join(REPORT).exists());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_judged_key_is_added_beside_the_ones_already_there() {
+        let mut row = Map::new();
+        put_judged(&mut row, "base", json!({ "ref": "x" }));
+        assert_eq!(row.get("judged"), Some(&json!({ "base": { "ref": "x" } })));
+        put_judged(&mut row, "caught", json!(3));
+        assert_eq!(
+            row.get("judged"),
+            Some(&json!({ "base": { "ref": "x" }, "caught": 3 }))
+        );
     }
 }
