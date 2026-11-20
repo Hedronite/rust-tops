@@ -1,0 +1,5 @@
+cargo-nextest 0.9.145 (00af4550e 2026-09-16)
+release: 0.9.145
+commit-hash: 00af4550ec3b3b9f0e574b897b06acb95d325ba2
+commit-date: 2026-09-16
+host: aarch64-apple-darwin
