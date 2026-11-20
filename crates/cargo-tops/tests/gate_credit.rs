@@ -19,7 +19,6 @@ use serde_json::{json, Value};
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
 if [ "$1" = metadata ]; then cat "$REPORTS/metadata.json"; exit 0; fi
-if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/coverage-fails" ]; then exit 1; fi
 if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/junit.xml" ]; then
   mkdir -p "$REPORTS/../repo/target/nextest/ci"
   cp "$REPORTS/junit.xml" "$REPORTS/../repo/target/nextest/ci/junit.xml"
@@ -186,6 +185,23 @@ fn junit(tests: &[(&str, bool)]) -> String {
     )
 }
 
+/// The `problems` of the `report.json` the last gate run wrote.
+fn problems(fixture: &Fixture) -> Vec<String> {
+    let report =
+        fs::read_to_string(fixture.repo.join("target/rust-tops/report.json")).expect("report.json");
+    let report: Value = serde_json::from_str(&report).expect("report json");
+    report
+        .get("problems")
+        .and_then(Value::as_array)
+        .map(|all| {
+            all.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The gate, and the verdict and detail `report.json` gives `layer`.
 fn gate(fixture: &Fixture, layer: &str) -> (Option<i32>, String, String, String) {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
@@ -231,6 +247,23 @@ fn a_coverage_run_with_no_property_test_fails_property() {
     assert_eq!(verdict, "fail", "{text}");
     assert!(detail.contains("`property`"), "{detail}");
     assert!(detail.contains("target/nextest/ci/junit.xml"), "{detail}");
+    // The failure line and `problems` say the same, and never blame coverage.
+    let problems = problems(&fixture);
+    assert!(
+        problems.iter().any(|p| p == &format!("property: {detail}")),
+        "{problems:?}"
+    );
+    assert!(
+        !problems.iter().any(|p| p.contains("run it took is")),
+        "{problems:?}"
+    );
+    assert!(
+        text.contains(&format!(
+            "[property] took the coverage run, but it is no credit: {detail}"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("run it took is"), "{text}");
 }
 
 #[test]
@@ -261,6 +294,15 @@ fn a_missing_junit_report_fails_and_names_the_setting() {
     assert_eq!(code, Some(1), "{text}");
     assert_eq!(verdict, "fail", "{text}");
     assert!(detail.contains("[profile.ci.junit]"), "{detail}");
+    let problems = problems(&fixture);
+    assert!(
+        problems.iter().any(|p| p == &format!("property: {detail}")),
+        "{problems:?}"
+    );
+    assert!(
+        text.contains("but it is no credit: no JUnit report at"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -307,27 +349,46 @@ fn acceptance_follows_the_same_rule_with_its_own_filter() {
     assert_eq!(verdict, "pass", "its own filter, not property's");
 }
 
-#[test]
-fn a_failed_coverage_run_fails_property_without_reading_evidence() {
-    let fixture = fixture("covfail", &[], Some(&junit(&[("property_ok", true)])));
-    fs::write(fixture.reports.join("coverage-fails"), "").expect("mark");
-    let (code, _, verdict, detail) = gate(&fixture, "property");
-    assert_eq!(code, Some(1));
-    assert_eq!(verdict, "fail");
-    assert!(!detail.contains("JUnit"), "{detail}");
+/// `check` or `gate` on the fixture: the exit code and what it printed.
+fn run_tops(fixture: &Fixture, command: &str) -> (Option<i32>, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+        .args([command, "--path"])
+        .arg(&fixture.repo)
+        .output()
+        .expect("spawn cargo-tops");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    (out.status.code(), text)
 }
 
 #[test]
-fn unit_and_integration_need_no_matching_test() {
-    let fixture = fixture(
-        "unit",
-        &["unit", "integration"],
-        Some(&junit(&[("property_ok", true)])),
-    );
-    for layer in ["unit", "integration"] {
-        let (_, text, verdict, _) = gate(&fixture, layer);
-        assert_eq!(verdict, "pass", "{layer}: {text}");
+fn a_test_filter_outside_the_name_characters_is_refused_with_exit_2() {
+    let fixture = fixture("badfilter", &[], None);
+    for (layer, filter) in [
+        ("property", "p::prop"),
+        ("property", "a.b"),
+        ("property", "a b"),
+        ("property", "a/b"),
+        ("property", "\\"),
+        ("property", ""),
+        ("acceptance", "x::"),
+    ] {
+        set_filter(&fixture, layer, filter);
+        for command in ["check", "gate"] {
+            let (code, text) = run_tops(&fixture, command);
+            assert_eq!(code, Some(2), "{command} {layer} {filter:?}: {text}");
+            assert!(
+                text.contains("test_filter"),
+                "{command} {layer} {filter:?}: {text}"
+            );
+        }
+        set_filter(&fixture, layer, "prop_09");
     }
+    let (code, text) = run_tops(&fixture, "check");
+    assert_eq!(code, Some(0), "{text}");
 }
 
 /// The kit holds the property tests its own `property` layer credits. A

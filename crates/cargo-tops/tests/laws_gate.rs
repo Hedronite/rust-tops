@@ -57,7 +57,7 @@ for arg in "$@"; do
       mkdir -p "$(dirname "$arg")"
       printf '%s\n' '{"data":[{"files":[{"filename":"src/lib.rs","summary":{"lines":{"count":1,"covered":1},"regions":{"count":1,"covered":1}}}]}],"entries":[]}' > "$arg"
       if [ "$1 $2" = "llvm-cov nextest" ]; then
-        j="$(dirname "$arg")/../nextest/ci"
+        j="$PWD/target/nextest/ci"
         mkdir -p "$j"
         printf '%s\n' '<testsuites><testsuite name="s"><testcase name="property_stub" classname="s"/><testcase name="acceptance_stub" classname="s"/></testsuite></testsuites>' > "$j/junit.xml"
       fi
@@ -1642,10 +1642,14 @@ fn a_custom_cargo_target_dir_holds_lcov_crap_and_the_laws_report() {
             "{name} is not under CARGO_TARGET_DIR: {text}"
         );
     }
+    // The gate's artifacts stay out of the project `target/`. nextest does
+    // not follow `CARGO_TARGET_DIR` for its own store, so the stub's JUnit
+    // report is under the project `target/nextest`, as real nextest's is.
     assert!(
-        !fixture.repo.join("target").exists(),
+        !fixture.repo.join("target/rust-tops").exists(),
         "the project target/ got an artifact while CARGO_TARGET_DIR was set: {text}"
     );
+    assert!(fixture.repo.join("target/nextest/ci/junit.xml").is_file());
     let lcov = report.join("lcov.info");
     let log = cargo_log(&fixture);
     for run in [

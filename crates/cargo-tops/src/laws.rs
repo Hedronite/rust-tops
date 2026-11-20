@@ -58,9 +58,13 @@ pub(crate) fn artifact_dir(project: &Path) -> PathBuf {
     resolve_report_dir(project, from_env.as_deref(), meta.as_deref())
 }
 
+/// What one `cargo metadata` said: the target directory, whether it could
+/// not run, and the workspace root.
+type Metadata = (Option<String>, bool, Option<String>);
+
 thread_local! {
     /// The target directory `cargo metadata` named, and whether it could not run.
-    static META_CACHE: RefCell<HashMap<PathBuf, (Option<String>, bool)>> = RefCell::new(HashMap::new());
+    static META_CACHE: RefCell<HashMap<PathBuf, Metadata>> = RefCell::new(HashMap::new());
     #[cfg(test)]
     static META_SPAWNS: Cell<u32> = const { Cell::new(0) };
 }
@@ -69,7 +73,7 @@ fn metadata_target_once(project: &Path) -> Option<String> {
     metadata_cached(project).0
 }
 
-fn metadata_cached(project: &Path) -> (Option<String>, bool) {
+fn metadata_cached(project: &Path) -> Metadata {
     let key = project
         .canonicalize()
         .unwrap_or_else(|_| project.to_path_buf());
@@ -126,6 +130,13 @@ pub(crate) fn metadata_unavailable(project: &Path) -> bool {
     !project.join("Cargo.toml").is_file() || metadata_cached(project).1
 }
 
+/// The workspace root `cargo metadata` named for `project`, from the same
+/// single `cargo metadata` the report directory uses. nextest keeps its
+/// store under this root.
+pub(crate) fn workspace_root(project: &Path) -> Option<PathBuf> {
+    metadata_cached(project).2.map(PathBuf::from)
+}
+
 #[cfg(test)]
 fn metadata_target(project: &Path) -> Option<String> {
     metadata_probe(project).0
@@ -133,10 +144,10 @@ fn metadata_target(project: &Path) -> Option<String> {
 
 /// The target directory, and whether `cargo metadata` could not run or
 /// failed. Output that names no target directory is not a failure.
-fn metadata_probe(project: &Path) -> (Option<String>, bool) {
+fn metadata_probe(project: &Path) -> Metadata {
     let manifest = project.join("Cargo.toml");
     if !manifest.is_file() {
-        return (None, false);
+        return (None, false, None);
     }
     #[cfg(test)]
     META_SPAWNS.with(|count| count.set(count.get() + 1));
@@ -151,16 +162,19 @@ fn metadata_probe(project: &Path) -> (Option<String>, bool) {
         .arg(&manifest)
         .output();
     let Ok(output) = output else {
-        return (None, true);
+        return (None, true, None);
     };
     if !output.status.success() {
-        return (None, true);
+        return (None, true, None);
     }
-    let target = String::from_utf8(output.stdout)
+    let doc = String::from_utf8(output.stdout)
         .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value.get("target_directory")?.as_str().map(str::to_string));
-    (target, false)
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+    let field = |key: &str| {
+        doc.as_ref()
+            .and_then(|value| value.get(key)?.as_str().map(str::to_string))
+    };
+    (field("target_directory"), false, field("workspace_root"))
 }
 
 /// The `bend` binary that reports the pinned version.
@@ -804,6 +818,31 @@ mod tests {
             resolve_report_dir(project, None, Some("/meta-target")),
             PathBuf::from("/meta-target/rust-tops")
         );
+    }
+
+    #[test]
+    fn the_workspace_root_is_read_from_the_same_metadata() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-root-{}", std::process::id()));
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"root-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("src/lib.rs"), "// fixture\n").unwrap();
+        let root = workspace_root(&dir).expect("cargo metadata");
+        assert_eq!(root, dir);
+        assert_eq!(workspace_root(&dir.join("absent")), None);
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "already in this crate when the strict table was turned on"
+        )]
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

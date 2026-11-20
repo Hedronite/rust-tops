@@ -224,8 +224,8 @@
             },
             "test_filter": {
               "type": "string",
-              "minLength": 1,
-              "description": "A test counts for the property layer when a :: separated segment of its nextest name starts with this text. Default: property. A credited run must hold a passed test that matches (PROTOCOL.md section 9)."
+              "pattern": "^[A-Za-z0-9_]+$",
+              "description": "A test counts for the property layer when a :: separated segment of its nextest name starts with this text: letters, digits and underscore only. Default: property. A credited run must hold a passed test that matches (PROTOCOL.md section 9)."
             }
           }
         },
@@ -234,8 +234,8 @@
           "properties": {
             "test_filter": {
               "type": "string",
-              "minLength": 1,
-              "description": "A test counts for the acceptance layer when a :: separated segment of its nextest name starts with this text. Default: acceptance. A credited run must hold a passed test that matches (PROTOCOL.md section 6)."
+              "pattern": "^[A-Za-z0-9_]+$",
+              "description": "A test counts for the acceptance layer when a :: separated segment of its nextest name starts with this text: letters, digits and underscore only. Default: acceptance. A credited run must hold a passed test that matches (PROTOCOL.md section 6)."
             }
           }
         },

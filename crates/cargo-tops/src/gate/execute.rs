@@ -264,8 +264,8 @@ impl<'a> Runner<'_, 'a> {
         if run.outcome != Outcome::Passed {
             return run;
         }
-        let target = self.plan.report.parent().unwrap_or(&self.plan.report);
-        if let Err(why) = evidence::credit(layer, self.dir, target, filter) {
+        let root = laws::workspace_root(self.dir).unwrap_or_else(|| self.dir.to_path_buf());
+        if let Err(why) = evidence::credit(layer, &root, filter, self.done.started) {
             run.outcome = Outcome::Failed;
             run.note = Some(why);
         }
@@ -276,7 +276,12 @@ impl<'a> Runner<'_, 'a> {
     fn take_shared(&mut self) {
         for (layer, from) in self.done.shared.clone() {
             let run = self.credited(layer, from);
-            println!("[{layer}] took the {from} run's outcome: {}", run.outcome);
+            match &run.note {
+                Some(note) => {
+                    println!("[{layer}] took the {from} run, but it is no credit: {note}");
+                }
+                None => println!("[{layer}] took the {from} run's outcome: {}", run.outcome),
+            }
             self.done.runs.push(run);
             self.done.timing.push(Timing {
                 layer: layer.to_string(),

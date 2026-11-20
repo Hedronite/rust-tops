@@ -205,11 +205,11 @@ impl Filters {
 }
 
 /// The shared nextest run, narrowed to the tests with a `::`-separated name
-/// segment that starts with `filter` (HN-L2). The same rule reads the JUnit
+/// segment that starts with `filter` (HN-L2, a word of `[A-Za-z0-9_]`). The same rule reads the JUnit
 /// report of a credited run, so credit equals running.
 fn selected_tests(filter: &str) -> Vec<Step> {
-    let literal = regex::escape(filter).replace('/', "\\/");
-    let expr = format!("test(/(^|::){literal}/)");
+    // `check` holds a filter to `[A-Za-z0-9_]+`, which is a regex literal.
+    let expr = format!("test(/(^|::){filter}/)");
     let argv = NEXTEST.iter().map(|arg| (*arg).to_string()).chain([
         "--no-tests=fail".to_string(),
         "-E".to_string(),
@@ -505,14 +505,14 @@ mod tests {
     fn the_selecting_layers_run_only_tests_with_a_name_prefix() {
         let filters = Filters {
             property: "prop_".to_string(),
-            acceptance: "a/b.c".to_string(),
+            acceptance: "journey_9".to_string(),
         };
         let shared = ["cargo", "nextest", "run", "--workspace", "--all-features"]
             .into_iter()
             .chain(["--profile", "ci", "--no-tests=fail", "-E"]);
         for (id, expr) in [
             ("property", "test(/(^|::)prop_/)"),
-            ("acceptance", r"test(/(^|::)a\/b\.c/)"),
+            ("acceptance", "test(/(^|::)journey_9/)"),
         ] {
             let Some(Plan::Chains(chains)) =
                 plan_for(&layer(id), &PathBuf::new(), &Base::unused(), &filters)
