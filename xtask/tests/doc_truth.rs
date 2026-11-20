@@ -4,7 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const README: &str = "| Contract | x | y |\n| Class floors | None | Two profile files; more |\n| Package | 0.4.0 | Cargo |\n| Tool lock | rustc 1.99.1, cargo-deny 0.18, nushell 0.108.0 | lock |\n\nNushell 0.108.0 is a required dependency. Install it with `cargo install nu --locked --version 0.108.0`, or read https://github.com/nushell/nushell/releases/tag/0.108.0.\n";
+const TABLE: &str = "<!-- enforcement:start -->\n| Section | Keys | Judged | Declarative |\n| --- | ---: | ---: | ---: |\n| `a` | 2 | 1 | 1 |\n| **All** | **2** | **1** | **1** |\n\n1 of 2 schema keys are judged (50.0%).\n<!-- enforcement:end -->\n";
+const MAP: &str = r#"{"keys": {"/a/b": {"class": "judged", "reader": "x.rs", "via": "gate"}, "/a/c": {"class": "declarative"}}}"#;
+const README: &str = "| Contract | x | y |\n| Class floors | None | Two profile files; more |\n| Package | 0.4.0 | Cargo |\n| Tool lock | rustc 1.99.1, cargo-deny 0.18, nushell 0.108.0 | lock |\n\nNushell 0.108.0 is a required dependency. Install it with `cargo install nu --locked --version 0.108.0`, or read https://github.com/nushell/nushell/releases/tag/0.108.0.\n\n<!-- enforcement:start -->\n| Section | Keys | Judged | Declarative |\n| --- | ---: | ---: | ---: |\n| `a` | 2 | 1 | 1 |\n| **All** | **2** | **1** | **1** |\n\n1 of 2 schema keys are judged (50.0%).\n<!-- enforcement:end -->\n";
 const MAIN_RS: &str =
     "println!(\"note: the skills run on Nushell (nu) 0.108.0, a required dependency\");\n";
 
@@ -26,6 +28,8 @@ fn fixture(name: &str, readme: &str) -> PathBuf {
     for profile in ["a.yaml", "b.yaml"] {
         fs::write(root.join("profiles").join(profile), "x: 1\n").expect("write a profile");
     }
+    fs::create_dir_all(root.join("schema")).expect("make the schema dir");
+    fs::write(root.join("schema/enforcement.json"), MAP).expect("write the map");
     fs::write(root.join("README.md"), readme).expect("write the README");
     root
 }
@@ -134,6 +138,43 @@ fn a_planted_wrong_profile_count_fails() {
         text.contains("says 5 profile files, profiles/ has 2"),
         "{text}"
     );
+}
+
+#[test]
+fn a_table_that_disagrees_with_the_map_fails() {
+    let text = plant_readme("table-count", "| `a` | 2 | 1 | 1 |", "| `a` | 2 | 2 | 0 |");
+    assert!(
+        text.contains("README enforcement table disagrees with schema/enforcement.json"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_readme_without_the_enforcement_table_fails() {
+    let text = plant_readme("table-absent", "<!-- enforcement:start -->", "");
+    assert!(text.contains("README has no table between"), "{text}");
+}
+
+#[test]
+fn a_run_that_agrees_prints_the_ratio() {
+    let (code, text) = docs(&fixture("ratio", README));
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("docs: 1 of 2 schema keys are judged (50.0%)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_table_flag_prints_the_table_the_readme_holds() {
+    let root = fixture("print", README);
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["docs", "--table", "--root"])
+        .arg(&root)
+        .output()
+        .expect("spawn xtask docs");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), TABLE);
 }
 
 #[test]

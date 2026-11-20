@@ -1,0 +1,301 @@
+{
+  "description": "Every leaf key of schema/rust-tops.schema.json and whether cargo-tops judges it. A key is a JSON pointer; `*` stands for each item of an array. `judged` means a different value can change what `cargo tops check` or `cargo tops gate` decides: `reader` is the source file that reads it (the file must contain the key's name) and `via` is `check` when only `check` reads it and `gate` when the gate does. `declarative` means the key is documented and carried but no code reads it. tests/enforcement_map.rs fails when a leaf is unclassified, an entry names no leaf, or a reader lacks its key. Add the entry when a step adds a schema key.",
+  "keys": {
+    "/protocol/id": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/main.rs",
+      "via": "check"
+    },
+    "/protocol/version": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/main.rs",
+      "via": "check"
+    },
+    "/protocol/spec_uri": {
+      "class": "declarative"
+    },
+    "/protocol/adopted": {
+      "class": "declarative"
+    },
+    "/crate/name": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/main.rs",
+      "via": "check"
+    },
+    "/crate/class": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/tiers.rs",
+      "via": "check"
+    },
+    "/crate/edition": {
+      "class": "declarative"
+    },
+    "/crate/msrv": {
+      "class": "declarative"
+    },
+    "/crate/unsafe_policy": {
+      "class": "declarative"
+    },
+    "/crate/hot_paths": {
+      "class": "declarative"
+    },
+    "/goals/correctness": {
+      "class": "declarative"
+    },
+    "/goals/density": {
+      "class": "declarative"
+    },
+    "/goals/performance": {
+      "class": "declarative"
+    },
+    "/goals/notes": {
+      "class": "declarative"
+    },
+    "/layers/*/id": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/gate/plan.rs",
+      "via": "gate"
+    },
+    "/layers/*/enabled": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/gate/plan.rs",
+      "via": "gate"
+    },
+    "/layers/*/tier": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/gate/plan.rs",
+      "via": "gate"
+    },
+    "/layers/*/runner": {
+      "class": "declarative"
+    },
+    "/layers/*/scope": {
+      "class": "declarative"
+    },
+    "/layers/*/config_ref": {
+      "class": "declarative"
+    },
+    "/gates/base_ref": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/gate/plan.rs",
+      "via": "gate"
+    },
+    "/gates/lint/clippy_deny": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/facts.rs",
+      "via": "gate"
+    },
+    "/gates/lint/fmt_check": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/facts.rs",
+      "via": "gate"
+    },
+    "/gates/lint/cognitive_complexity_max": {
+      "class": "declarative"
+    },
+    "/gates/lint/too_many_lines_max": {
+      "class": "declarative"
+    },
+    "/gates/lint/too_many_arguments_max": {
+      "class": "declarative"
+    },
+    "/gates/unit/must_pass": {
+      "class": "declarative"
+    },
+    "/gates/unit/allow_ignored": {
+      "class": "declarative"
+    },
+    "/gates/unit/nextest_profile": {
+      "class": "declarative"
+    },
+    "/gates/coverage/tool": {
+      "class": "declarative"
+    },
+    "/gates/coverage/line_min_pct": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/coverage/region_min_pct": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/coverage/branch_min_pct": {
+      "class": "declarative"
+    },
+    "/gates/coverage/per_file_line_min_pct": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/coverage/exclude_globs": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/crap/tool": {
+      "class": "declarative"
+    },
+    "/gates/crap/formula": {
+      "class": "declarative"
+    },
+    "/gates/crap/threshold_production": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/crap/threshold_agent": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/crap/threshold_human": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/tiers.rs",
+      "via": "check"
+    },
+    "/gates/crap/classic_crappy": {
+      "class": "declarative"
+    },
+    "/gates/crap/fail_on": {
+      "class": "declarative"
+    },
+    "/gates/crap/scar_guard": {
+      "class": "declarative"
+    },
+    "/gates/crap/baseline": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/floors.rs",
+      "via": "gate"
+    },
+    "/gates/mutation/tool": {
+      "class": "declarative"
+    },
+    "/gates/mutation/scope": {
+      "class": "declarative"
+    },
+    "/gates/mutation/kill_rate_min_pct": {
+      "class": "declarative"
+    },
+    "/gates/mutation/unexplained_survivors_max": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/tiers.rs",
+      "via": "check"
+    },
+    "/gates/mutation/timeout_multiplier": {
+      "class": "declarative"
+    },
+    "/gates/property/framework": {
+      "class": "declarative"
+    },
+    "/gates/property/cases_ci": {
+      "class": "declarative"
+    },
+    "/gates/property/cases_nightly": {
+      "class": "declarative"
+    },
+    "/gates/property/required_on_classes": {
+      "class": "declarative"
+    },
+    "/gates/property/test_filter": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/config.rs",
+      "via": "gate"
+    },
+    "/gates/acceptance/test_filter": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/config.rs",
+      "via": "gate"
+    },
+    "/gates/fuzz/engine": {
+      "class": "declarative"
+    },
+    "/gates/fuzz/pr_smoke_seconds": {
+      "class": "declarative"
+    },
+    "/gates/fuzz/nightly_seconds": {
+      "class": "declarative"
+    },
+    "/gates/formal/kani_required_on_unsafe_kernels": {
+      "class": "declarative"
+    },
+    "/gates/formal/unwind_bound_default": {
+      "class": "declarative"
+    },
+    "/gates/performance/ci_tool": {
+      "class": "declarative"
+    },
+    "/gates/performance/local_tool": {
+      "class": "declarative"
+    },
+    "/gates/performance/instruction_regression_max_pct": {
+      "class": "declarative"
+    },
+    "/gates/performance/estimated_cycles_regression_max_pct": {
+      "class": "declarative"
+    },
+    "/density/production_sloc_policy": {
+      "class": "declarative"
+    },
+    "/density/max_fn_sloc": {
+      "class": "declarative"
+    },
+    "/density/max_fn_cc": {
+      "class": "declarative"
+    },
+    "/density/allow_long_table_functions": {
+      "class": "declarative"
+    },
+    "/density/rules": {
+      "class": "declarative"
+    },
+    "/performance/release_profile": {
+      "class": "declarative"
+    },
+    "/performance/hot_path_requirements": {
+      "class": "declarative"
+    },
+    "/agent/guidelines_file": {
+      "class": "declarative"
+    },
+    "/agent/may_run_tools": {
+      "class": "declarative"
+    },
+    "/agent/must_not_write_tests_from_impl": {
+      "class": "declarative"
+    },
+    "/agent/must_not_split_for_crap_alone": {
+      "class": "declarative"
+    },
+    "/agent/required_before_pr": {
+      "class": "declarative"
+    },
+    "/exemptions/*/path": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/exemptions.rs",
+      "via": "gate"
+    },
+    "/exemptions/*/symbol": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/exemptions.rs",
+      "via": "gate"
+    },
+    "/exemptions/*/layer": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/exemptions.rs",
+      "via": "gate"
+    },
+    "/exemptions/*/reason": {
+      "class": "declarative"
+    },
+    "/exemptions/*/owner": {
+      "class": "declarative"
+    },
+    "/exemptions/*/expires": {
+      "class": "judged",
+      "reader": "crates/cargo-tops/src/exemptions.rs",
+      "via": "gate"
+    }
+  }
+}

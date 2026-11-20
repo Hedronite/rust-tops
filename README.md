@@ -149,6 +149,36 @@ nix flake check
 | Published example crates | [`examples/parser-codec`](examples/parser-codec) and [`examples/no-std-embedded`](examples/no-std-embedded) set `publish = false`. |
 | A written gate report | Every `cargo tops gate` run writes `report.json` under the target directory's `rust-tops/` folder, shaped by [`schema/gate-report.schema.json`](schema/gate-report.schema.json). |
 
+## What the gate enforces
+
+Every key the instance schema defines is classed in [`schema/enforcement.json`](schema/enforcement.json) as judged (a source file reads it and a different value can change what `check` or `gate` decides) or declarative (documented and carried, never read). `crates/cargo-tops/tests/enforcement_map.rs` fails on an unclassified key, a stale entry, or a reader that lacks its key, and `cargo run -p xtask -- docs` fails when this table disagrees with the map.
+
+<!-- enforcement:start -->
+| Section | Keys | Judged | Declarative |
+| --- | ---: | ---: | ---: |
+| `agent` | 5 | 0 | 5 |
+| `crate` | 6 | 2 | 4 |
+| `density` | 5 | 0 | 5 |
+| `exemptions` | 6 | 4 | 2 |
+| `gates` | 1 | 1 | 0 |
+| `gates.acceptance` | 1 | 1 | 0 |
+| `gates.coverage` | 6 | 4 | 2 |
+| `gates.crap` | 9 | 4 | 5 |
+| `gates.formal` | 2 | 0 | 2 |
+| `gates.fuzz` | 3 | 0 | 3 |
+| `gates.lint` | 5 | 2 | 3 |
+| `gates.mutation` | 5 | 1 | 4 |
+| `gates.performance` | 4 | 0 | 4 |
+| `gates.property` | 5 | 1 | 4 |
+| `gates.unit` | 3 | 0 | 3 |
+| `goals` | 4 | 0 | 4 |
+| `layers` | 6 | 3 | 3 |
+| `performance` | 2 | 0 | 2 |
+| `protocol` | 4 | 2 | 2 |
+| **All** | **82** | **25** | **57** |
+
+25 of 82 schema keys are judged (30.4%).
+<!-- enforcement:end -->
 ## How it works
 
 Write the oracle from the contract, then the smallest production code that meets it. A test taken from the function body freezes current behavior, including bugs. Splitting a function only to lower its CRAP score violates the spec's scar-guard.
@@ -159,7 +189,7 @@ Order for a gated change, from [`PROTOCOL.md`](PROTOCOL.md):
 2. `cargo nextest` (profile `ci`) and `cargo test --doc`.
 3. `cargo llvm-cov` writing LCOV, then `test -s` on that file.
 4. `cargo crap --lcov` against that LCOV. The drop-in threshold is 6.0. Pass `--lcov` on the CLI. `fail = true` is not a cargo-crap config field. `cargo tops gate` reads the JSON report and fails on a new function over the threshold or a function that got worse than its baseline.
-5. `cargo mutants --in-diff`. The gate diffs `origin/main...HEAD`.
+5. `cargo mutants --in-diff`. The diff starts at the merge base with `--base`, then `gates.base_ref`, then `origin/HEAD`. A missing base fails under CI and is vacuous otherwise.
 6. Property tests, fuzz, Miri, Kani, and Callgrind when the crate class requires them. `cargo tops gate` has no commands for this step.
 
 The protocol cap for new human-authored code is CRAP 4. The cap for new code written by a coding agent is CRAP 6. A class table can set other numbers: [`profiles/binary-cli.yaml`](profiles/binary-cli.yaml) uses human 6 and agent 8. Coverage floors live in `rust-tops.yaml`, and `cargo tops gate` judges them on the run's summary. The drop-in workflow does not pass `--fail-under-lines`.
