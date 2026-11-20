@@ -391,6 +391,10 @@ fn encode_empty_emits_single_zero_block() {
 }
 ```
 
+#### 6.5.1 What the gate reads
+
+The gate runs the `acceptance` layer the way it runs `property` (§9.5): the same nextest command, narrowed to the tests it selects by name, with its own filter `gates.acceptance.test_filter` (default `acceptance`). A test counts for the layer when one `::`-separated segment of its nextest name starts with the filter, so `acceptance_encode` and `journeys::acceptance_encode` count and `an_acceptance_helper` does not. When the layer takes the coverage run instead of running itself, it passes only if that run's JUnit report holds a passed test that matches.
+
 ### 6.6 Compile-fail / UI (proc-macros, tricky APIs)
 
 `trybuild` or `ui_test`. These are the mutation tests of the type system: if a change makes an intended failure compile, the suite must go red.
@@ -595,6 +599,16 @@ Rules:
 ### 9.4 Interaction with mutation
 
 A good property kills operator mutants that example tests miss (`<` vs `<=`, off-by-one on max). If a survivor is an inequality on a bound, add a property at the bound, do not add a single magic example unless the bound is a spec constant.
+
+### 9.5 What the gate reads
+
+`gates.property.test_filter` (default `property`) names the tests that count as property tests: a test counts when one `::`-separated segment of its nextest name starts with the filter. The `property` layer passes only on a passed test that matches.
+
+- **It runs itself** when no coverage run is credited. Its command is the shared nextest run with `-E 'test(/(^|::)<filter>/)'` and `--no-tests=fail`, so a filter that selects nothing fails the layer. A filter is letters, digits and underscore only (`^[A-Za-z0-9_]+$`), so it is a plain regex literal and needs no escaping. `check` refuses any other value, and the gate exits 2.
+- **It takes the coverage run** when its command carries `--workspace`, `--all-features` and `--profile ci`. The coverage run must also have written a nextest JUnit report, holding at least one passed test that matches. The gate reads the file where nextest wrote it: the workspace root from `cargo metadata`, then nextest's `[store] dir` from `.config/nextest.toml` (default `target/nextest`), then `ci/<path>` with `path` from `[profile.ci.junit]`. `CARGO_TARGET_DIR` and `build.target-dir` do not move it. A report dated before the credited run began, or in the future, was not written by that run, so it is stale and not evidence; the gate never deletes it. No match, only failed or skipped matches, no report, or a stale report is `fail`. The report's `detail`, the failure line and `problems` all name the filter, the path read (relative to the workspace root), and the fix.
+- **The same rule** applies to the whole workspace, not to one crate, so credit equals running.
+
+The same keys exist for `acceptance` under `gates.acceptance` (§6.5.1).
 
 ---
 

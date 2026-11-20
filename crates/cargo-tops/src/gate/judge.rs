@@ -111,13 +111,13 @@ fn run_problems(done: &Executed<'_>) -> Vec<String> {
     let mut failed: Vec<String> = done.not_run.clone();
     failed.extend(done.runs.iter().filter_map(|run| {
         match done.shared.iter().find(|(layer, _)| *layer == run.layer) {
-            Some((_, from)) => run.outcome.fails_the_gate().then(|| {
+            Some((_, from)) if run.note.is_none() => run.outcome.fails_the_gate().then(|| {
                 format!(
                     "{}: no command of its own; the {from} run it took is {}",
                     run.layer, run.outcome
                 )
             }),
-            None => run_failure(run),
+            _ => run_failure(run),
         }
     }));
     failed

@@ -39,5 +39,8 @@ toml = "1"
 # `openat`/`mkdirat` without `unsafe`. 1.1.6 clears RUSTSEC-2026-0486.
 rustix = { version = "1.1.6", default-features = false, features = ["fs", "std"] }
 
+[dev-dependencies]
+proptest = "1"
+
 [lints]
 workspace = true
