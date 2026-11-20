@@ -149,6 +149,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
+ "proptest",
  "regex",
  "rustix",
  "serde",

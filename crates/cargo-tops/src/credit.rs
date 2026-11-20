@@ -8,6 +8,10 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #![allow(dead_code, reason = "main.rs calls the credit decision")]
 
+// Held here until the gate wiring moves it to main.rs.
+#[path = "evidence.rs"]
+pub(crate) mod evidence;
+
 /// Nextest profile a coverage command must pass for credit.
 pub(crate) const NEXTEST_PROFILE: &str = "ci";
 
