@@ -1,0 +1,1506 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.819982375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.513537209,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:4:5: replace add -> i32 with 0",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "column": 5
+            },
+            "end": {
+              "line": 4,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_4_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_4_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.120934916,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.181101834,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:4:5: replace add -> i32 with 1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "column": 5
+            },
+            "end": {
+              "line": 4,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_4_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_4_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.107022792,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.181147208,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:4:5: replace add -> i32 with -1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "column": 5
+            },
+            "end": {
+              "line": 4,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_4_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_4_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.106414417,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.23059925,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:4:7: replace + with - in add",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "column": 7
+            },
+            "end": {
+              "line": 4,
+              "column": 8
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_4_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_4_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.113024167,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.181143791,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:4:7: replace + with * in add",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 3,
+                "column": 1
+              },
+              "end": {
+                "line": 5,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "column": 7
+            },
+            "end": {
+              "line": 4,
+              "column": 8
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_4_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_4_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.121543958,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.18111875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:5: replace double -> i32 with 0",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "double",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 5
+            },
+            "end": {
+              "line": 8,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.118955125,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.232848,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:5: replace double -> i32 with 1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "double",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 5
+            },
+            "end": {
+              "line": 8,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.119879292,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.241087875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:5: replace double -> i32 with -1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "double",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 5
+            },
+            "end": {
+              "line": 8,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.1075925,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.230802417,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:7: replace * with + in double",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "double",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 7
+            },
+            "end": {
+              "line": 8,
+              "column": 8
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.170658209,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.229900042,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:7: replace * with / in double",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "double",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 7,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 7
+            },
+            "end": {
+              "line": 8,
+              "column": 8
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.167602084,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.219947583,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:5: replace opaque -> Opaque with Default::default()",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "opaque",
+            "return_type": "-> Opaque",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 5
+            },
+            "end": {
+              "line": 12,
+              "column": 14
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__lib.rs_line_12_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.106317833,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:16:5: replace spin -> u32 with 0",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 16,
+              "column": 5
+            },
+            "end": {
+              "line": 20,
+              "column": 6
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_16_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_16_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.113336542,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.239245958,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:16:5: replace spin -> u32 with 1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 16,
+              "column": 5
+            },
+            "end": {
+              "line": 20,
+              "column": 6
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_16_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_16_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.110367875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.181226375,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:17:13: replace < with == in spin",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 17,
+              "column": 13
+            },
+            "end": {
+              "line": 17,
+              "column": 14
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_17_col_13.log",
+      "diff_path": "diff/src__lib.rs_line_17_col_13.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.115069583,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.181267458,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:17:13: replace < with > in spin",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 17,
+              "column": 13
+            },
+            "end": {
+              "line": 17,
+              "column": 14
+            }
+          },
+          "replacement": ">",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_17_col_13_001.log",
+      "diff_path": "diff/src__lib.rs_line_17_col_13_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.11942975,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.172611042,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:17:13: replace < with <= in spin",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 17,
+              "column": 13
+            },
+            "end": {
+              "line": 17,
+              "column": 14
+            }
+          },
+          "replacement": "<=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_17_col_13_002.log",
+      "diff_path": "diff/src__lib.rs_line_17_col_13_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.107558,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.168281208,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:18:11: replace += with -= in spin",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 18,
+              "column": 11
+            },
+            "end": {
+              "line": 18,
+              "column": 13
+            }
+          },
+          "replacement": "-=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_18_col_11.log",
+      "diff_path": "diff/src__lib.rs_line_18_col_11.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.111740458,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.493100667,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:18:11: replace += with *= in spin",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "spin",
+            "return_type": "-> u32",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 18,
+              "column": 11
+            },
+            "end": {
+              "line": 18,
+              "column": 13
+            }
+          },
+          "replacement": "*=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "Timeout",
+      "log_path": "log/src__lib.rs_line_18_col_11_001.log",
+      "diff_path": "diff/src__lib.rs_line_18_col_11_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.121307375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 4.031318541,
+          "process_status": "Timeout",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:25:9: replace inner::triple -> i32 with 0",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "inner::triple",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 24,
+                "column": 5
+              },
+              "end": {
+                "line": 26,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 25,
+              "column": 9
+            },
+            "end": {
+              "line": 25,
+              "column": 14
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_25_col_9.log",
+      "diff_path": "diff/src__lib.rs_line_25_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.109103375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.415611625,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:25:9: replace inner::triple -> i32 with 1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "inner::triple",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 24,
+                "column": 5
+              },
+              "end": {
+                "line": 26,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 25,
+              "column": 9
+            },
+            "end": {
+              "line": 25,
+              "column": 14
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_25_col_9_001.log",
+      "diff_path": "diff/src__lib.rs_line_25_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.12097825,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.612745625,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:25:9: replace inner::triple -> i32 with -1",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "inner::triple",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 24,
+                "column": 5
+              },
+              "end": {
+                "line": 26,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 25,
+              "column": 9
+            },
+            "end": {
+              "line": 25,
+              "column": 14
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_25_col_9_002.log",
+      "diff_path": "diff/src__lib.rs_line_25_col_9_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.106036375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.853253708,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:25:11: replace * with + in inner::triple",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "inner::triple",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 24,
+                "column": 5
+              },
+              "end": {
+                "line": 26,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 25,
+              "column": 11
+            },
+            "end": {
+              "line": 25,
+              "column": 12
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_25_col_11.log",
+      "diff_path": "diff/src__lib.rs_line_25_col_11.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.112429208,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.871245709,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:25:11: replace * with / in inner::triple",
+          "package": "sample",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "inner::triple",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 24,
+                "column": 5
+              },
+              "end": {
+                "line": 26,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 25,
+              "column": 11
+            },
+            "end": {
+              "line": 25,
+              "column": 12
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_25_col_11_001.log",
+      "diff_path": "diff/src__lib.rs_line_25_col_11_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.121888083,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.7411889170000001,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=sample@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 23,
+  "missed": 10,
+  "caught": 11,
+  "timeout": 1,
+  "unviable": 1,
+  "success": 0,
+  "start_time": "2026-11-20T03:59:09.188302Z",
+  "end_time": "2026-11-20T03:59:33.389279Z",
+  "cargo_mutants_version": "27.1.0"
+}
