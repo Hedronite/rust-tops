@@ -20,6 +20,8 @@ pub(crate) struct Row {
     pub(crate) key: &'static str,
     pub(crate) argv: &'static [&'static str],
     pub(crate) prefix: &'static str,
+    /// Other argvs that must exit 0 for the tool to count as present.
+    pub(crate) present: &'static [&'static [&'static str]],
 }
 
 const RUSTC: &[&str] = &["rustc", "--version"];
@@ -30,56 +32,67 @@ pub(crate) const ROWS: [Row; 11] = [
         key: "rustc",
         argv: RUSTC,
         prefix: "rustc ",
+        present: &[],
     },
     Row {
         key: "clippy",
         argv: RUSTC,
         prefix: "rustc ",
+        present: &[&["cargo", "clippy", "--version"]],
     },
     Row {
         key: "rustfmt",
         argv: RUSTC,
         prefix: "rustc ",
+        present: &[&["cargo", "fmt", "--version"]],
     },
     Row {
         key: "cargo-nextest",
         argv: &["cargo", "nextest", "--version"],
         prefix: "cargo-nextest ",
+        present: &[],
     },
     Row {
         key: "cargo-llvm-cov",
         argv: &["cargo", "llvm-cov", "--version"],
         prefix: "cargo-llvm-cov ",
+        present: &[],
     },
     Row {
         key: "cargo-mutants",
         argv: &["cargo", "mutants", "--version"],
         prefix: "cargo-mutants ",
+        present: &[],
     },
     Row {
         key: "cargo-crap",
         argv: &["cargo", "crap", "--version"],
         prefix: "cargo-crap ",
+        present: &[],
     },
     Row {
         key: "cargo-deny",
         argv: &["cargo", "deny", "--version"],
         prefix: "cargo-deny ",
+        present: &[],
     },
     Row {
         key: "cargo-fuzz",
         argv: &["cargo", "fuzz", "--version"],
         prefix: "cargo-fuzz ",
+        present: &[],
     },
     Row {
         key: "kani-verifier",
         argv: &["cargo", "kani", "--version"],
-        prefix: "cargo-kani ",
+        prefix: "Kani Rust Verifier ",
+        present: &[],
     },
     Row {
         key: "nushell",
         argv: &["nu", "--version"],
         prefix: "",
+        present: &[],
     },
 ];
 
@@ -215,6 +228,7 @@ pub(crate) fn check_row(
 ) -> Line {
     let verdict = match probe(row.argv) {
         None => Verdict::Missing,
+        Some(_) if row.present.iter().any(|argv| probe(argv).is_none()) => Verdict::Missing,
         Some(out) => match parse_version(row, &out) {
             Some(found) if pin_matches(pin, &found) => Verdict::Ok { found },
             Some(found) => Verdict::Mismatch { found },
@@ -366,6 +380,7 @@ mod tests {
             ("cargo-crap", "cargo-crap", "0.9.0"),
             ("cargo-deny", "cargo-deny", "0.18.9"),
             ("cargo-fuzz", "cargo-fuzz", "0.12.0"),
+            ("kani-verifier", "kani-verifier", "0.68.0"),
             ("nushell", "nushell", "0.108.0"),
         ] {
             assert_eq!(
@@ -390,12 +405,26 @@ mod tests {
     }
 
     #[test]
-    fn kani_reads_the_cargo_kani_line() {
-        // No real line is captured: Kani runs a first-time setup that installs
-        // a toolchain on any call. The shape is the one the row states.
+    fn clippy_or_rustfmt_that_will_not_run_is_missing_though_rustc_answers() {
+        let pins = BTreeMap::from([
+            ("clippy".to_string(), "1.99.1".to_string()),
+            ("rustfmt".to_string(), "1.99.1".to_string()),
+        ]);
+        let mut probe = probe_for(&[
+            ("rustc", Some("rustc 1.99.1 (x 2026-10-13)\n")),
+            ("clippy", None),
+            ("fmt", Some("rustfmt 1.10.0-stable (x)\n")),
+        ]);
+        let texts: Vec<String> = verify(&pins, None, &mut probe)
+            .iter()
+            .map(Line::text)
+            .collect();
         assert_eq!(
-            parse_version(row("kani-verifier"), "cargo-kani 0.68.0\n").as_deref(),
-            Some("0.68.0")
+            texts,
+            [
+                "missing  clippy: pin 1.99.1, not found",
+                "ok       rustfmt 1.99.1 (pin 1.99.1)",
+            ]
         );
     }
 

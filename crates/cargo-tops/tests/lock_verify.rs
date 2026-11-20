@@ -10,6 +10,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const INIT_CLASSES: [&str; 8] = [
     "library-core",
@@ -28,9 +30,17 @@ struct Scratch {
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("cargo-tops-lock-{name}-{}", std::process::id()));
-        fs::remove_dir_all(&root).ok();
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let root = std::env::temp_dir().join(format!(
+            "cargo-tops-lock-{name}-{}-{}-{nanos}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A fresh name per test and per process: create_dir_all on the new
+        // path, and Drop removes only that path.
         fs::create_dir_all(root.join("bin")).expect("mkdir bin");
         fs::create_dir_all(root.join("repo")).expect("mkdir repo");
         let scratch = Scratch { root };
@@ -125,7 +135,16 @@ fn shim_all(scratch: &Scratch, pins: &BTreeMap<String, String>) {
         }
     }
     if let Some(pin) = pins.get("kani-verifier") {
-        scratch.tool("cargo-kani", &format!("cargo-kani {}", full(pin)));
+        scratch.tool(
+            "cargo-kani",
+            &format!("Kani Rust Verifier {} (cargo plugin)", full(pin)),
+        );
+    }
+    if pins.contains_key("clippy") {
+        scratch.tool("cargo-clippy", "clippy 0.1.99 (58cf8f9c35 2026-10-13)");
+    }
+    if pins.contains_key("rustfmt") {
+        scratch.tool("cargo-fmt", "rustfmt 1.10.0-stable (58cf8f9c35 2026-10-13)");
     }
 }
 
@@ -274,4 +293,18 @@ fn the_lock_of_every_init_class_passes_verify_against_shims_at_the_pins() {
         let out = scratch.run(&["--verify"]);
         assert_eq!(out.status.code(), Some(0), "{class}: {}", text(&out));
     }
+}
+
+#[test]
+fn clippy_and_rustfmt_must_run_even_when_rustc_matches_the_pin() {
+    let scratch = Scratch::new("toolchain");
+    scratch.lock("[tools]\nrustc = \"1.99.1\"\nclippy = \"1.99.1\"\nrustfmt = \"1.99.1\"\n");
+    scratch.tool("rustc", "rustc 1.99.1 (58cf8f9c3 2026-10-13)");
+    scratch.tool("cargo-fmt", "rustfmt 1.10.0-stable (58cf8f9c35 2026-10-13)");
+    let out = scratch.run(&["--verify"]);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    assert!(text(&out).contains("missing  clippy"), "{}", text(&out));
+    scratch.tool("cargo-clippy", "clippy 0.1.99 (58cf8f9c35 2026-10-13)");
+    let out = scratch.run(&["--verify"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
 }
