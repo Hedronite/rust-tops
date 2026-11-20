@@ -151,7 +151,7 @@ nix flake check
 
 ## What the gate enforces
 
-Every key the instance schema defines is classed in [`schema/enforcement.json`](schema/enforcement.json) as judged (a source file reads it and a different value can change what `check` or `gate` decides) or declarative (documented and carried, never read). `crates/cargo-tops/tests/enforcement_map.rs` fails on an unclassified key, a stale entry, or a reader that lacks its key, and `cargo run -p xtask -- docs` fails when this table disagrees with the map.
+A key is **judged** when a different value can change what `cargo tops check` or `cargo tops gate` decides; the ratio below counts keys the tools read, and it is not test coverage. Every key the instance schema defines is classed in [`schema/enforcement.json`](schema/enforcement.json) as judged (with the source file that reads it) or declarative (documented and carried, never read). `crates/cargo-tops/tests/enforcement_map.rs` fails on an unclassified key, a stale entry, or a reader that lacks its key, and `cargo run -p xtask -- docs` fails when this table disagrees with the map. The ratio rounds down, so it never overstates what is enforced.
 
 <!-- enforcement:start -->
 | Section | Keys | Judged | Declarative |
