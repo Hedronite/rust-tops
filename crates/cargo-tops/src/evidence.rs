@@ -59,9 +59,9 @@ fn testcases(xml: &str) -> Vec<(String, bool)> {
     let mut rest = xml;
     while let Some(at) = rest.find("<testcase ") {
         let from = rest.get(at..).unwrap_or_default();
-        let Some(end) = from.find('>') else { break };
-        let tag = from.get(..end).unwrap_or_default();
-        let after = from.get(end + 1..).unwrap_or_default();
+        let Some((tag, after)) = from.split_once('>') else {
+            break;
+        };
         let (body, tail) = if tag.ends_with('/') {
             ("", after)
         } else {

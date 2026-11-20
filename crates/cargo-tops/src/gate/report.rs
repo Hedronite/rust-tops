@@ -421,12 +421,7 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
         entry.insert("judged".into(), numbers);
     }
     // A layer stopped on a note (the credit evidence of `property`) says why.
-    let noted = done
-        .runs
-        .iter()
-        .find(|run| run.layer == id)
-        .and_then(|run| run.note.clone());
-    if let Some(note) = noted {
+    if let Some(note) = run_note(done, id) {
         entry.insert("detail".into(), json!(note));
     }
     if id == "mutation" {
@@ -457,17 +452,22 @@ fn name_the_base(plan: &GatePlan<'_>, done: &Executed<'_>, entry: &mut Map<Strin
         Base::Missing { tried, .. } => json!({ "ref": null, "source": null, "tried": tried }),
     };
     put_judged(entry, "base", base);
-    let ran = done
-        .runs
-        .iter()
-        .find(|run| run.layer == "mutation")
-        .and_then(|run| run.note.clone());
+    let ran = run_note(done, "mutation");
     let planned = (!matches!(mutation.base, Base::Found { .. }))
         .then(|| steps::stop_note(&mutation.base, Outcome::Vacuous).map(|(_, note)| note))
         .flatten();
     if let Some(detail) = ran.or(planned) {
         entry.insert("detail".into(), json!(detail));
     }
+}
+
+/// The note `layer`'s run kept: why it stopped, in the words the report and
+/// the failure line both use.
+fn run_note(done: &Executed<'_>, layer: &str) -> Option<String> {
+    done.runs
+        .iter()
+        .find(|run| run.layer == layer)
+        .and_then(|run| run.note.clone())
 }
 
 /// Set `key` in the row's `judged` object, keeping what else is there.
