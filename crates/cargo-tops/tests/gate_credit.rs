@@ -7,6 +7,7 @@
 //! `target/nextest/ci/junit.xml` in the repo, the way nextest does, and
 //! writes no report when the test left none. Only the layers the protocol
 //! requires of a library-core instance, plus the one under test, are on.
+mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,7 +18,17 @@ use serde_json::{json, Value};
 /// way the floors tests do, and, for `llvm-cov nextest`, plays nextest: the
 /// JUnit report in `$REPORTS/junit.xml` goes to the path nextest uses.
 const CARGO_STUB: &str = r#"#!/bin/sh
-if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
+case "$1 $2" in
+  "nextest --version") echo "cargo-nextest 0.9.145 (stub)"; exit 0 ;;
+  "llvm-cov --version") echo "cargo-llvm-cov 0.9.1"; exit 0 ;;
+  "mutants --version") echo "cargo-mutants 27.1.0"; exit 0 ;;
+  "crap --version") echo "cargo-crap 0.9.0"; exit 0 ;;
+  "deny --version") echo "cargo-deny 0.18.9"; exit 0 ;;
+  "fuzz --version") echo "cargo-fuzz 0.12.0"; exit 0 ;;
+  "kani --version") echo "Kani Rust Verifier 0.68.0 (cargo plugin)"; exit 0 ;;
+  "clippy --version") echo "clippy 0.1.99 (stub)"; exit 0 ;;
+  "fmt --version") echo "rustfmt 1.10.0-stable (stub)"; exit 0 ;;
+esac
 if [ "$1" = metadata ]; then cat "$REPORTS/metadata.json"; exit 0; fi
 if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/coverage-fails" ]; then exit 1; fi
 if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/junit.xml" ]; then
@@ -103,6 +114,7 @@ fn fixture(name: &str, extra: &[&str], junit: Option<&str>) -> Fixture {
 /// The tool stubs, the coverage summary, and coverage's JUnit report.
 fn stage_tools_and_reports(fixture: &Fixture, junit: Option<&str>) {
     stub(&fixture.bin, "cargo", CARGO_STUB);
+    support::stub_rustc(&fixture.bin);
     for plugin in [
         "cargo-llvm-cov",
         "cargo-crap",

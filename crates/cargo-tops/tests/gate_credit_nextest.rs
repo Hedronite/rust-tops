@@ -4,6 +4,7 @@
 //! looks. These tests cover a `CARGO_TARGET_DIR` that moves the build, a
 //! `[store] dir` that moves nextest's reports, and a report left behind by an
 //! earlier run (PROTOCOL.md §9.5).
+mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +15,17 @@ use serde_json::Value;
 /// `$REAL_NEXTEST` is set. `llvm-cov report` writes a fully covered summary.
 /// `cargo metadata` is the real cargo; any other subcommand passes.
 const CARGO_STUB: &str = r#"#!/bin/sh
+case "$1 $2" in
+  "nextest --version") echo "cargo-nextest 0.9.145 (stub)"; exit 0 ;;
+  "llvm-cov --version") echo "cargo-llvm-cov 0.9.1"; exit 0 ;;
+  "mutants --version") echo "cargo-mutants 27.1.0"; exit 0 ;;
+  "crap --version") echo "cargo-crap 0.9.0"; exit 0 ;;
+  "deny --version") echo "cargo-deny 0.18.9"; exit 0 ;;
+  "fuzz --version") echo "cargo-fuzz 0.12.0"; exit 0 ;;
+  "kani --version") echo "Kani Rust Verifier 0.68.0 (cargo plugin)"; exit 0 ;;
+  "clippy --version") echo "clippy 0.1.99 (stub)"; exit 0 ;;
+  "fmt --version") echo "rustfmt 1.10.0-stable (stub)"; exit 0 ;;
+esac
 if [ "$1 $2" = "llvm-cov nextest" ]; then
   prev=
   for arg in "$@"; do
@@ -98,6 +110,7 @@ fn fixture(name: &str) -> Fixture {
     fs::create_dir_all(fixture.repo.join("src")).expect("mkdir src");
     set_tests(&fixture, WITH_TEST);
     stub(&fixture.bin, "cargo", CARGO_STUB);
+    support::stub_rustc(&fixture.bin);
     for plugin in ["cargo-llvm-cov", "cargo-deny"] {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
     }

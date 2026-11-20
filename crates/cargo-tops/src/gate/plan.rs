@@ -7,13 +7,14 @@ use anyhow::anyhow;
 use super::Fault;
 use crate::config::{self, TopsConfig};
 use crate::facts::{Outcome, Run};
+use crate::lock::{self, Row};
 use crate::{credit, laws, steps, TOOL_LOCK};
 use anyhow::{Context, Result};
 use std::fs;
 use steps::{Base, Kind, MutationPlan, Step};
 
-/// The command whose first line must name the pinned cargo-crap.
-pub(crate) const CRAP_VERSION: [&str; 3] = ["cargo", "crap", "--version"];
+/// The pinned tools each layer needs, with the pin of each.
+pub(crate) type LayerPins = Vec<(String, Vec<(&'static Row, String)>)>;
 
 /// What a layer runs.
 pub(crate) enum Plan {
@@ -65,7 +66,7 @@ impl TestCommands {
                 .find(|run| run.layer == id)
                 .map(|run| match run.outcome {
                     Outcome::Passed => credit::Outcome::Passed,
-                    Outcome::ToolMissing => credit::Outcome::ToolMissing,
+                    Outcome::ToolMissing | Outcome::ToolMismatch => credit::Outcome::ToolMissing,
                     // A test run is never Vacuous; if one were, it is no pass.
                     Outcome::Failed | Outcome::Vacuous => credit::Outcome::Failed,
                 })
@@ -104,32 +105,29 @@ impl TestCommands {
             Some(credit::Outcome::Failed) | None => Outcome::Failed,
         };
         let source = runs.iter().find(|run| run.layer == from);
+        // A source that stopped on a pinned tool's version says so in the
+        // words it used, not as a missing tool.
+        let mismatch = source.filter(|run| run.outcome == Outcome::ToolMismatch);
         Run {
             layer: layer.to_string(),
             cmd: source.map(|run| run.cmd.clone()).unwrap_or_default(),
             step: source.map(|run| run.step.clone()).unwrap_or_default(),
-            outcome,
-            note: None,
+            outcome: mismatch.map_or(outcome, |run| run.outcome),
+            note: mismatch.and_then(|run| run.note.clone()),
         }
     }
 }
 
-/// The `[tools]` version that `dir/rust-tops.lock` pins for `tool`. No lock,
-/// or no line for `tool`, is `None`. A lock that does not parse is an error.
-pub(crate) fn tool_pin(dir: &Path, tool: &str) -> Result<Option<String>> {
+/// The `[tools]` pins of `dir/rust-tops.lock`. No lock is no pins. A lock
+/// that cannot be read or parsed is an error.
+fn lock_pins(dir: &Path) -> Result<std::collections::BTreeMap<String, String>> {
     let path = dir.join(TOOL_LOCK);
     let raw = match fs::read_to_string(&path) {
         Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
         Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
     };
-    let lock: toml::Table =
-        toml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    Ok(lock
-        .get("tools")
-        .and_then(|tools| tools.get(tool))
-        .and_then(toml::Value::as_str)
-        .map(str::to_string))
+    lock::read_pins(&raw).with_context(|| format!("parse {}", path.display()))
 }
 
 pub(crate) fn tool(argv: &[&str]) -> Vec<Step> {
@@ -314,25 +312,50 @@ pub(crate) struct GatePlan<'a> {
     pub(crate) tests: TestCommands,
     /// The name prefixes of `property` and `acceptance`.
     pub(crate) filters: Filters,
-    pub(crate) crap_pin: Option<String>,
+    /// The pinned tools each running layer needs, asked before the layer's
+    /// commands run. A layer with none is absent.
+    pub(crate) pins: LayerPins,
     pub(crate) units: Vec<Unit<'a>>,
 }
 
 impl GatePlan<'_> {
+    /// The pinned tools `layer` needs, as the argv that asks each for its
+    /// version, once per argv.
+    pub(crate) fn asked(&self, layer: &str) -> Vec<Vec<String>> {
+        let mut asked: Vec<Vec<String>> = Vec::new();
+        for (row, _) in self.pins_of(layer) {
+            let argv: Vec<String> = row.argv.iter().map(|word| (*word).to_string()).collect();
+            if !asked.contains(&argv) {
+                asked.push(argv);
+            }
+        }
+        asked
+    }
+
+    /// The pinned tools `layer` needs, each with its pin.
+    pub(crate) fn pins_of(&self, layer: &str) -> &[(&'static Row, String)] {
+        self.pins
+            .iter()
+            .find(|(id, _)| id == layer)
+            .map_or(&[], |(_, pins)| pins.as_slice())
+    }
+
     /// The commands of `layer` as argv lists, in the order they run.
     pub(crate) fn argv_of(&self, layer: &str) -> Vec<Vec<String>> {
         let Some(unit) = self.units.iter().find(|unit| unit.layer.id == layer) else {
             return Vec::new();
         };
         match &unit.what {
-            What::Chains(chains) => {
-                let pin = (layer == "crap" && self.crap_pin.is_some())
-                    .then(|| CRAP_VERSION.map(String::from).to_vec());
-                pin.into_iter()
-                    .chain(chains.iter().flatten().map(|step| step.argv.clone()))
-                    .collect()
-            }
-            What::Mutation(plan) => vec![plan.diff.argv.clone(), plan.mutants.argv.clone()],
+            What::Chains(chains) => self
+                .asked(layer)
+                .into_iter()
+                .chain(chains.iter().flatten().map(|step| step.argv.clone()))
+                .collect(),
+            What::Mutation(plan) => self
+                .asked(layer)
+                .into_iter()
+                .chain([plan.diff.argv.clone(), plan.mutants.argv.clone()])
+                .collect(),
             What::Shared(from) => self.argv_of(from),
             What::NotRun => Vec::new(),
         }
@@ -411,6 +434,27 @@ fn units_of<'a>(
         .collect()
 }
 
+/// The pinned tools each unit that runs a command needs. The lock is read
+/// only when some such layer needs a tool; one that cannot be read is a
+/// [`Fault::config`].
+fn pins_of_units(dir: &Path, units: &[Unit<'_>]) -> Result<LayerPins, Fault> {
+    let running: Vec<&str> = units
+        .iter()
+        .filter(|unit| matches!(unit.what, What::Chains(_) | What::Mutation(_)))
+        .map(|unit| unit.layer.id.as_str())
+        .filter(|id| !lock::tools_for([*id]).is_empty())
+        .collect();
+    if running.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pins = lock_pins(dir).map_err(Fault::config)?;
+    Ok(running
+        .into_iter()
+        .map(|id| (id.to_string(), lock::pins_for([id], &pins)))
+        .filter(|(_, needed)| !needed.is_empty())
+        .collect())
+}
+
 /// The plan for `cfg` at `max_tier`. `base` is the `--base` flag; with a
 /// mutation layer in range it and `gates.base_ref` decide where the diff
 /// starts. A config the gate cannot plan from is
@@ -432,11 +476,8 @@ pub(crate) fn build<'a>(
     let filters = Filters::of(&cfg.gates);
     let tests = TestCommands::new(&enabled, &report, &filters);
     let base = base_for(&enabled, dir, base_flag, cfg.gates.base_ref.as_deref());
-    let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
-        tool_pin(dir, "cargo-crap").map_err(Fault::config)?
-    } else {
-        None
-    };
+    let units = units_of(&enabled, &tests, &report, &base, &filters);
+    let pins = pins_of_units(dir, &units)?;
     Ok(GatePlan {
         max_tier,
         laws_on: enabled.iter().any(|l| l.id == "laws"),
@@ -445,18 +486,20 @@ pub(crate) fn build<'a>(
         above: ids(cfg, |l| l.enabled && crate::tiers::tier_for(l) > max_tier),
         // A layer turned off still shows in the run: it is not run, not omitted.
         disabled: ids(cfg, |l| !l.enabled),
-        units: units_of(&enabled, &tests, &report, &base, &filters),
+        units,
         enabled,
         report,
         tests,
         filters,
-        crap_pin,
+        pins,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{base_for, plan_for, Filters, GatePlan, Plan, TestCommands};
+    use super::{
+        base_for, pins_of_units, plan_for, Filters, GatePlan, Plan, TestCommands, Unit, What,
+    };
     use crate::config::Layer;
     use crate::steps::{Base, BaseSource};
     use std::path::PathBuf;
@@ -554,9 +597,36 @@ mod tests {
                 integration: Vec::new(),
             },
             filters: super::Filters::default(),
-            crap_pin: None,
+            pins: Vec::new(),
             units: Vec::new(),
         };
         assert!(plan.argv_of("static-lint").is_empty());
+    }
+
+    #[test]
+    fn the_lock_is_read_only_when_a_running_layer_needs_a_pinned_tool() {
+        let dir = std::env::temp_dir().join(format!(
+            "cargo-tops-plan-lock-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("rust-tops.lock"), "[tools\n").expect("write lock");
+        // No tool of a layer that needs none, and a layer that runs nothing,
+        // read nothing: a lock that does not parse is not in the way.
+        let miri = layer("miri");
+        let none = vec![Unit {
+            layer: &miri,
+            what: What::NotRun,
+        }];
+        assert!(pins_of_units(&dir, &none).is_ok_and(|pins| pins.is_empty()));
+        // A running layer that needs a pinned tool reads it.
+        let lint = layer("static-lint");
+        let some = vec![Unit {
+            layer: &lint,
+            what: What::Chains(Vec::new()),
+        }];
+        assert!(pins_of_units(&dir, &some).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
