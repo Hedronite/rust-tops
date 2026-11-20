@@ -17,6 +17,7 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 const DIFF_NAME: &str = "rust-tops.diff";
 
@@ -344,11 +345,238 @@ pub(crate) fn judge_diff(command_ok: bool, diff_path: &Path) -> Outcome {
     }
 }
 
+/// Where the mutation base came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BaseSource {
+    /// `--base <ref>`.
+    Flag,
+    /// `gates.base_ref` in `rust-tops.yaml`.
+    Key,
+    /// The remote's default branch, `refs/remotes/origin/HEAD`.
+    OriginHead,
+}
+
+impl BaseSource {
+    /// How a message names the source.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Flag => "--base",
+            Self::Key => "gates.base_ref",
+            Self::OriginHead => "origin/HEAD",
+        }
+    }
+
+    /// How `report.json` names the source.
+    pub(crate) fn report_name(self) -> &'static str {
+        match self {
+            Self::Flag => "flag",
+            Self::Key => "key",
+            Self::OriginHead => "origin/HEAD",
+        }
+    }
+}
+
+/// The ref the mutation diff starts from, and what became of looking for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Base {
+    /// A ref that names a commit.
+    Found { source: BaseSource, name: String },
+    /// A ref a flag or the config named that is not a commit: the layer
+    /// fails, naming it.
+    Unresolved { source: BaseSource, name: String },
+    /// Nothing named a base and the remote has no default branch. `tried`
+    /// has one line per source; `ci` is whether `CI` was set when the plan
+    /// was made, which decides whether the layer fails or is vacuous.
+    Missing { tried: Vec<String>, ci: bool },
+}
+
+impl Base {
+    /// A base nothing was asked for: the layer that would use it is off.
+    pub(crate) fn unused() -> Self {
+        Self::Missing {
+            tried: Vec::new(),
+            ci: false,
+        }
+    }
+}
+
+/// The base for the mutation diff: `flag`, else `key`, else the remote's
+/// default branch (`origin/HEAD`). A named base is never replaced by a later
+/// source, so one that does not resolve is [`Base::Unresolved`].
+pub(crate) fn resolve_base(dir: &Path, flag: Option<&str>, key: Option<&str>) -> Base {
+    let named = flag
+        .map(|name| (BaseSource::Flag, name))
+        .or_else(|| key.map(|name| (BaseSource::Key, name)));
+    match named {
+        Some((source, name)) => {
+            let name = name.to_string();
+            if names_a_commit(dir, &name) {
+                Base::Found { source, name }
+            } else {
+                Base::Unresolved { source, name }
+            }
+        }
+        None => match origin_head(dir) {
+            Ok(name) => Base::Found {
+                source: BaseSource::OriginHead,
+                name,
+            },
+            Err(note) => Base::Missing {
+                tried: vec![
+                    "--base: not given".to_string(),
+                    "gates.base_ref: not set".to_string(),
+                    note,
+                ],
+                ci: ci_active(std::env::var("CI").ok().as_deref()),
+            },
+        },
+    }
+}
+
+/// The remote's default branch as a ref, or why there is none.
+fn origin_head(dir: &Path) -> Result<String, String> {
+    let named = git_line(
+        dir,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    );
+    match named {
+        Some(name) if names_a_commit(dir, &name) => Ok(name),
+        Some(name) => Err(format!(
+            "origin/HEAD: points at {name}, which is not a commit"
+        )),
+        // Not a symbolic ref. A direct ref that names a commit is a base.
+        None if names_a_commit(dir, "origin/HEAD") => Ok("origin/HEAD".to_string()),
+        None => Err("origin/HEAD: not set".to_string()),
+    }
+}
+
+/// Why the mutation layer stopped before `cargo mutants`, and its outcome.
+/// This is the one place the words live: stdout, the report's `detail` and
+/// its `problems` all print what this returns. `diff` is the outcome of the
+/// diff command, or `Failed` for a base that was never tried. `None` means
+/// the diff passed and mutants runs.
+pub(crate) fn stop_note(base: &Base, diff: Outcome) -> Option<(Outcome, String)> {
+    match base {
+        Base::Unresolved { source, name } => Some((
+            Outcome::Failed,
+            format!(
+                "{} names `{name}`, which is not a commit; the mutation diff cannot start there",
+                source.label()
+            ),
+        )),
+        Base::Missing { tried, ci: true } => missing_stop(diff, no_base_in_ci(tried)),
+        Base::Missing { tried, ci: false } => missing_stop(diff, no_base_outside_ci(tried)),
+        Base::Found { name, .. } => found_stop(name, diff),
+    }
+}
+
+/// A stop with no base: the empty diff gives `empty`, a failed one is never
+/// waived.
+fn missing_stop(diff: Outcome, empty: (Outcome, String)) -> Option<(Outcome, String)> {
+    match diff {
+        Outcome::Vacuous => Some(empty),
+        Outcome::Failed => Some((
+            Outcome::Failed,
+            "the mutation diff did not succeed; a failed diff is never waived".to_string(),
+        )),
+        _ => None,
+    }
+}
+
+/// A stop with a base that is a commit: an empty diff, or no merge-base.
+fn found_stop(name: &str, diff: Outcome) -> Option<(Outcome, String)> {
+    match diff {
+        Outcome::Vacuous => Some((
+            Outcome::Vacuous,
+            format!(
+                "the diff from `git merge-base {name} HEAD` is empty; \
+                 cargo mutants did not run and no law counts this layer"
+            ),
+        )),
+        Outcome::Failed => Some((
+            Outcome::Failed,
+            format!(
+                "the mutation diff did not succeed: `{name}` and HEAD share no history, \
+                 as in a shallow checkout (use `fetch-depth: 0`); a failed diff is never waived"
+            ),
+        )),
+        _ => None,
+    }
+}
+
+/// No source gave a base under CI: a base that was never fetched must not
+/// read as a clean diff.
+fn no_base_in_ci(tried: &[String]) -> (Outcome, String) {
+    (
+        Outcome::Failed,
+        format!(
+            "no mutation base ({}); under CI that is never a clean diff. \
+             Check out with `fetch-depth: 0` and pass `--base <ref>`, or set `gates.base_ref`",
+            tried.join("; ")
+        ),
+    )
+}
+
+/// No source gave a base outside CI: the diff is empty and the layer vacuous.
+fn no_base_outside_ci(tried: &[String]) -> (Outcome, String) {
+    (
+        Outcome::Vacuous,
+        format!(
+            "no mutation base ({}); the mutation diff is empty; \
+             cargo mutants did not run and no law counts this layer",
+            tried.join("; ")
+        ),
+    )
+}
+
+/// The first line git prints for `args`, when it succeeds with one.
+fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().next().unwrap_or_default().trim();
+    (out.status.success() && !line.is_empty()).then(|| line.to_string())
+}
+
+/// Whether `name` is a ref that names a commit. A name that starts with `-`
+/// is never one: it would be read as an option.
+fn names_a_commit(dir: &Path, name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && git_line(
+            dir,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{name}^{{commit}}"),
+            ],
+        )
+        .is_some()
+}
+
+/// Whether `CI` says this is a CI run: set, not empty, and not `false` or
+/// `0` in any case.
+pub(crate) fn ci_active(value: Option<&str>) -> bool {
+    value
+        .map(str::trim)
+        .is_some_and(|text| !text.is_empty() && text != "0" && !text.eq_ignore_ascii_case("false"))
+}
+
 /// Mutation diff command, then the `cargo mutants` tool step.
 ///
-/// The diff command uses `git merge-base` and `&&`, and writes
-/// `<report_dir>/rust-tops.diff`. Run it with the project as the working
-/// directory. [`MutationPlan::after_diff`] runs mutants only after a
+/// The diff command writes `<report_dir>/rust-tops.diff`: the changes from
+/// `git merge-base <base> HEAD` to `HEAD`. Run it with the project as the
+/// working directory. [`MutationPlan::after_diff`] runs mutants only after a
 /// non-empty diff; a failed diff is not waived, and an empty diff is not
 /// handed to `cargo mutants`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -356,14 +584,19 @@ pub(crate) struct MutationPlan {
     pub diff: Step,
     pub diff_path: PathBuf,
     pub mutants: Step,
+    pub base: Base,
 }
 
 impl MutationPlan {
     #[must_use]
-    pub(crate) fn new(report_dir: &Path) -> Self {
+    pub(crate) fn new(report_dir: &Path, base: Base) -> Self {
         let diff_path = report_dir.join(DIFF_NAME);
         let diff_arg = diff_path.display().to_string();
-        let script = mutation_diff_script(report_dir, &diff_path);
+        let from = match &base {
+            Base::Found { name, .. } | Base::Unresolved { name, .. } => Some(name.as_str()),
+            Base::Missing { .. } => None,
+        };
+        let script = mutation_diff_script(report_dir, &diff_path, from);
         let diff = Step::command(["sh", "-c", script.as_str()]);
         let mutants = Step::tool([
             "cargo",
@@ -377,6 +610,7 @@ impl MutationPlan {
             diff,
             diff_path,
             mutants,
+            base,
         }
     }
 
@@ -387,24 +621,25 @@ impl MutationPlan {
     }
 }
 
-/// Not a git work tree, or no commit: the command fails. No `origin/main`:
-/// it writes an empty diff, so the layer is Vacuous. `origin/main` with no
-/// merge-base: it fails. Otherwise the diff from the merge-base to `HEAD`.
-fn mutation_diff_script(report_dir: &Path, diff_path: &Path) -> String {
-    let dir = shell_quote(report_dir);
-    let file = shell_quote(diff_path);
-    format!(
-        "mkdir -p {dir} && git rev-parse --verify --quiet HEAD >/dev/null \
-         && if git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; \
-         then base=\"$(git merge-base origin/main HEAD)\" \
-         && git diff \"$base\" HEAD --unified=0 > {file}; \
-         else : > {file}; fi"
-    )
+/// Not a git work tree, or no commit: the command fails. With a base: the
+/// diff from `git merge-base <base> HEAD` to `HEAD`, and no merge-base is a
+/// failure. With none: an empty diff, so the layer is Vacuous.
+fn mutation_diff_script(report_dir: &Path, diff_path: &Path, base: Option<&str>) -> String {
+    let dir = shell_quote(&report_dir.display().to_string());
+    let file = shell_quote(&diff_path.display().to_string());
+    let head = format!("mkdir -p {dir} && git rev-parse --verify --quiet HEAD >/dev/null");
+    match base {
+        Some(name) => format!(
+            "{head} && base=\"$(git merge-base {} HEAD)\" \
+             && git diff \"$base\" HEAD --unified=0 > {file}",
+            shell_quote(name)
+        ),
+        None => format!("{head} && : > {file}"),
+    }
 }
 
-fn shell_quote(path: &Path) -> String {
-    let text = path.display().to_string().replace('\'', "'\\''");
-    format!("'{text}'")
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn one_layer(layer: &str) -> bool {
@@ -744,5 +979,188 @@ mod expiry {
         assert!(Exemption::new("mutation", "2023-02-29").is_err());
         assert!(Exemption::new("mutation", "2024-13-01").is_err());
         assert!(Exemption::new("mutation", "not-a-date").is_err());
+    }
+}
+
+#[cfg(test)]
+mod base {
+    use super::{
+        ci_active, git_line, mutation_diff_script, shell_quote, stop_note, Base, BaseSource,
+        MutationPlan, Outcome,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn ci_is_a_value_that_is_neither_empty_false_nor_zero() {
+        for on in ["true", "1", "yes", "TRUE", " true "] {
+            assert!(ci_active(Some(on)), "{on}");
+        }
+        for off in ["", " ", "false", "False", "FALSE", "0", " 0 "] {
+            assert!(!ci_active(Some(off)), "{off:?}");
+        }
+        assert!(!ci_active(None));
+    }
+
+    #[test]
+    fn each_source_has_a_label_and_a_report_name() {
+        assert_eq!(BaseSource::Flag.label(), "--base");
+        assert_eq!(BaseSource::Key.label(), "gates.base_ref");
+        assert_eq!(BaseSource::OriginHead.label(), "origin/HEAD");
+        assert_eq!(BaseSource::Flag.report_name(), "flag");
+        assert_eq!(BaseSource::Key.report_name(), "key");
+        assert_eq!(BaseSource::OriginHead.report_name(), "origin/HEAD");
+    }
+
+    #[test]
+    fn a_name_is_quoted_for_the_shell() {
+        assert_eq!(shell_quote("origin/main"), "'origin/main'");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert_eq!(shell_quote("$(x)"), "'$(x)'");
+    }
+
+    #[test]
+    fn the_script_diffs_from_the_merge_base_or_writes_an_empty_file() {
+        let report = Path::new("/r");
+        let file = Path::new("/r/rust-tops.diff");
+        let with = mutation_diff_script(report, file, Some("origin/dev"));
+        assert_eq!(
+            with,
+            "mkdir -p '/r' && git rev-parse --verify --quiet HEAD >/dev/null \
+             && base=\"$(git merge-base 'origin/dev' HEAD)\" \
+             && git diff \"$base\" HEAD --unified=0 > '/r/rust-tops.diff'"
+        );
+        let without = mutation_diff_script(report, file, None);
+        assert_eq!(
+            without,
+            "mkdir -p '/r' && git rev-parse --verify --quiet HEAD >/dev/null \
+             && : > '/r/rust-tops.diff'"
+        );
+    }
+
+    #[test]
+    fn the_plan_keeps_its_base_and_an_unused_base_names_no_source() {
+        let found = Base::Found {
+            source: BaseSource::Key,
+            name: "origin/dev".to_string(),
+        };
+        let plan = MutationPlan::new(Path::new("/r"), found.clone());
+        assert_eq!(plan.base, found);
+        assert!(plan.diff.argv.join(" ").contains("merge-base 'origin/dev'"));
+        let none = MutationPlan::new(Path::new("/r"), Base::unused());
+        assert_eq!(none.base, Base::unused());
+        assert!(!none.diff.argv.join(" ").contains("merge-base"));
+    }
+
+    #[test]
+    fn a_line_is_what_a_successful_git_prints_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-git-line-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let git = |args: &[&str]| {
+            git_line(&dir, args);
+        };
+        git(&["init", "-q"]);
+        assert_eq!(
+            git_line(&dir, &["rev-parse", "--git-dir"]).as_deref(),
+            Some(".git")
+        );
+        // Success with no output is no line.
+        assert_eq!(git_line(&dir, &["status", "--porcelain"]), None);
+        // Failure with output is no line either: `diff --exit-code` prints
+        // the change and exits 1.
+        std::fs::write(dir.join("f"), "one\n").expect("write");
+        let add = std::process::Command::new("git")
+            .args(["add", "-N", "f"])
+            .current_dir(&dir)
+            .status()
+            .expect("spawn git");
+        assert!(add.success());
+        assert_eq!(git_line(&dir, &["diff", "--exit-code"]), None);
+        assert_eq!(
+            git_line(&dir, &["status", "--porcelain"]).as_deref(),
+            Some("A f")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn tried() -> Vec<String> {
+        vec!["a".to_string(), "b".to_string()]
+    }
+
+    fn missing_in_ci() -> Base {
+        Base::Missing {
+            tried: tried(),
+            ci: true,
+        }
+    }
+
+    fn missing_outside_ci() -> Base {
+        Base::Missing {
+            tried: tried(),
+            ci: false,
+        }
+    }
+
+    fn found() -> Base {
+        Base::Found {
+            source: BaseSource::Flag,
+            name: "origin/dev".to_string(),
+        }
+    }
+
+    #[test]
+    fn no_base_fails_under_ci_naming_the_remedy_and_is_vacuous_otherwise() {
+        let (outcome, note) = stop_note(&missing_in_ci(), Outcome::Vacuous).expect("a stop");
+        assert_eq!(outcome, Outcome::Failed);
+        assert!(note.contains("(a; b)"), "{note}");
+        assert!(
+            note.contains("`fetch-depth: 0`") && note.contains("`--base <ref>`"),
+            "{note}"
+        );
+        let (outcome, note) = stop_note(&missing_outside_ci(), Outcome::Vacuous).expect("a stop");
+        assert_eq!(outcome, Outcome::Vacuous);
+        assert!(
+            note.contains("(a; b)") && !note.contains("fetch-depth"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn each_other_stop_has_its_outcome_and_words() {
+        let unresolved = Base::Unresolved {
+            source: BaseSource::Key,
+            name: "nope".to_string(),
+        };
+        // A base that was never tried fails whatever the diff says.
+        for diff in [Outcome::Passed, Outcome::Failed, Outcome::Vacuous] {
+            let (outcome, note) = stop_note(&unresolved, diff).expect("a stop");
+            assert_eq!(outcome, Outcome::Failed);
+            assert!(note.starts_with("gates.base_ref names `nope`"), "{note}");
+        }
+        let (outcome, note) = stop_note(&found(), Outcome::Vacuous).expect("a stop");
+        assert_eq!(outcome, Outcome::Vacuous);
+        assert!(
+            note.starts_with("the diff from `git merge-base origin/dev HEAD` is empty"),
+            "{note}"
+        );
+        let (outcome, note) = stop_note(&found(), Outcome::Failed).expect("a stop");
+        assert_eq!(outcome, Outcome::Failed);
+        assert!(
+            note.contains("`origin/dev`") && note.contains("fetch-depth: 0"),
+            "{note}"
+        );
+        let (outcome, note) = stop_note(&missing_in_ci(), Outcome::Failed).expect("a stop");
+        assert_eq!(outcome, Outcome::Failed);
+        assert!(
+            note.contains("never waived") && !note.contains("fetch-depth"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_passed_diff_does_not_stop_the_layer() {
+        for base in [found(), missing_in_ci(), missing_outside_ci()] {
+            assert_eq!(stop_note(&base, Outcome::Passed), None);
+        }
     }
 }

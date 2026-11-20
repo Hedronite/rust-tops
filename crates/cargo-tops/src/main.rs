@@ -104,6 +104,11 @@ Where more than one applies, 2 wins over 3, and 3 over 1.")]
         /// Print commands without running them
         #[arg(long)]
         dry_run: bool,
+        /// Ref the mutation diff starts from, over `gates.base_ref` and the
+        /// remote's default branch (`origin/HEAD`). In CI pass
+        /// `origin/<default branch>` from a checkout with `fetch-depth: 0`
+        #[arg(long, value_name = "REF")]
+        base: Option<String>,
     },
     /// Record the last gate's CRAP report as the baseline the crap ratchet reads
     CrapBaseline {
@@ -160,7 +165,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// The argv clap parses. `cargo tops …` execs this binary with argv[1] ==
+/// The argv clap parses. `cargo tops …` execs this binary with `argv[1]` ==
 /// "tops"; `cargo-tops …` does not. Drop that one word so both forms parse.
 fn subcommand_argv(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     if args.get(1).and_then(|arg| arg.to_str()) == Some("tops") {
@@ -189,12 +194,14 @@ fn run() -> Result<ExitCode> {
             path,
             max_tier,
             dry_run,
+            base,
         } => Ok(run_gate(
             &path,
             gate::Options {
                 max_tier,
                 mode: dry_run.into(),
             },
+            base.as_deref(),
         )),
         Commands::CrapBaseline { path } => {
             let cfg = load_config(&path)?;
@@ -210,9 +217,9 @@ fn run() -> Result<ExitCode> {
 
 /// `cargo tops gate`: a config that does not load, or fails `check`, is exit
 /// 2 with a report; anything else is the gate's own verdict.
-fn run_gate(path: &Path, opts: gate::Options) -> ExitCode {
+fn run_gate(path: &Path, opts: gate::Options, base: Option<&str>) -> ExitCode {
     match load_config(path).and_then(|cfg| check(&cfg).map(|()| cfg)) {
-        Ok(cfg) => gate::run(path, &cfg, opts),
+        Ok(cfg) => gate::run(path, &cfg, opts, base),
         Err(err) => gate::config_error(path, &err, opts),
     }
 }

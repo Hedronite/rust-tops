@@ -364,6 +364,8 @@ fn adopt(fixture: &Fixture, origin: Origin) {
         let url = bare.to_string_lossy().into_owned();
         git(fixture, repo, &["remote", "add", "origin", &url]);
         git(fixture, repo, &["push", "-q", "origin", "main"]);
+        // A clone leaves `origin/HEAD` at the default branch.
+        git(fixture, repo, &["remote", "set-head", "origin", "main"]);
     }
 }
 
@@ -396,6 +398,15 @@ fn unrelated_origin(fixture: &Fixture) {
         fixture,
         &fixture.repo,
         &["update-ref", "refs/remotes/origin/main", &orphan],
+    );
+    git(
+        fixture,
+        &fixture.repo,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
     );
 }
 
@@ -607,7 +618,9 @@ fn gate_command(fixture: &Fixture, path: OsString, cargo_target: Option<&Path>) 
         .env("CARGO_TOPS_BEND_PATH", "1")
         .env("BEND_STUB_LOG", fixture.root.join("bend.log"))
         .env("CARGO_STUB_LOG", fixture.root.join("cargo.log"))
-        .env_remove("RUST_TOPS_ROOT");
+        .env_remove("RUST_TOPS_ROOT")
+        // A gate with no mutation base fails under CI; these runs are not CI.
+        .env_remove("CI");
     match cargo_target {
         Some(dir) => {
             cmd.env("CARGO_TARGET_DIR", dir);
@@ -652,7 +665,7 @@ fn law<'v>(cases: &'v serde_json::Value, name: &str) -> &'v serde_json::Value {
 
 /// What every fresh-init gate run says, laws on or off: nothing NotRun,
 /// `acceptance` listed as off and never run, nothing above tier 1 run, the
-/// mutation layer `Vacuous` with no `origin/main`, and a count that is not
+/// mutation layer `Vacuous` with no mutation base, and a count that is not
 /// short.
 fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
     assert!(!text.contains("NotRun"), "{class}: {text}");
@@ -666,7 +679,7 @@ fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
         "{class}: cargo kani ran at --max-tier 1"
     );
     assert!(
-        text.contains("Vacuous: no origin/main; the mutation diff is empty"),
+        text.contains("Vacuous: no mutation base (--base: not given; gates.base_ref: not set; origin/HEAD: not set); the mutation diff is empty"),
         "{class}: {text}"
     );
     assert!(!text.contains("Vacuous: the diff from"), "{class}: {text}");
@@ -1763,7 +1776,7 @@ fn a_failed_diff_is_failed_with_no_escape() {
 }
 
 #[test]
-fn no_origin_main_is_an_empty_diff_and_vacuous() {
+fn no_base_is_an_empty_diff_and_vacuous() {
     // `git init` plus one commit and no remote. A stale diff is replaced by
     // the empty one, not read.
     let fixture = fixture_with("diff-no-origin", &["static-lint", "mutation", "laws"]);
@@ -1773,7 +1786,7 @@ fn no_origin_main_is_an_empty_diff_and_vacuous() {
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("Vacuous: no origin/main; the mutation diff is empty"),
+        text.contains("Vacuous: no mutation base (--base: not given; gates.base_ref: not set; origin/HEAD: not set); the mutation diff is empty"),
         "{text}"
     );
     assert!(!text.contains("Vacuous: the diff from"), "{text}");
