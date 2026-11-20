@@ -39,7 +39,7 @@
       "enum": ["pass", "fail", "config-invalid", "environment"]
     },
     "exit_code": {
-      "description": "0 pass; 1 the gate ran and failed (a dry run included); 2 the config is invalid; 3 the environment (a required tool or cargo metadata is missing).",
+      "description": "0 pass; 1 the gate ran and failed (a dry run included; an expired exemption is a failure, not a config error); 2 the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable when a layer in range needs a pin (crap today); a command-line usage error is 2 too and writes no report; 3 the environment (a required tool or cargo metadata is missing, or report.json cannot be written).",
       "type": "integer",
       "enum": [0, 1, 2, 3]
     },

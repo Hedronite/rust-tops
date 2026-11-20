@@ -497,17 +497,15 @@ The first source that is set wins. A ref that is named by the flag or the key an
 
 `CI` counts as set when it is not empty and is not `0` or `false` (in any case). When no source gives a base, the layer is `fail` if `CI` is set. The report's `detail` and the gate's problem line name `fetch-depth: 0` and `--base`: a checkout that never fetched the base must not read as a clean diff. When `CI` is not set, the layer is `vacuous`, and the detail lists each source tried. A base that resolves but shares no history with `HEAD`, as in a shallow checkout, fails the diff and names `fetch-depth: 0` too. CI workflows pass `--base "origin/${{ github.base_ref || github.event.repository.default_branch }}"` from a checkout with `fetch-depth: 0`, because `actions/checkout` may not create `origin/HEAD`.
 
+How the gate judges the layer: it removes any `mutants.out/outcomes.json` from an earlier run, runs `cargo mutants --output <report dir>`, and reads the `outcomes.json` that run wrote there, whatever `output` an adopter's own `.cargo/mutants.toml` sets. A diff with nothing to mutate (documentation, comments, tests, CI) makes cargo-mutants 27.1.0 exit 0 and write no `mutants.out`; it says `Diff changes no Rust source files` or `No mutants to filter` on stderr. Exit 0 with no file passes as zero mutants only when the run printed one of those lines; any other missing file fails. The file must be in the shape cargo-mutants 27.1.0 writes; another release, a missing field, an outcome the gate does not know, a failed baseline, or totals that disagree with the listed outcomes (`total_mutants` included) fail the layer and name `outcomes.json`. Exit 2 with no missed outcome listed, and exit 3 with no timeout listed, fail too. cargo-mutants exits 2 when mutants were missed and 3 when some timed out; the gate treats 0, 2 and 3 as a finished run and judges it from the file, and any other exit is a failed command. Survivors are explained per function (§19): a missed mutant inside a function is explained only by a live `layer: mutation` exemption whose `symbol` names that function and whose glob covers its file, and one in no function (`function: null`) only by a live record with no `symbol` whose glob covers its file. Timeouts and unviable mutants are counted and reported; they are not survivors. The layer fails when the survivors nothing explains exceed `gates.mutation.unexplained_survivors_max`, and the problem names each of them. `kill_rate_min_pct` is a floor `check` compares with the class profile; the gate does not judge it. The mutation row's `judged` carries `caught`, `missed`, `explained`, `unexplained`, `timeouts`, `unviable` and `unexplained_survivors_max`, beside `base`.
+
 Pass criteria:
 
 - baseline green
-- **0 unexplained survivors** in the diff
-- kill rate on examined mutants ≥ class minimum (see §4)
+- **0 unexplained survivors** in the diff (`unexplained_survivors_max`)
+- kill rate on examined mutants ≥ class minimum (see §4; declarative)
 
-A survivor is explained only if *all* of the following hold:
-
-1. The mutant is equivalent (`x + 0`, `x | 0` on a proven-zero, debug-only formatting).
-2. A one-line reason is written in the PR and in `exemptions` if it will persist.
-3. `#[mutants::skip]` is applied at the tightest scope (expression, then function, never file) with the same reason.
+A survivor is explained when a live `layer: mutation` exemption names its function (§19), and the record gives the reason: the mutant is equivalent (`x + 0`, `x | 0` on a proven-zero, debug-only formatting), or a named test covers the behaviour. `#[mutants::skip]` at the tightest scope (expression, then function, never file) with the same reason takes an equivalent mutant out of the run, so it is never a survivor to explain.
 
 ```rust
 #[mutants::skip] // equivalent: trailing comma in this macro has no runtime effect
@@ -981,7 +979,9 @@ exemptions:
 
 Expired exemptions fail CI. Reasons shorter than one clause are rejected.
 
-How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `coverage` exemption takes a file out of the per-file floor; its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
+`cargo tops gate` checks every record, whatever its `layer`, whether that layer is on or off, and at any `--max-tier`: a record that has expired, or whose `expires` is not a real day, is a problem line in the report and the gate exits 1 (never 2; the config is still valid). `cargo tops check` prints the same lines as warnings and exits 0. The day is UTC: a record expires at 00:00 UTC on its `expires` date, whatever the local time zone.
+
+How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `mutation` exemption explains survivors per function. A missed mutant inside a function is explained only by a record whose `symbol` names that function (matched as for `crap`) and whose `path` covers its file. A missed mutant in no function (cargo-mutants writes `function: null` for a `const` or `static` initialiser, a type alias or a field type) is explained only by a record with no `symbol` whose `path` covers its file. No record, of any shape or path, explains every survivor, so `gates.mutation.unexplained_survivors_max` always decides. A record with no `symbol` and a whole-crate `path` (`**`, `./**`, `**/*`, `.` or `./`) still lifts the class floor on `unexplained_survivors_max` in `cargo tops check` (§4), as for the other floors; it explains no survivor inside a function. A `coverage` exemption takes a file out of the per-file floor; its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
 
 ---
 
