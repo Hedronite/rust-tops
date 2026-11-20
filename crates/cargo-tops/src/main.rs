@@ -93,7 +93,7 @@ enum Commands {
     /// Run enabled Tier 0–1 tools in protocol order, then the Bend laws layer
     #[command(after_help = "Writes <target>/rust-tops/report.json on every run.\n\
 Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
-2  the config or the request cannot be gated: rust-tops.yaml missing, unreadable \
+2  the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable \
 or failing check, rust-tops.lock unreadable, or no enabled layer at or below --max-tier; \
 a command-line usage error is 2 too. An expired exemption is not 2: it is 1\n  \
 3  the environment: a required tool or cargo metadata is missing, or report.json \

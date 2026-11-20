@@ -235,28 +235,38 @@ fn an_expired_record_for_a_layer_that_is_off_fails_the_gate() {
     assert!(text.contains("expired on 2020-01-01"), "{text}");
 }
 
-#[test]
-fn an_expired_record_fails_for_every_layer_and_every_state_of_it() {
-    // On and in range, on and above the range, and off.
-    for layer in [
-        "static-lint",
-        "security-advisory",
-        "miri",
-        "fuzz",
-        "mutation",
-        "coverage",
-        "crap",
-        "acceptance",
-    ] {
-        for tier in ["0", "1"] {
-            let fixture = fixture("expired-any");
-            exempt(&fixture, layer, "2020-01-01");
-            let (out, text) = gate(&fixture, &["--max-tier", tier], None);
-            assert_eq!(out.status.code(), Some(1), "{layer} at {tier}: {text}");
-            let problems = exemption_problems(&report(&fixture));
-            assert_eq!(problems.len(), 1, "{layer} at {tier}: {problems:?}");
-        }
+/// Every layer, with `tier` as the range, has an expired record fail the gate.
+fn expired_record_fails_each_of(layers: &[&str], tier: &str) {
+    for layer in layers {
+        let fixture = fixture("expired-any");
+        exempt(&fixture, layer, "2020-01-01");
+        let (out, text) = gate(&fixture, &["--max-tier", tier], None);
+        assert_eq!(out.status.code(), Some(1), "{layer} at {tier}: {text}");
+        let problems = exemption_problems(&report(&fixture));
+        assert_eq!(problems.len(), 1, "{layer} at {tier}: {problems:?}");
     }
+}
+
+// On and in range, on and above the range, and off: every layer at tiers 0
+// and 1, in four tests so each stays well inside the CI time limit.
+#[test]
+fn an_expired_record_fails_for_the_first_layers_at_tier_0() {
+    expired_record_fails_each_of(&["static-lint", "security-advisory", "miri", "fuzz"], "0");
+}
+
+#[test]
+fn an_expired_record_fails_for_the_last_layers_at_tier_0() {
+    expired_record_fails_each_of(&["mutation", "coverage", "crap", "acceptance"], "0");
+}
+
+#[test]
+fn an_expired_record_fails_for_the_first_layers_at_tier_1() {
+    expired_record_fails_each_of(&["static-lint", "security-advisory", "miri", "fuzz"], "1");
+}
+
+#[test]
+fn an_expired_record_fails_for_the_last_layers_at_tier_1() {
+    expired_record_fails_each_of(&["mutation", "coverage", "crap", "acceptance"], "1");
 }
 
 #[test]
