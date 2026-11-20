@@ -333,8 +333,8 @@ fn manifest_has_proptest(root: &Path) -> bool {
     fs::read_to_string(root.join("Cargo.toml")).is_ok_and(|text| text.contains("proptest"))
 }
 
-/// Test functions in this crate, outside `tests/property.rs`, whose name
-/// starts with `property` (or has a `property` module segment).
+/// `#[test]` functions in this crate, outside `tests/property.rs`, whose
+/// name starts with `property`.
 fn tests_named_property_elsewhere(root: &Path) -> Vec<String> {
     let mut found = Vec::new();
     for dir in ["src", "tests"] {
@@ -351,11 +351,17 @@ fn tests_named_property_elsewhere(root: &Path) -> Vec<String> {
                 && path.file_name().is_some_and(|name| name != "property.rs")
             {
                 let text = fs::read_to_string(&path).unwrap_or_default();
-                found.extend(
-                    text.lines()
-                        .filter(|line| line.trim_start().starts_with("fn property"))
-                        .map(|line| format!("{}: {}", path.display(), line.trim())),
-                );
+                let mut is_test = false;
+                for line in text.lines().map(str::trim_start) {
+                    if line.starts_with("fn property") && is_test {
+                        found.push(format!("{}: {}", path.display(), line));
+                    }
+                    if line.starts_with("#[test]") {
+                        is_test = true;
+                    } else if !line.starts_with("#[") {
+                        is_test = false;
+                    }
+                }
             }
         }
     }
