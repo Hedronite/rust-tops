@@ -33,6 +33,15 @@ if [ "$1 $2" = "llvm-cov report" ]; then
   done
   exit 0
 fi
+# A layer that runs before coverage writes a matching report, then waits so
+# the coverage step starts later: a plant for the stale reference.
+if [ "$1" = fmt ] && [ -n "${EARLY_REPORT:-}" ]; then
+  j="$PWD/target/nextest/ci"
+  mkdir -p "$j"
+  printf '%s\n' '<testsuites><testsuite name="s"><testcase name="property_early" classname="s"/></testsuite></testsuites>' > "$j/junit.xml"
+  sleep 1
+  exit 0
+fi
 # Only `cargo metadata` is real. Any other subcommand (`cargo deny`, which
 # the runners do not have) passes, so no other layer can fail this gate.
 if [ "$1" = metadata ]; then
@@ -101,12 +110,13 @@ fn fixture(name: &str) -> Fixture {
     for plugin in ["cargo-llvm-cov", "cargo-deny"] {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
     }
-    enable_required_layers(&fixture);
+    enable_layers(&fixture, &[]);
     fixture
 }
 
-/// Coverage, `security-advisory` and `property` on; every other layer off.
-fn enable_required_layers(fixture: &Fixture) {
+/// Coverage, `security-advisory` and `property` on, and `extra`; every other
+/// layer off.
+fn enable_layers(fixture: &Fixture, extra: &[&str]) {
     let path = fixture.repo.join("rust-tops.yaml");
     let mut doc: Value =
         serde_saphyr::from_str(&fs::read_to_string(&path).expect("read")).expect("yaml");
@@ -116,7 +126,7 @@ fn enable_required_layers(fixture: &Fixture) {
         .expect("layers")
     {
         let id = layer.get("id").and_then(Value::as_str).unwrap_or_default();
-        let on = matches!(id, "coverage" | "security-advisory" | "property");
+        let on = matches!(id, "coverage" | "security-advisory" | "property") || extra.contains(&id);
         layer
             .as_object_mut()
             .expect("a layer is an object")
@@ -142,6 +152,9 @@ enum Credited {
     RealNextest,
     /// The credited run writes no report.
     Idle,
+    /// As `Idle`, after `static-lint` wrote a matching report before the
+    /// credited run began.
+    IdleAfterAnEarlyReport,
 }
 
 struct Gate {
@@ -175,6 +188,9 @@ fn gate(fixture: &Fixture, credited: Credited, target_dir: Option<&Path>) -> Gat
         .env_remove("REAL_NEXTEST");
     if credited == Credited::RealNextest {
         cmd.env("REAL_NEXTEST", "1");
+    }
+    if credited == Credited::IdleAfterAnEarlyReport {
+        cmd.env("EARLY_REPORT", "1");
     }
     if let Some(dir) = target_dir {
         cmd.env("CARGO_TARGET_DIR", dir);
@@ -229,6 +245,34 @@ fn read_report(report_dir: &Path) -> (String, String, Vec<String>) {
     (text_of("verdict"), text_of("detail"), problems)
 }
 
+/// `property` passed by taking the coverage run's outcome, not by running a
+/// test command of its own.
+fn assert_took_coverage(run: &Gate) {
+    assert!(
+        run.text
+            .contains("[property] took the coverage run's outcome: passed"),
+        "{}",
+        run.text
+    );
+}
+
+#[test]
+fn a_report_written_before_the_credited_run_began_is_stale() {
+    let fixture = fixture("early");
+    enable_layers(&fixture, &["static-lint"]);
+    let run = gate(&fixture, Credited::IdleAfterAnEarlyReport, None);
+    assert_eq!(run.code, Some(1), "{}", run.text);
+    assert_eq!(run.verdict, "fail", "{}", run.text);
+    // It is newer than the gate's start, so only the credited run's own
+    // start tells it apart from a report that run wrote.
+    assert!(
+        run.detail.contains("not written during the credited run"),
+        "{}",
+        run.detail
+    );
+    assert!(fixture.repo.join("target/nextest/ci/junit.xml").is_file());
+}
+
 #[test]
 fn a_cargo_target_dir_does_not_move_the_evidence() {
     let fixture = fixture("target-dir");
@@ -236,6 +280,7 @@ fn a_cargo_target_dir_does_not_move_the_evidence() {
     let run = gate(&fixture, Credited::RealNextest, Some(&target));
     assert_eq!(run.code, Some(0), "{}", run.text);
     assert_eq!(run.verdict, "pass", "{}", run.text);
+    assert_took_coverage(&run);
     // nextest wrote under the workspace root, not under the target dir.
     assert!(fixture.repo.join("target/nextest/ci/junit.xml").is_file());
     assert!(!target.join("nextest").exists());
@@ -248,6 +293,7 @@ fn a_moved_store_dir_is_read_where_nextest_wrote_it() {
     let run = gate(&fixture, Credited::RealNextest, None);
     assert_eq!(run.code, Some(0), "{}", run.text);
     assert_eq!(run.verdict, "pass", "{}", run.text);
+    assert_took_coverage(&run);
     assert!(fixture.repo.join("target/nt/ci/junit.xml").is_file());
 }
 

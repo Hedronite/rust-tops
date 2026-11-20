@@ -31,10 +31,19 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - Fixed tiers ([#50](https://github.com/Hedronite/rust-tops/pull/50)): a layer's tier comes from its id (§3), and `security-advisory` moved from tier 5 to tier 0 so the default `--max-tier 1` gate runs the advisory check. `cargo tops check` now fails an instance whose layer tier differs from the table, whose floor is looser than its class profile, or that disables a layer its class requires.
   - Protocol file rename ([#53](https://github.com/Hedronite/rust-tops/pull/53)): `RUST_TOPS.md` is now `PROTOCOL.md` (§14.4 still requires each repo's root `RUST-TOPS.md`). A test fails if a tracked file other than this changelog names the old file.
 
+- Honest pack (protocol 1.4.0, package unreleased). The gate passes a layer only on evidence from the run.
+  - Mutation base ([#55](https://github.com/Hedronite/rust-tops/pull/55)): the diff starts at the merge base with `--base <ref>`, then `gates.base_ref`, then `origin/HEAD`. A missing base fails under CI (fix: `fetch-depth: 0` and `--base`) and is `vacuous` otherwise, and the report names the base used.
+  - Credited layers ([#56](https://github.com/Hedronite/rust-tops/pull/56)): a credited `property` or `acceptance` layer passes only when the credited run's nextest JUnit report holds a passed test with a `::` segment of its name starting with `gates.<layer>.test_filter` (default the layer id; letters, digits and underscore only). A layer that runs itself selects tests the same way, with `-E 'test(/(^|::)<filter>/)'` instead of a positional filter. `acceptance` now runs (it was `NotRun`). Fix for a failing layer: add a matching test, or set the filter.
+  - Enforcement map: `schema/enforcement.json` classes every schema key as judged or declarative, with the reading file for the judged ones, and the README prints the ratio.
+
 ### Changed
 
 - The `AGENTS.md` template (and its copies) no longer calls the upstream review skill an optional style pass; `rust-tops-review` runs it.
 - `.gitignore` lists `/mutants.out*`, the output the gate's mutation layer leaves in the repository root.
+
+### The drop-in on `main` needs the next release
+
+After the mutation-base change, `config/drop-in/rust-tops.yml`, its template and the init goldens pass `--base` while still installing `cargo-tops` 0.4.0, which rejects that flag with exit 2. Until the next release ships, copy the drop-in from the `v0.4.0` tag. An adopter who runs `cargo tops init` with the new binary gets the matching template.
 
 ### Upgrade to protocol 1.3.0
 
