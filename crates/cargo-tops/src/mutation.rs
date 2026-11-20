@@ -451,4 +451,37 @@ mod tests {
         let ledger = explain(&Outcomes::default(), &[], "");
         assert!(!ledger.passes(-1));
     }
+
+    /// The QA H4 shape, recorded in a workspace: `qa_h4_survivor_miss` has no
+    /// test, so its two mutants survive, and `file` is relative to the
+    /// workspace root, not to the crate.
+    const PLANT: &str =
+        include_str!("../tests/fixtures/mutants-27.1.0/plant-workspace/outcomes.json");
+
+    #[test]
+    fn the_h4_plant_has_two_survivors_in_a_crate_under_the_workspace() {
+        let found = parse(PLANT).expect("parses");
+        assert_eq!((found.caught, found.timeouts, found.unviable), (5, 0, 1));
+        assert_eq!(found.missed.len(), 2);
+        assert!(found
+            .missed
+            .iter()
+            .all(|m| m.file == "crates/plant/src/qa_h4_plant.rs"
+                && m.function.as_deref() == Some("qa_h4_survivor_miss")));
+        let by_symbol = [record("src/qa_h4_plant.rs", Some("qa_h4_survivor_miss"))];
+        assert_eq!(
+            explain(&found, &by_symbol, "crates/plant").explained.len(),
+            2
+        );
+        assert_eq!(explain(&found, &by_symbol, "").explained.len(), 2);
+        let other = [record("src/qa_h4_plant.rs", Some("another"))];
+        assert_eq!(explain(&found, &other, "crates/plant").unexplained.len(), 2);
+        let wrong_file = [record("src/lib.rs", Some("qa_h4_survivor_miss"))];
+        assert_eq!(
+            explain(&found, &wrong_file, "crates/plant")
+                .unexplained
+                .len(),
+            2
+        );
+    }
 }
