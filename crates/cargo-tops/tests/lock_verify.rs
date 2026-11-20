@@ -35,7 +35,7 @@ impl Scratch {
         let scratch = Scratch { root };
         scratch.script(
             "cargo",
-            "#!/bin/sh\nsub=\"$1\"; shift\nexec \"${0%/*}/cargo-$sub\" \"$@\"\n",
+            "#!/bin/sh\nsub=\"$1\"; shift\n# Cargo says exit 101 for a subcommand it does not have.\n[ -x \"${0%/*}/cargo-$sub\" ] || exit 101\nexec \"${0%/*}/cargo-$sub\" \"$@\"\n",
         );
         scratch
     }
@@ -194,7 +194,7 @@ fn a_pinned_tool_that_is_not_on_path_is_missing_and_exits_3() {
     let out = scratch.run(&["--verify"]);
     assert_eq!(out.status.code(), Some(3), "{}", text(&out));
     assert!(
-        text(&out).contains("missing  cargo-crap: pin 0.9.0, not found"),
+        text(&out).contains("missing  cargo-crap: pin 0.9.0, `cargo crap --version` exited 101"),
         "{}",
         text(&out)
     );
@@ -319,4 +319,234 @@ fn clippy_and_rustfmt_must_run_even_when_rustc_matches_the_pin() {
     scratch.tool("cargo-clippy", "clippy 0.1.99 (58cf8f9c35 2026-10-13)");
     let out = scratch.run(&["--verify"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+}
+
+/// Runs `lock <args>` on the lock text and returns the output.
+fn verify_lock(name: &str, lock: &str, shims: &[(&str, &str)]) -> (Scratch, Output) {
+    let scratch = Scratch::new(name);
+    scratch.lock(lock);
+    for (shim, line) in shims {
+        scratch.tool(shim, line);
+    }
+    let out = scratch.run(&["--verify"]);
+    (scratch, out)
+}
+
+#[test]
+fn a_pin_that_is_not_a_string_is_a_lock_error_naming_the_key() {
+    for (lock, key) in [
+        ("[tools]\ncargo-crap = 0.9\n", "cargo-crap"),
+        ("[tools]\ncargo-mutants = 27\n", "cargo-mutants"),
+        (
+            "[tools]\ncargo-crap = { version = \"0.9.0\" }\n",
+            "cargo-crap",
+        ),
+        ("[tools]\nrustc = true\n", "rustc"),
+    ] {
+        let (_scratch, out) = verify_lock("not-a-string", lock, &[]);
+        assert_eq!(out.status.code(), Some(2), "{lock}: {}", text(&out));
+        assert!(text(&out).contains(key), "{lock}: {}", text(&out));
+    }
+}
+
+#[test]
+fn a_tools_key_that_is_not_a_table_is_a_lock_error() {
+    for lock in [
+        "[[tools]]\nrustc = \"1.99.1\"\n",
+        "tools = \"pinned below\"\n",
+    ] {
+        let (_scratch, out) = verify_lock("tools-not-a-table", lock, &[]);
+        assert_eq!(out.status.code(), Some(2), "{lock}: {}", text(&out));
+        assert!(text(&out).contains("tools"), "{lock}: {}", text(&out));
+    }
+}
+
+#[test]
+fn a_lock_with_no_tools_table_is_a_lock_error_and_an_empty_one_says_so() {
+    let (_scratch, out) = verify_lock("no-tools", "[notes]\nschema = \"1.3.0\"\n", &[]);
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
+    assert!(text(&out).contains("[tools]"), "{}", text(&out));
+    let (_scratch, out) = verify_lock("empty-tools", "[tools]\n", &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(
+        text(&out).contains("nothing pinned in [tools]"),
+        "{}",
+        text(&out)
+    );
+}
+
+#[test]
+fn a_pin_that_is_not_dotted_digits_is_a_lock_error() {
+    for pin in ["=0.9.0", "v0.9.0", "^0.9", "0.9.*", "", "0..9", "0.9."] {
+        let lock = format!("[tools]\ncargo-crap = \"{pin}\"\n");
+        let (_scratch, out) = verify_lock("bad-pin", &lock, &[]);
+        assert_eq!(out.status.code(), Some(2), "{pin:?}: {}", text(&out));
+        assert!(text(&out).contains("cargo-crap"), "{pin:?}: {}", text(&out));
+    }
+}
+
+#[test]
+fn a_pre_release_never_matches_a_release_pin_and_a_build_suffix_does() {
+    for (shim, line, lock) in [
+        (
+            "cargo-crap",
+            "cargo-crap 0.9.0-rc.1",
+            "[tools]\ncargo-crap = \"0.9.0\"\n",
+        ),
+        (
+            "cargo-crap",
+            "cargo-crap 0.9.0-beta.1",
+            "[tools]\ncargo-crap = \"0.9\"\n",
+        ),
+        (
+            "rustc",
+            "rustc 1.99.1-nightly (58cf8f9c3 2026-10-13)",
+            "[tools]\nrustc = \"1.99.1\"\n",
+        ),
+        (
+            "rustc",
+            "rustc 1.99.1-beta.3 (58cf8f9c3 2026-10-13)",
+            "[tools]\nrustc = \"1.99\"\n",
+        ),
+        (
+            "nu",
+            "0.108.0-nightly.3",
+            "[tools]\nnushell = \"0.108.0\"\n",
+        ),
+    ] {
+        let (_scratch, out) = verify_lock("pre-release", lock, &[(shim, line)]);
+        assert_eq!(out.status.code(), Some(3), "{line}: {}", text(&out));
+        assert!(text(&out).contains("mismatch"), "{line}: {}", text(&out));
+    }
+    let (_scratch, out) = verify_lock(
+        "build-suffix",
+        "[tools]\ncargo-crap = \"0.9.0\"\n",
+        &[("cargo-crap", "cargo-crap 0.9.0+abc")],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+}
+
+#[test]
+fn empty_output_reads_as_no_version_line() {
+    let (_scratch, out) = verify_lock(
+        "empty-output",
+        "[tools]\ncargo-crap = \"0.9.0\"\n",
+        &[("cargo-crap", "")],
+    );
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    assert!(
+        text(&out).contains("mismatch cargo-crap: pin 0.9.0, found no version line"),
+        "{}",
+        text(&out)
+    );
+}
+
+#[test]
+fn an_unknown_key_warns_and_only_the_three_named_rows_are_skipped() {
+    let lock = "[tools]\nproptest = \"1\"\ncriterion = \"0.8\"\ncallgrind-runner = \"gungraun-runner\"\ncargo-nexttest = \"0.9.145\"\n";
+    let (_scratch, out) = verify_lock("unknown-key", lock, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let said = text(&out);
+    assert!(
+        said.contains("unknown  cargo-nexttest: not a tool rust-tops knows, not checked"),
+        "{said}"
+    );
+    for name in ["proptest", "criterion", "callgrind-runner"] {
+        assert!(said.contains(&format!("skipped  {name}:")), "{said}");
+    }
+    assert!(!said.contains("skipped  cargo-nexttest"), "{said}");
+}
+
+#[test]
+fn a_probe_that_fails_is_named_with_its_argv_and_how_it_failed() {
+    let scratch = Scratch::new("probe-failed");
+    scratch.lock("[tools]\ncargo-crap = \"0.9.0\"\n");
+    scratch.script(
+        "cargo-crap",
+        "#!/bin/sh\necho 'cargo-crap 0.9.0'\nexit 101\n",
+    );
+    let out = scratch.run(&["--verify"]);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    assert!(
+        text(&out).contains("missing  cargo-crap: pin 0.9.0, `cargo crap --version` exited 101"),
+        "{}",
+        text(&out)
+    );
+}
+
+#[test]
+fn check_refuses_a_lock_that_cannot_be_read_as_pins() {
+    let scratch = Scratch::new("check-lock");
+    init(&scratch, "library-core");
+    let run = |scratch: &Scratch| {
+        Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+            .args(["check", "--path"])
+            .arg(scratch.repo())
+            .env("PATH", scratch.bin())
+            .output()
+            .expect("spawn cargo-tops check")
+    };
+    let ok = run(&scratch);
+    assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));
+    scratch.lock("[tools]\ncargo-crap = 0.9\n");
+    let out = run(&scratch);
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
+    assert!(text(&out).contains("cargo-crap"), "{}", text(&out));
+}
+
+/// A lock written in a form `--write` will not rewrite, and the key it names.
+const UNWRITABLE: [(&str, &str); 6] = [
+    ("[tools]\n\"cargo-crap\" = \"0.9.0\"\n", "cargo-crap"),
+    ("tools.cargo-crap = \"0.9.0\"\n", "cargo-crap"),
+    ("tools = { cargo-crap = \"0.9.0\" }\n", "cargo-crap"),
+    ("[tools]\ncargo-crap = '0.9.0'\n", "cargo-crap"),
+    ("[tools]\ncargo-crap = \"\"\"0.9.0\"\"\"\n", "cargo-crap"),
+    ("[ tools ]\ncargo-crap = \"0.9.0\"\n", "cargo-crap"),
+];
+
+#[test]
+fn write_refuses_any_form_it_cannot_rewrite_and_changes_nothing() {
+    for (lock, key) in UNWRITABLE {
+        let scratch = Scratch::new("write-refuses");
+        scratch.lock(lock);
+        scratch.tool("cargo-crap", "cargo-crap 0.9.5");
+        let out = scratch.run(&["--write"]);
+        assert_eq!(out.status.code(), Some(2), "{lock}: {}", text(&out));
+        assert!(text(&out).contains(key), "{lock}: {}", text(&out));
+        assert!(!text(&out).contains("wrote"), "{lock}: {}", text(&out));
+        assert_eq!(scratch.read_lock(), lock, "{lock}");
+    }
+}
+
+#[test]
+fn write_leaves_a_partial_pin_that_already_matches_and_prints_wrote_only_for_changes() {
+    let scratch = Scratch::new("write-partial");
+    let lock = "[tools]\ncargo-fuzz = \"0.12\"\ncargo-crap = \"0.9.0\"\n";
+    scratch.lock(lock);
+    scratch.tool("cargo-fuzz", "cargo-fuzz 0.12.3");
+    scratch.tool("cargo-crap", "cargo-crap 0.9.5");
+    let out = scratch.run(&["--write"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert_eq!(
+        scratch.read_lock(),
+        "[tools]\ncargo-fuzz = \"0.12\"\ncargo-crap = \"0.9.5\"\n"
+    );
+    let said = text(&out);
+    assert!(said.contains("kept     cargo-fuzz 0.12"), "{said}");
+    assert!(
+        said.contains("wrote    cargo-crap: 0.9.0 -> 0.9.5"),
+        "{said}"
+    );
+    assert!(!said.contains("wrote    cargo-fuzz"), "{said}");
+}
+
+#[test]
+fn write_never_puts_a_pre_release_into_the_lock() {
+    let scratch = Scratch::new("write-pre-release");
+    let lock = "[tools]\ncargo-crap = \"0.9.0\"\n";
+    scratch.lock(lock);
+    scratch.tool("cargo-crap", "cargo-crap 0.9.5-rc.1");
+    let out = scratch.run(&["--write"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert_eq!(scratch.read_lock(), lock);
 }

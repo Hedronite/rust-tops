@@ -13,7 +13,7 @@ use super::{Fault, Mode};
 use crate::config::Layer;
 use crate::evidence;
 use crate::facts::{Outcome, Run};
-use crate::lock::{self, Line, Verdict};
+use crate::lock::{self, Line};
 use crate::mutation::{self, Outcomes};
 use crate::steps::{self, Base, Kind, MutationPlan, Step};
 use crate::{laws, TOOL_LOCK};
@@ -83,43 +83,36 @@ const CARGO_BUILTINS: [&str; 6] = ["test", "build", "check", "doc", "run", "benc
 
 /// The first line `<tool> --version` prints, or `None` when the tool does
 /// not answer. A `cargo` subcommand asks itself; a built-in asks `cargo`.
-fn version_of(
-    dir: &Path,
-    argv: &[String],
-    cache: &mut HashMap<String, Option<String>>,
-) -> Option<String> {
+fn version_of(dir: &Path, argv: &[String], cache: &mut Answers) -> Option<String> {
     let (program, rest) = argv.split_first()?;
     ask_cached(
         dir,
         &version_ask(program, rest.first().map(String::as_str)),
         cache,
     )
+    .ok()
+    .filter(|line| !line.is_empty())
 }
 
-/// The first line `asks` prints, or `None` when it cannot run or fails. Each
-/// distinct argv is run once per gate, so a pinned tool the gate checked and
-/// the version the report names come from the same answer.
-fn ask_cached(
-    dir: &Path,
-    asks: &[&str],
-    cache: &mut HashMap<String, Option<String>>,
-) -> Option<String> {
+/// What each version command answered: its first non-empty line, or why it did
+/// not answer.
+type Answers = HashMap<String, Result<String, String>>;
+
+/// The first line `asks` prints (empty when it prints none), or why it did not
+/// answer within the limit. Each distinct argv is run once per gate, so a
+/// pinned tool the gate checked and the version the report names come from
+/// the same answer.
+fn ask_cached(dir: &Path, asks: &[&str], cache: &mut Answers) -> Result<String, String> {
     cache
         .entry(asks.join(" "))
         .or_insert_with(|| {
-            let (head, tail) = asks.split_first()?;
-            let out = Command::new(head)
-                .args(tail)
-                .current_dir(dir)
-                .output()
-                .ok()?;
-            out.status.success().then(|| {
-                String::from_utf8_lossy(&out.stdout)
-                    .lines()
+            lock::run_probe(dir, asks, lock::PROBE_LIMIT).map(|out| {
+                out.lines()
                     .map(str::trim)
                     .find(|line| !line.is_empty())
-                    .map(str::to_string)
-            })?
+                    .unwrap_or_default()
+                    .to_string()
+            })
         })
         .clone()
 }
@@ -182,7 +175,7 @@ struct Runner<'p, 'a> {
     /// `false` for a dry run: commands are listed, never run.
     live: bool,
     done: Executed<'a>,
-    versions: HashMap<String, Option<String>>,
+    versions: Answers,
     /// What each pinned tool answered, asked once per gate.
     asked: HashMap<&'static str, Line>,
 }
@@ -232,32 +225,34 @@ impl<'a> Runner<'_, 'a> {
     }
 
     /// The run that stands for `layer` when a pinned tool it needs is at
-    /// another version ([`Outcome::ToolMismatch`], the note naming tool, pin
-    /// and found) or will not run ([`Outcome::ToolMissing`]); `None` when
-    /// every tool answers with its pin. Each tool is asked once per gate.
+    /// another version ([`Outcome::ToolMismatch`]) or will not answer
+    /// ([`Outcome::ToolMissing`]), the note carrying every such tool in the
+    /// words of [`lock::Line::text`]; `None` when every tool answers with its
+    /// pin. Each tool is asked once per gate.
     fn ask_pins(&mut self, layer: &Layer) -> Option<Run> {
         let dir = self.dir;
-        let mut mismatched = Vec::new();
-        let mut missing: Option<String> = None;
+        let mut stops = Vec::new();
         for (row, pin) in self.plan.pins_of(&layer.id) {
             let line = self.asked.entry(row.key).or_insert_with(|| {
                 lock::check_row(row, pin, &mut |argv| {
                     ask_cached(dir, argv, &mut self.versions)
                 })
             });
-            match &line.verdict {
-                Verdict::Mismatch { .. } => mismatched.push((row.argv.join(" "), line.text())),
-                Verdict::Missing { asked } => {
-                    missing.get_or_insert_with(|| asked.clone());
-                }
-                Verdict::Ok { .. } | Verdict::Skipped { .. } => {}
-            }
+            stops.extend(line.stop());
         }
-        if let Some((argv, _)) = mismatched.first() {
-            let notes: Vec<&str> = mismatched.iter().map(|(_, text)| text.as_str()).collect();
-            return Some(mismatch_run(&layer.id, argv, notes.join("; ")));
-        }
-        missing.map(|asked| missing_run(&layer.id, asked))
+        let first = stops.first()?;
+        let note: Vec<&str> = stops.iter().map(|stop| stop.text.as_str()).collect();
+        let outcome = if stops.iter().any(|stop| stop.mismatch) {
+            Outcome::ToolMismatch
+        } else {
+            Outcome::ToolMissing
+        };
+        Some(pin_stop_run(
+            &layer.id,
+            outcome,
+            &first.asked,
+            note.join("; "),
+        ))
     }
 
     fn shared(&mut self, layer: &'a Layer, from: &'static str) {
@@ -457,30 +452,21 @@ pub(crate) fn run_chain(dir: &Path, layer: &str, chain: &[Step]) -> Result<Run> 
 }
 
 /// A layer that stopped because a pinned tool prints another version than its
-/// pin. The same `note` is the stdout line, the layer's detail and its problem.
-fn mismatch_run(layer: &str, argv: &str, note: String) -> Run {
-    println!("tool-mismatch [{layer}]: {note}");
+/// pin (`outcome` is a mismatch) or would not answer (a missing tool). The same `note` is the stdout line,
+/// the layer's detail and its problem.
+fn pin_stop_run(layer: &str, outcome: Outcome, asked: &str, note: String) -> Run {
+    let label = if outcome == Outcome::ToolMismatch {
+        "tool-mismatch"
+    } else {
+        "tool-missing"
+    };
+    println!("{label} [{layer}]: {note}");
     Run {
         layer: layer.to_string(),
         cmd: String::new(),
-        step: argv.to_string(),
-        outcome: Outcome::ToolMismatch,
+        step: asked.to_string(),
+        outcome,
         note: Some(note),
-    }
-}
-
-/// A layer that stopped because a pinned tool will not run: the same outcome
-/// and words as a command whose tool is not on `PATH`.
-fn missing_run(layer: &str, asked: String) -> Run {
-    let words: Vec<String> = asked.split_whitespace().map(str::to_string).collect();
-    let binary = steps::tool_binary(&words).unwrap_or_else(|| asked.clone());
-    println!("{}", steps::MissingTool { binary });
-    Run {
-        layer: layer.to_string(),
-        cmd: String::new(),
-        step: asked,
-        outcome: Outcome::ToolMissing,
-        note: None,
     }
 }
 

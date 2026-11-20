@@ -11,9 +11,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+
+mod probe;
+mod write;
+
+pub(crate) use probe::{probe_in, run_probe, PROBE_LIMIT};
 
 /// One pinned tool: its lock key, the argv that prints its version, and the
 /// text the first line starts with before the version.
@@ -127,18 +132,28 @@ pub(crate) fn tools_for<'a>(layers: impl IntoIterator<Item = &'a str>) -> Vec<&'
 }
 
 /// The version on the first line of a tool's output, read by the row's rule:
-/// the first word after the prefix, cut at the first character that is not a
-/// digit or a dot. `None` when the line does not have that shape.
+/// the first word after the prefix. The digits and dots at its front are the
+/// version; a `+build` part after them is cut. A word that goes on with
+/// anything else (`-rc.1`, `-nightly`) is a pre-release, and the whole word is
+/// the version, which no pin matches. `None` when the line does not have that
+/// shape.
 pub(crate) fn parse_version(row: &Row, output: &str) -> Option<String> {
     let line = output.lines().next()?.trim();
     let word = line.strip_prefix(row.prefix)?.split_whitespace().next()?;
-    let version: String = word
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    let version = version.trim_end_matches('.');
-    // Only digits and dots are left, so a malformed version has an empty part:
-    // `1..2`, `.5`, or nothing at all.
+    let (number, rest) = word.split_at(
+        word.find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(word.len()),
+    );
+    let number = number.trim_end_matches('.');
+    if number.is_empty() {
+        return None;
+    }
+    let version = if rest.is_empty() || rest.starts_with('+') {
+        number
+    } else {
+        word
+    };
+    // A malformed version has an empty part: `1..2`, `.5`, or nothing at all.
     version
         .split('.')
         .all(|part| !part.is_empty())
@@ -146,11 +161,19 @@ pub(crate) fn parse_version(row: &Row, output: &str) -> Option<String> {
 }
 
 /// Whether `found` satisfies `pin`. Whole dot-separated parts only: `0.12`
-/// matches `0.12.3` and not `0.120.0`; `0.12.3` does not match `0.12`.
+/// matches `0.12.3` and not `0.120.0`; `0.12.3` does not match `0.12`. A
+/// pre-release (`0.12.0-rc.1`) matches no pin.
 pub(crate) fn pin_matches(pin: &str, found: &str) -> bool {
     let pin_parts: Vec<&str> = pin.split('.').collect();
     let found_parts: Vec<&str> = found.split('.').collect();
-    found_parts.starts_with(&pin_parts)
+    !found.contains('-') && found_parts.starts_with(&pin_parts)
+}
+
+/// Whether `text` is dot-separated digits, the only shape a pin or a version
+/// written to the lock has.
+pub(crate) fn is_dotted_digits(text: &str) -> bool {
+    text.split('.')
+        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// What asking one tool came to.
@@ -163,73 +186,121 @@ pub(crate) enum Verdict {
     Mismatch {
         found: String,
     },
-    /// The tool could not be run, or exited non-zero; `asked` is the command.
+    /// The tool could not be run, or did not exit 0 in time: `asked` is the
+    /// command and `why` how it failed.
     Missing {
         asked: String,
+        why: String,
     },
     /// Nothing to ask: a library or name row, or a tool with no pin.
     Skipped {
         why: &'static str,
     },
+    /// A lock key that names no tool rust-tops knows: not checked.
+    Unknown,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Line {
     pub(crate) key: String,
     pub(crate) pin: String,
+    /// The version command of the tool.
+    pub(crate) asked: String,
     pub(crate) verdict: Verdict,
+}
+
+/// Why a layer cannot run on a pinned tool: the same words on stdout, in the
+/// layer's `detail` and in its problems.
+pub(crate) struct Stop {
+    /// `true` for another version, `false` for a tool that would not answer.
+    pub(crate) mismatch: bool,
+    /// The command that was asked.
+    pub(crate) asked: String,
+    pub(crate) text: String,
 }
 
 impl Line {
     pub(crate) fn passes(&self) -> bool {
-        matches!(self.verdict, Verdict::Ok { .. } | Verdict::Skipped { .. })
+        matches!(
+            self.verdict,
+            Verdict::Ok { .. } | Verdict::Skipped { .. } | Verdict::Unknown
+        )
     }
 
-    /// The line `--verify` prints, and the detail of a `tool-mismatch`.
+    /// The line `--verify` prints, and the detail of a stopped layer.
     pub(crate) fn text(&self) -> String {
-        let Line { key, pin, verdict } = self;
+        let Line {
+            key, pin, verdict, ..
+        } = self;
         match verdict {
             Verdict::Ok { found } => format!("ok       {key} {found} (pin {pin})"),
             Verdict::Mismatch { found } => {
                 format!("mismatch {key}: pin {pin}, found {found}")
             }
-            Verdict::Missing { .. } => format!("missing  {key}: pin {pin}, not found"),
+            Verdict::Missing { asked, why } => {
+                format!("missing  {key}: pin {pin}, `{asked}` {why}")
+            }
             Verdict::Skipped { why } => format!("skipped  {key}: {why}"),
+            Verdict::Unknown => format!("unknown  {key}: not a tool rust-tops knows, not checked"),
         }
     }
-}
 
-/// Reads `[tools]` from a lock text. Values that are not strings are dropped.
-pub(crate) fn read_pins(text: &str) -> Result<BTreeMap<String, String>> {
-    let lock: toml::Table = toml::from_str(text).context("parse rust-tops.lock")?;
-    Ok(lock
-        .get("tools")
-        .and_then(toml::Value::as_table)
-        .map(|tools| {
-            tools
-                .iter()
-                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
-                .collect()
+    /// What stops a layer: another version or a tool that would not answer.
+    pub(crate) fn stop(&self) -> Option<Stop> {
+        let (mismatch, asked) = match &self.verdict {
+            Verdict::Mismatch { .. } => (true, self.asked.clone()),
+            Verdict::Missing { asked, .. } => (false, asked.clone()),
+            _ => return None,
+        };
+        Some(Stop {
+            mismatch,
+            asked,
+            text: self.text(),
         })
-        .unwrap_or_default())
-}
-
-/// A probe that runs each argv in `dir` and returns its stdout, or `None`
-/// when it could not run or failed.
-pub(crate) fn probe_in(dir: &Path) -> impl FnMut(&[&str]) -> Option<String> + '_ {
-    move |argv| {
-        let (program, args) = argv.split_first()?;
-        let output = Command::new(program)
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .ok()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
+
+/// Reads `[tools]` from a lock text: `None` when there is no such table. A
+/// `tools` that is not a table, a value that is not a string, and a pin of a
+/// tool that is not dotted digits are errors naming the key.
+pub(crate) fn read_lock(text: &str) -> Result<Option<BTreeMap<String, String>>> {
+    let lock: toml::Table = toml::from_str(text).context("parse rust-tops.lock")?;
+    let Some(tools) = lock.get("tools") else {
+        return Ok(None);
+    };
+    let tools = tools
+        .as_table()
+        .ok_or_else(|| anyhow!("[tools] must be a table, found {}", tools.type_str()))?;
+    tools
+        .iter()
+        .map(|(key, value)| Ok((key.clone(), pin_of(key, value)?)))
+        .collect::<Result<_>>()
+        .map(Some)
+}
+
+/// The pin `value` is for `key`.
+fn pin_of(key: &str, value: &toml::Value) -> Result<String> {
+    let pin = value.as_str().ok_or_else(|| {
+        anyhow!(
+            "[tools] {key}: a pin is a string such as \"0.9.0\", found {}",
+            value.type_str()
+        )
+    })?;
+    if row(key).is_some() && !is_dotted_digits(pin) {
+        bail!(
+            "[tools] {key} = {pin:?}: a pin is dot-separated digits such as \"0.9.0\" or \"0.9\""
+        );
+    }
+    Ok(pin.to_string())
+}
+
+/// The pins of a lock text; no `[tools]` table is no pins.
+pub(crate) fn read_pins(text: &str) -> Result<BTreeMap<String, String>> {
+    Ok(read_lock(text)?.unwrap_or_default())
+}
+
+/// What a probe returns: the stdout of the command, or why it did not answer.
+type Probe<'a> = dyn FnMut(&[&str]) -> Result<String, String> + 'a;
 
 /// The row for a lock key.
 pub(crate) fn row(key: &str) -> Option<&'static Row> {
@@ -249,25 +320,25 @@ pub(crate) fn pins_for<'a>(
 }
 
 /// Asks one pinned tool. `probe` runs an argv and returns its stdout.
-pub(crate) fn check_row(
-    row: &Row,
-    pin: &str,
-    probe: &mut dyn FnMut(&[&str]) -> Option<String>,
-) -> Line {
+pub(crate) fn check_row(row: &Row, pin: &str, probe: &mut Probe<'_>) -> Line {
     let verdict = match probe(row.argv) {
-        None => Verdict::Missing {
+        Err(why) => Verdict::Missing {
             asked: row.argv.join(" "),
+            why,
         },
-        Some(out) => match row.present.iter().find(|argv| probe(argv).is_none()) {
-            Some(argv) => Verdict::Missing {
-                asked: argv.join(" "),
-            },
+        Ok(out) => match row
+            .present
+            .iter()
+            .find_map(|argv| probe(argv).err().map(|why| (argv.join(" "), why)))
+        {
+            Some((asked, why)) => Verdict::Missing { asked, why },
             None => version_verdict(row, pin, &out),
         },
     };
     Line {
         key: row.key.to_string(),
         pin: pin.to_string(),
+        asked: row.argv.join(" "),
         verdict,
     }
 }
@@ -276,8 +347,13 @@ pub(crate) fn check_row(
 /// the shape of the row is a mismatch, and the line is named as found.
 fn version_verdict(row: &Row, pin: &str, out: &str) -> Verdict {
     let Some(found) = parse_version(row, out) else {
+        let line = out.lines().next().unwrap_or_default().trim();
         return Verdict::Mismatch {
-            found: out.lines().next().unwrap_or_default().trim().to_string(),
+            found: if line.is_empty() {
+                "no version line".to_string()
+            } else {
+                line.to_string()
+            },
         };
     };
     if pin_matches(pin, &found) {
@@ -289,11 +365,11 @@ fn version_verdict(row: &Row, pin: &str, out: &str) -> Verdict {
 
 /// Checks the pins. With `only`, the tools in it (a tool with no pin is
 /// skipped); without, every pin in the lock, and a lock key with no row is
-/// skipped.
+/// skipped (a library or a runner) or unknown (anything else).
 pub(crate) fn verify(
     pins: &BTreeMap<String, String>,
     only: Option<&[&str]>,
-    probe: &mut dyn FnMut(&[&str]) -> Option<String>,
+    probe: &mut Probe<'_>,
 ) -> Vec<Line> {
     let mut lines = tool_lines(pins, only, probe);
     if only.is_none() {
@@ -306,7 +382,7 @@ pub(crate) fn verify(
 fn tool_lines(
     pins: &BTreeMap<String, String>,
     only: Option<&[&str]>,
-    probe: &mut dyn FnMut(&[&str]) -> Option<String>,
+    probe: &mut Probe<'_>,
 ) -> Vec<Line> {
     ROWS.iter()
         .filter(|row| only.is_none_or(|only| only.contains(&row.key)))
@@ -315,6 +391,7 @@ fn tool_lines(
             None => only.map(|_| Line {
                 key: row.key.to_string(),
                 pin: String::new(),
+                asked: row.argv.join(" "),
                 verdict: Verdict::Skipped {
                     why: "no pin in rust-tops.lock",
                 },
@@ -323,69 +400,50 @@ fn tool_lines(
         .collect()
 }
 
-/// The lock keys that name no tool: a library or a runner. Skipped.
+/// The keys that are pinned in the lock but are not in the table of tools:
+/// the three libraries and runners that are not tools on `PATH` are skipped,
+/// and any other key (a misspelt tool, say) is named as unknown.
+const NOT_TOOLS: [&str; 3] = ["proptest", "criterion", "callgrind-runner"];
+
 fn unmatched_keys(pins: &BTreeMap<String, String>) -> Vec<Line> {
     pins.iter()
         .filter(|(key, _)| row(key).is_none())
         .map(|(key, pin)| Line {
             key: key.clone(),
             pin: pin.clone(),
-            verdict: Verdict::Skipped {
-                why: "a library or name, not a tool on PATH",
+            asked: String::new(),
+            verdict: if NOT_TOOLS.contains(&key.as_str()) {
+                Verdict::Skipped {
+                    why: "a library or name, not a tool on PATH",
+                }
+            } else {
+                Verdict::Unknown
             },
         })
         .collect()
 }
 
-/// The version each pinned tool prints now, for `--write`. A tool that is
-/// missing or prints no version is left out.
+/// The version each pinned tool prints now, for `--write`: the tools that
+/// answered with a release version, as dot-separated digits. A tool that did
+/// not answer, or printed a pre-release, is left out.
 pub(crate) fn found_versions(
     pins: &BTreeMap<String, String>,
-    probe: &mut dyn FnMut(&[&str]) -> Option<String>,
+    probe: &mut Probe<'_>,
 ) -> BTreeMap<String, String> {
     ROWS.iter()
         .filter(|row| pins.contains_key(row.key))
-        .filter_map(|row| {
-            let found = parse_version(row, &probe(row.argv)?)?;
-            Some((row.key.to_string(), found))
-        })
+        .filter_map(|row| Some((row.key.to_string(), release_version(row, probe)?)))
         .collect()
 }
 
-/// `text` with the `[tools]` values in `found` replaced. Only the quoted value
-/// changes; comments, order, spacing and other tables are kept byte for byte.
-pub(crate) fn write_values(text: &str, found: &BTreeMap<String, String>) -> String {
-    let mut in_tools = false;
-    let mut out = String::with_capacity(text.len());
-    for line in text.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('[') {
-            in_tools = trimmed.trim_end().starts_with("[tools]");
-        }
-        out.push_str(&if in_tools {
-            replace_value(line, found)
-        } else {
-            line.to_string()
-        });
+/// The release version `row`'s tool prints, when the tool and the commands that
+/// show it is present all answer.
+fn release_version(row: &Row, probe: &mut Probe<'_>) -> Option<String> {
+    let out = probe(row.argv).ok()?;
+    if row.present.iter().any(|argv| probe(argv).is_err()) {
+        return None;
     }
-    out
-}
-
-fn replace_value(line: &str, found: &BTreeMap<String, String>) -> String {
-    let Some((key, rest)) = line.split_once('=') else {
-        return line.to_string();
-    };
-    let Some(new) = found.get(key.trim()) else {
-        return line.to_string();
-    };
-    let Some(open) = rest.find('"') else {
-        return line.to_string();
-    };
-    let Some(len) = rest[open + 1..].find('"') else {
-        return line.to_string();
-    };
-    let close = open + 1 + len;
-    format!("{key}={}{new}{}", &rest[..=open], &rest[close..])
+    parse_version(row, &out).filter(|found| is_dotted_digits(found))
 }
 
 /// What `cargo tops lock` was asked to do.
@@ -397,16 +455,19 @@ pub(crate) enum Action {
     Write,
 }
 
-/// `cargo tops lock`. An unreadable lock, or a config that will not load for
+/// `cargo tops lock`. A lock that is unreadable, has no `[tools]` table or
+/// holds a pin that cannot be read, or a config that will not load for
 /// `--max-tier`, is an error (exit 2); a missing or mismatched tool is exit 3.
 pub(crate) fn command(dir: &Path, action: &Action) -> anyhow::Result<ExitCode> {
     let path = dir.join(crate::TOOL_LOCK);
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let pins = read_pins(&text).with_context(|| format!("read {}", path.display()))?;
+    let pins = read_lock(&text)
+        .with_context(|| format!("read {}", path.display()))?
+        .ok_or_else(|| anyhow!("{} has no [tools] table", path.display()))?;
     match action {
         Action::Verify { max_tier } => verify_command(dir, &pins, *max_tier),
-        Action::Write => write_command(dir, &path, &text, &pins),
+        Action::Write => write::write_command(dir, &path, &text, &pins),
     }
 }
 
@@ -428,6 +489,9 @@ fn verify_command(
 ) -> anyhow::Result<ExitCode> {
     let needed = max_tier.map(|tier| tools_in_range(dir, tier)).transpose()?;
     let lines = verify(pins, needed.as_deref(), &mut probe_in(dir));
+    if lines.is_empty() {
+        println!("nothing pinned in [tools]");
+    }
     for line in &lines {
         println!("{}", line.text());
     }
@@ -436,36 +500,6 @@ fn verify_command(
     } else {
         ExitCode::from(3)
     })
-}
-
-/// One line for each pinned tool `--write` is about: the old and new value
-/// when they differ, and that a tool that could not be run keeps its value.
-fn write_lines(pins: &BTreeMap<String, String>, found: &BTreeMap<String, String>) -> Vec<String> {
-    pins.iter()
-        .filter(|(key, _)| row(key).is_some())
-        .map(|(key, pin)| match found.get(key) {
-            Some(now) if now != pin => format!("wrote    {key}: {pin} -> {now}"),
-            Some(_) => format!("kept     {key} {pin}"),
-            None => format!("kept     {key} {pin}: not found"),
-        })
-        .collect()
-}
-
-fn write_command(
-    dir: &Path,
-    path: &Path,
-    text: &str,
-    pins: &BTreeMap<String, String>,
-) -> anyhow::Result<ExitCode> {
-    let found = found_versions(pins, &mut probe_in(dir));
-    for line in write_lines(pins, &found) {
-        println!("{line}");
-    }
-    let written = write_values(text, &found);
-    if written != text {
-        std::fs::write(path, written).with_context(|| format!("write {}", path.display()))?;
-    }
-    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]
@@ -555,7 +589,7 @@ mod tests {
         assert_eq!(
             texts,
             [
-                "missing  clippy: pin 1.99.1, not found",
+                "missing  clippy: pin 1.99.1, `cargo clippy --version` exited 101",
                 "ok       rustfmt 1.99.1 (pin 1.99.1)",
             ]
         );
@@ -570,10 +604,14 @@ mod tests {
         ] {
             assert_eq!(parse_version(row("cargo-nextest"), out), None, "{out:?}");
         }
-        // A suffix after the digits and dots is cut, and a trailing dot goes.
+        // A build part is cut, and a trailing dot goes; a pre-release keeps its
+        // whole word, which no pin matches.
         for (out, want) in [
-            ("cargo-nextest 1.2-rc\n", "1.2"),
+            ("cargo-nextest 1.2+build.5\n", "1.2"),
             ("cargo-nextest 1.\n", "1"),
+            ("cargo-nextest 1.2-rc.1\n", "1.2-rc.1"),
+            ("cargo-nextest 1.2.3-nightly (x)\n", "1.2.3-nightly"),
+            ("cargo-nextest 1.2abc\n", "1.2abc"),
         ] {
             assert_eq!(
                 parse_version(row("cargo-nextest"), out).as_deref(),
@@ -581,28 +619,6 @@ mod tests {
                 "{out:?}"
             );
         }
-    }
-
-    #[test]
-    fn write_lines_say_what_changed_and_leave_library_rows_out() {
-        let pins = BTreeMap::from([
-            ("cargo-crap".to_string(), "0.9.0".to_string()),
-            ("cargo-deny".to_string(), "0.18.9".to_string()),
-            ("cargo-nextest".to_string(), "0.9.145".to_string()),
-            ("proptest".to_string(), "1".to_string()),
-        ]);
-        let found = BTreeMap::from([
-            ("cargo-deny".to_string(), "0.18.9".to_string()),
-            ("cargo-nextest".to_string(), "0.9.150".to_string()),
-        ]);
-        assert_eq!(
-            write_lines(&pins, &found),
-            [
-                "kept     cargo-crap 0.9.0: not found",
-                "kept     cargo-deny 0.18.9",
-                "wrote    cargo-nextest: 0.9.145 -> 0.9.150",
-            ]
-        );
     }
 
     #[test]
@@ -638,16 +654,42 @@ mod tests {
         assert!(!pin_matches("0.12.3", "0.12"));
         assert!(!pin_matches("1", "10.0.0"));
         assert!(pin_matches("1", "1.4.2"));
+        // A pre-release matches no pin, however few parts the pin has.
+        for pin in ["0", "0.9", "0.9.0"] {
+            assert!(!pin_matches(pin, "0.9.0-rc.1"), "{pin}");
+            assert!(!pin_matches(pin, "0.9.0-nightly"), "{pin}");
+        }
+    }
+
+    #[test]
+    fn dotted_digits_are_the_only_pins_and_versions_written() {
+        for good in ["1", "0.12", "0.9.145"] {
+            assert!(is_dotted_digits(good), "{good}");
+        }
+        for bad in [
+            "",
+            "1.",
+            ".1",
+            "1..2",
+            "v1",
+            "1.x",
+            "=1",
+            "1.0-rc",
+            "gungraun-runner",
+        ] {
+            assert!(!is_dotted_digits(bad), "{bad:?}");
+        }
     }
 
     fn probe_for<'a>(
         table: &'a [(&'a str, Option<&'a str>)],
-    ) -> impl FnMut(&[&str]) -> Option<String> + 'a {
+    ) -> impl FnMut(&[&str]) -> Result<String, String> + 'a {
         move |argv| {
             table
                 .iter()
                 .find(|(tool, _)| argv.contains(tool))
                 .and_then(|(_, out)| out.map(str::to_string))
+                .ok_or_else(|| "exited 101".to_string())
         }
     }
 
@@ -678,7 +720,7 @@ mod tests {
         assert_eq!(
             texts,
             [
-                "missing  cargo-crap: pin 0.9.0, not found",
+                "missing  cargo-crap: pin 0.9.0, `cargo crap --version` exited 101",
                 "mismatch cargo-deny: pin 0.18.9, found what",
             ]
         );
@@ -693,7 +735,7 @@ mod tests {
                 "gungraun-runner".to_string(),
             ),
         ]);
-        let mut probe = |_: &[&str]| -> Option<String> { panic!("asked a library row") };
+        let mut probe = |_: &[&str]| -> Result<String, String> { panic!("asked a library row") };
         let lines = verify(&pins, None, &mut probe);
         assert_eq!(lines.len(), 2);
         assert!(lines
@@ -719,26 +761,134 @@ mod tests {
     }
 
     #[test]
-    fn write_changes_only_the_values_it_found() {
-        let text = "# keep me\n[tools]\nrustc = \"1.99.1\"  # trailing\n# cargo-nextest note\ncargo-nextest = \"0.9.145\"\nproptest = \"1\"\n\n[notes]\nrustc = \"untouched\"\n";
-        let found = BTreeMap::from([
-            ("cargo-nextest".to_string(), "0.9.150".to_string()),
-            ("rustc".to_string(), "1.99.2".to_string()),
-        ]);
+    fn read_lock_reads_strings_and_names_every_other_kind_of_value() {
+        let pins = read_pins("[tools]\nrustc = \"1.99.1\"\nproptest = \"1\"\ncallgrind-runner = \"gungraun-runner\"\n[notes]\nx = \"y\"\n").expect("pins");
+        assert_eq!(pins.len(), 3);
         assert_eq!(
-            write_values(text, &found),
-            "# keep me\n[tools]\nrustc = \"1.99.2\"  # trailing\n# cargo-nextest note\ncargo-nextest = \"0.9.150\"\nproptest = \"1\"\n\n[notes]\nrustc = \"untouched\"\n"
+            pins.get("callgrind-runner").map(String::as_str),
+            Some("gungraun-runner")
+        );
+        assert_eq!(read_lock("[notes]\nx = \"y\"\n").expect("no tools"), None);
+        assert!(read_pins("[notes]\n").expect("no pins").is_empty());
+        for (lock, words) in [
+            ("[tools\n", "parse"),
+            (
+                "[tools]\nrustc = 1\n",
+                "[tools] rustc: a pin is a string such as \"0.9.0\", found integer",
+            ),
+            ("[tools]\nrustc = 1.5\n", "found float"),
+            ("[tools]\nrustc = { v = 1 }\n", "found table"),
+            ("[tools]\nrustc = [\"1\"]\n", "found array"),
+            ("[tools]\nrustc = true\n", "found boolean"),
+            ("tools = \"x\"\n", "[tools] must be a table, found string"),
+            ("[[tools]]\n", "[tools] must be a table, found array"),
+            (
+                "[tools]\nrustc = \"=1\"\n",
+                "[tools] rustc = \"=1\": a pin is dot-separated digits",
+            ),
+        ] {
+            let err = read_lock(lock).expect_err(lock);
+            assert!(format!("{err:#}").contains(words), "{lock}: {err:#}");
+        }
+    }
+
+    #[test]
+    fn an_empty_or_garbled_line_is_a_mismatch_that_says_what_was_printed() {
+        let pins = BTreeMap::from([("cargo-crap".to_string(), "0.9.0".to_string())]);
+        for (out, found) in [
+            ("", "no version line"),
+            ("\n", "no version line"),
+            ("what\n", "what"),
+        ] {
+            let mut probe = |_: &[&str]| Ok(out.to_string());
+            let lines = verify(&pins, None, &mut probe);
+            assert_eq!(
+                lines.first().map(Line::text),
+                Some(format!("mismatch cargo-crap: pin 0.9.0, found {found}")),
+                "{out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_probe_carries_its_command_and_reason_into_the_stop() {
+        let pins = BTreeMap::from([("cargo-crap".to_string(), "0.9.0".to_string())]);
+        let mut probe = |_: &[&str]| Err("timed out after 10s".to_string());
+        let lines = verify(&pins, None, &mut probe);
+        let stop = lines.first().and_then(Line::stop).expect("a stop");
+        assert!(!stop.mismatch);
+        assert_eq!(stop.asked, "cargo crap --version");
+        assert_eq!(
+            stop.text,
+            "missing  cargo-crap: pin 0.9.0, `cargo crap --version` timed out after 10s"
+        );
+        let mut ok = |_: &[&str]| Ok("cargo-crap 0.9.1\n".to_string());
+        let lines = verify(&pins, None, &mut ok);
+        let stop = lines.first().and_then(Line::stop).expect("a stop");
+        assert!(stop.mismatch);
+        assert_eq!(stop.asked, "cargo crap --version");
+        let mut fine = |_: &[&str]| Ok("cargo-crap 0.9.0\n".to_string());
+        assert!(verify(&pins, None, &mut fine)
+            .first()
+            .and_then(Line::stop)
+            .is_none());
+    }
+
+    #[test]
+    fn a_failing_presence_command_names_that_command() {
+        let pins = BTreeMap::from([("rustfmt".to_string(), "1.99.1".to_string())]);
+        let mut probe = probe_for(&[("rustc", Some("rustc 1.99.1 (x)\n")), ("fmt", None)]);
+        let lines = verify(&pins, None, &mut probe);
+        assert_eq!(
+            lines.first().map(Line::text).as_deref(),
+            Some("missing  rustfmt: pin 1.99.1, `cargo fmt --version` exited 101")
         );
     }
 
     #[test]
-    fn read_pins_reads_tools_only_and_rejects_bad_toml() {
-        let pins =
-            read_pins("[tools]\nrustc = \"1.99.1\"\nn = 3\n[notes]\nx = \"y\"\n").expect("pins");
-        assert_eq!(
-            pins,
-            BTreeMap::from([("rustc".to_string(), "1.99.1".to_string())])
+    fn unknown_keys_pass_with_a_warning_and_only_the_named_libraries_are_skipped() {
+        let pins = BTreeMap::from([
+            ("criterion".to_string(), "0.8".to_string()),
+            ("cargo-nexttest".to_string(), "0.9.145".to_string()),
+        ]);
+        let lines = verify(
+            &pins,
+            None,
+            &mut |_: &[&str]| Err("never asked".to_string()),
         );
-        assert!(read_pins("[tools\n").is_err());
+        let texts: Vec<String> = lines.iter().map(Line::text).collect();
+        assert_eq!(
+            texts,
+            [
+                "unknown  cargo-nexttest: not a tool rust-tops knows, not checked",
+                "skipped  criterion: a library or name, not a tool on PATH",
+            ]
+        );
+        assert!(lines.iter().all(Line::passes));
+    }
+
+    #[test]
+    fn found_versions_leave_out_a_tool_that_will_not_answer_and_a_pre_release() {
+        let pins = BTreeMap::from([
+            ("cargo-crap".to_string(), "0.9.0".to_string()),
+            ("cargo-deny".to_string(), "0.18.9".to_string()),
+            ("cargo-fuzz".to_string(), "0.12".to_string()),
+            ("clippy".to_string(), "1.99.1".to_string()),
+            ("rustc".to_string(), "1.99.1".to_string()),
+        ]);
+        let mut probe = probe_for(&[
+            ("crap", None),
+            ("deny", Some("cargo-deny 0.18.9-rc.1\n")),
+            ("fuzz", Some("cargo-fuzz 0.12.3\n")),
+            ("clippy", None),
+            ("rustc", Some("rustc 1.99.2 (x)\n")),
+        ]);
+        assert_eq!(
+            found_versions(&pins, &mut probe),
+            BTreeMap::from([
+                ("cargo-fuzz".to_string(), "0.12.3".to_string()),
+                ("rustc".to_string(), "1.99.2".to_string()),
+            ])
+        );
     }
 }

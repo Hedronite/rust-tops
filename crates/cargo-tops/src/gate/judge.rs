@@ -485,18 +485,23 @@ pub(crate) fn laws_evaluated(cases: &Path) -> Option<(usize, usize)> {
 pub(crate) fn run_failure(run: &Run) -> Option<String> {
     match run.outcome {
         Outcome::Passed | Outcome::Vacuous => None,
-        // A tool at another version always carries its note: tool, pin, found.
-        Outcome::Failed | Outcome::ToolMismatch => Some(match &run.note {
-            Some(note) => format!("{}: {note}", run.layer),
-            None => format!("{}: `{}` failed", run.layer, run.step),
-        }),
-        Outcome::ToolMissing => {
-            let missing = steps::MissingTool {
-                binary: steps::tool_binary(std::slice::from_ref(&run.step))
-                    .unwrap_or_else(|| run.step.clone()),
-            };
-            Some(format!("{}: {missing}", run.layer))
+        Outcome::Failed | Outcome::ToolMismatch | Outcome::ToolMissing => {
+            Some(format!("{}: {}", run.layer, failure_words(run)))
         }
+    }
+}
+
+/// What failed, in the words the run kept (a note), or for a command whose
+/// tool is not on `PATH` the way that is said, or the step that failed.
+fn failure_words(run: &Run) -> String {
+    match (&run.note, run.outcome) {
+        (Some(note), _) => note.clone(),
+        (None, Outcome::ToolMissing) => steps::MissingTool {
+            binary: steps::tool_binary(std::slice::from_ref(&run.step))
+                .unwrap_or_else(|| run.step.clone()),
+        }
+        .to_string(),
+        (None, _) => format!("`{}` failed", run.step),
     }
 }
 

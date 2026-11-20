@@ -720,8 +720,21 @@ fn clippy_that_will_not_run_is_a_missing_tool_not_a_version_miss() {
     answer_version(&fixture, "clippy", None);
     let (out, text) = gate(&fixture, &[], None);
     assert_eq!(out.status.code(), Some(3), "{text}");
-    assert!(text.contains("static-lint: `cargo` not on PATH"), "{text}");
+    // The correction: a probe that failed names the tool and the command it ran
+    // (it used to say `cargo` was not on PATH), once, on stdout, in the
+    // layer's detail and in the problems.
+    let said = "missing  clippy: pin 1.99.1, `cargo clippy --version` exited 101";
+    assert!(
+        text.contains(&format!("tool-missing [static-lint]: {said}")),
+        "{text}"
+    );
+    assert!(text.contains(&format!("static-lint: {said}")), "{text}");
     let report = report(&fixture);
+    assert_eq!(at(layer(&report, "static-lint"), "/detail"), said);
+    assert!(
+        problems(&report).contains(&format!("static-lint: {said}")),
+        "{report}"
+    );
     assert_eq!(
         at(layer(&report, "static-lint"), "/verdict"),
         "tool-missing"
@@ -780,6 +793,34 @@ fn a_layer_that_takes_another_layers_run_keeps_that_runs_mismatch() {
     assert_eq!(at(layer(&report, "coverage"), "/verdict"), "tool-mismatch");
     assert_eq!(at(layer(&report, "property"), "/verdict"), "tool-mismatch");
     assert_eq!(at(layer(&report, "property"), "/detail"), said);
+}
+
+#[test]
+fn a_pre_release_of_a_pinned_tool_is_a_tool_mismatch_not_a_pass() {
+    let fixture = fixture("pre-release");
+    answer_version(&fixture, "deny", Some("cargo-deny 0.18.9-rc.1"));
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(
+        text.contains("mismatch cargo-deny: pin 0.18.9, found 0.18.9-rc.1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_pin_that_is_not_a_string_stops_the_gate_with_exit_2_naming_the_key() {
+    let fixture = fixture("lock-not-a-string");
+    fs::write(
+        fixture.repo.join("rust-tops.lock"),
+        "[tools]\ncargo-deny = 0.18\n",
+    )
+    .expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("cargo-deny"), "{text}");
+    assert!(text.contains("found float"), "{text}");
+    let log = cargo_log(&fixture);
+    assert!(!log.lines().any(|line| line.starts_with("deny ")), "{log}");
 }
 
 fn cargo_log(fixture: &Fixture) -> String {

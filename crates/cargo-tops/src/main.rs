@@ -110,8 +110,9 @@ impl LockArgs {
     }
 }
 
-/// The commands that act on a project: the directory `--path` names, with its
-/// `rust-tops.yaml` and `rust-tops.lock`.
+/// The commands that take a `--path` to a project that is already set up, and
+/// read its `rust-tops.yaml` or `rust-tops.lock`. `init` writes them, and
+/// `version` reads the lock of the working directory.
 #[derive(Subcommand)]
 enum ProjectCommand {
     /// Validate rust-tops.yaml against the protocol schema (typed check)
@@ -265,11 +266,24 @@ fn run_project(command: ProjectCommand) -> Result<ExitCode> {
     }
 }
 
+/// A `rust-tops.lock` that is there must read as pins: a pin that is not a
+/// string, a `tools` that is not a table, or a pin that is not dotted digits
+/// is an error naming the key. No lock is no pins.
+fn check_lock(path: &Path) -> Result<()> {
+    let file = path.join(TOOL_LOCK);
+    let Ok(text) = fs::read_to_string(&file) else {
+        return Ok(());
+    };
+    lock::read_pins(&text).with_context(|| format!("{}", file.display()))?;
+    Ok(())
+}
+
 /// `cargo tops check`: an expired exemption is a warning here and a failure
 /// of the gate; the config is still valid.
 fn check_command(path: &Path) -> Result<ExitCode> {
     let cfg = load_config(path)?;
     check(&cfg)?;
+    check_lock(path)?;
     for problem in gate::judge::expired_problems(&cfg) {
         println!("warning: {problem}");
     }

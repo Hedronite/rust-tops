@@ -2178,7 +2178,10 @@ fn a_pinned_cargo_crap_that_is_not_installed_is_missing_not_a_version_miss() {
     stub_cargo_failing(&fixture, "\"crap --version\"", 101);
     let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
     assert_eq!(out.status.code(), Some(3), "{text}");
-    assert!(text.contains("crap: `cargo-crap` not on PATH"), "{text}");
+    assert!(
+        text.contains("crap: missing  cargo-crap: pin 0.9.0, `cargo crap --version` exited 101"),
+        "{text}"
+    );
     assert!(!text.contains("tool-mismatch"), "{text}");
     let report = report_json(&fixture);
     assert_eq!(at(&layer_of(&report, "crap"), "/verdict"), "tool-missing");

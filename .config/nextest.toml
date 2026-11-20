@@ -56,3 +56,13 @@ slow-timeout = { period = "10s", terminate-after = 4 }
 [[profile.ci.overrides]]
 filter = "binary(gate_credit_nextest)"
 slow-timeout = { period = "10s", terminate-after = 6 }
+
+# These tests write fresh shell shims and run the `cargo-tops` binary against
+# them, for the kit suite only; they match nothing in an adopter. A first run of
+# each new script costs a fraction of a second on macOS, so alone the slowest
+# ran in 1.9 s to 10 s. Under the full parallel suite at a load of 7 to 10 on
+# the build machine, 3 of them timed out at 20 s in 4 runs. They get 60 s; the
+# profile timeout is not raised.
+[[profile.ci.overrides]]
+filter = "binary(lock_verify)"
+slow-timeout = { period = "10s", terminate-after = 6 }

@@ -853,7 +853,9 @@ The template is [`config/drop-in/RUST-TOPS.md`](config/drop-in/RUST-TOPS.md). `c
 
 `rust-tops.lock` pins the tools the gate runs, under `[tools]`. A pin the gate does not check is only a comment, so the gate asks each tool for its version and compares the answer with the pin.
 
-**What is asked.** One row per tool. The first line of the output is read, and the version is the first word after the tool's name, cut at the first character that is not a digit or a dot.
+**The lock.** A pin is a string of dot-separated digits, such as `0.9.0` or `0.9`. A `[tools]` value that is not a string, a `tools` that is not a table, and a pin of a tool that is not dot-separated digits are errors that name the key: exit 2 in `cargo tops lock`, in `cargo tops check` and in the gate. `cargo tops lock` on a lock with no `[tools]` table is exit 2 too. A lock file that is not there pins nothing.
+
+**What is asked.** One row per tool. The first line of the output is read, and the version is the first word after the tool's name. Each ask has 10 seconds.
 
 | Lock key | Asked | Line starts with |
 |---|---|---|
@@ -868,21 +870,21 @@ The template is [`config/drop-in/RUST-TOPS.md`](config/drop-in/RUST-TOPS.md). `c
 | `kani-verifier` | `cargo kani --version` | `Kani Rust Verifier ` |
 | `nushell` | `nu --version` | (the version alone) |
 
-Keys that name a library or a runner (`proptest`, `criterion`, `callgrind-runner`) are not tools on `PATH`. They are skipped.
+Keys that name a library or a runner (`proptest`, `criterion`, `callgrind-runner`) are not tools on `PATH`: they print `skipped`. Any other key is not a tool this protocol knows (a misspelt one, say): `lock --verify` prints `unknown` and does not check it, and the exit code is not changed.
 
-**Matching.** A pin matches when its dot-separated parts are the first parts of the version found. `0.12` matches `0.12.0` and `0.12.3`, and does not match `0.120.0`. `0.12.3` does not match `0.12`. A line that does not have the shape above is a mismatch, and the line is named as found.
+**Matching.** The digits and dots at the front of the first word after the tool's name are the version, and a `+build` part after them is cut. A pin matches when its dot-separated parts are the first parts of the version found: `0.12` matches `0.12.0` and `0.12.3`, and does not match `0.120.0`; `0.12.3` does not match `0.12`. A pre-release (`0.9.0-rc.1`, `1.99.1-nightly`) matches no pin, and the whole word is named as found. A line that does not have the shape above is a mismatch and is named as found; empty output reads `no version line`. A command that cannot be run, does not exit 0, or runs past the limit is a missing tool, and the line names the command and how it failed (`exited 101`, `timed out`).
 
 **In the gate.**
-- Before the commands of a layer that runs, the gate asks each pinned tool that layer needs, once per gate. The layers and tools are: `static-lint` (`rustc`, `clippy`, `rustfmt`, `cargo-deny`), `unit`, `integration`, `property` and `acceptance` (`cargo-nextest`), `doc` (`rustc`), `coverage` (`cargo-llvm-cov`, `cargo-nextest`), `crap` (`cargo-crap`), `security-advisory` (`cargo-deny`), `mutation` (`cargo-mutants`), `fuzz` (`cargo-fuzz`) and `formal-kani` (`kani-verifier`).
+- Before the commands of a layer that runs a command, the gate asks each pinned tool that layer needs, once per gate. The layers and tools are: `static-lint` (`rustc`, `clippy`, `rustfmt`, `cargo-deny`), `unit`, `integration`, `property` and `acceptance` (`cargo-nextest`), `doc` (`rustc`), `coverage` (`cargo-llvm-cov`, `cargo-nextest`), `crap` (`cargo-crap`), `security-advisory` (`cargo-deny`), `mutation` (`cargo-mutants`), `fuzz` (`cargo-fuzz`) and `formal-kani` (`kani-verifier`). `fuzz` and `formal-kani` have no gate command in this release, so the gate does not ask for `cargo-fuzz` or `kani-verifier`.
 - A tool that prints another version fails its layer with the verdict `tool-mismatch`. The layer's `detail`, its problem and the line on stdout carry the same words: `mismatch <tool>: pin <pin>, found <found>`. The kind is `environment` and the exit code is 3. None of the layer's commands run.
-- A tool that cannot be run is the `tool-missing` outcome, as before.
+- A tool that cannot be run is the `tool-missing` verdict, in the same words in the same three places: `missing  <tool>: pin <pin>, `<command>` <how it failed>`.
 - A layer that takes another layer's run takes its verdict, `tool-mismatch` included.
 - A layer above `--max-tier`, or one that is off, asks nothing. A tool with no pin in the lock is not asked. With no lock file the gate asks nothing.
-- A `rust-tops.lock` that cannot be read or parsed, when a layer in range needs a pinned tool, is a config error: exit 2.
+- A `rust-tops.lock` that cannot be read or parsed, or that holds a pin that cannot be read, when a layer in range needs a pinned tool, is a config error: exit 2.
 
-**`cargo tops lock --verify [--max-tier N] [--path P]`.** Asks every tool in the lock, or, with `--max-tier`, only the tools that the enabled layers at or below `N` need, and prints one line per tool: `ok`, `mismatch`, `missing` or `skipped`. Exit 0 when none is a mismatch or missing, 2 when the lock cannot be read (or the config cannot be loaded for `--max-tier`), 3 otherwise. It never writes a file.
+**`cargo tops lock --verify [--max-tier N] [--path P]`.** Asks every tool in the lock, or, with `--max-tier`, only the tools that the enabled layers at or below `N` need (this includes `cargo-fuzz` from tier 3 and `kani-verifier` from tier 4, which the gate does not ask), and prints one line per tool: `ok`, `mismatch`, `missing`, `skipped` or `unknown`. A lock with an empty `[tools]` prints `nothing pinned in [tools]`. Exit 0 when none is a mismatch or missing, 2 when the lock cannot be read, has no `[tools]` table or holds a pin that cannot be read (or the config cannot be loaded for `--max-tier`), 3 otherwise. It never writes a file.
 
-**`cargo tops lock --write [--path P]`.** Replaces each `[tools]` value with the version the tool prints now. Comments, order, spacing and other tables are kept. A tool that cannot be run keeps its value.
+**`cargo tops lock --write [--path P]`.** Replaces the value of each pinned tool whose pin does not match what the tool prints now, with that release version; a partial pin that already matches is left alone, and a tool that cannot be run or prints a pre-release keeps its value. Only a plain `key = "value"` line under `[tools]` is rewritten, and comments, order, spacing and other tables are kept. Any other form of a key to be written (a quoted or dotted key, an inline table, a literal or multi-line string, a header written `[ tools ]`) is exit 2 naming the key, and the lock is not changed. The edited lock is read back before it is written. It prints `wrote` only for a value it changed.
 
 The reference workflow runs `cargo tops lock --verify` after the tools are installed and before the gate (section 17).
 
