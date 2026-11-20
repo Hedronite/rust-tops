@@ -11,7 +11,9 @@ use super::plan::GatePlan;
 use super::{Fault, Mode};
 use crate::config::{self, TopsConfig};
 use crate::facts::{self, Outcome, Run};
-use crate::{config_path, floors, laws, profiles, steps};
+use crate::mutation::Ledger;
+use crate::scope::crate_root;
+use crate::{config_path, exemptions, floors, laws, mutation, profiles, steps};
 
 /// What the judging found.
 pub(crate) struct Judgement {
@@ -21,8 +23,10 @@ pub(crate) struct Judgement {
     pub(crate) evaluated: String,
     /// The `count:` line.
     pub(crate) count: String,
-    /// Commands that ran, shared layers excluded.
+    /// Runs, shared layers excluded.
     pub(crate) ran: usize,
+    /// Commands that ran: a missing tool ran none, `bend` is one.
+    pub(crate) commands: usize,
     pub(crate) vacuous: usize,
     /// The numbers the coverage floors and the CRAP ratchet judged.
     pub(crate) measured: floors::Judged,
@@ -33,6 +37,30 @@ pub(crate) struct Judgement {
     pub(crate) environment: bool,
     /// The laws in the pack, checked or not.
     pub(crate) law_total: usize,
+    /// The survivors `cargo mutants` left, sorted by the records that cover
+    /// them, when it finished.
+    pub(crate) survivors: Option<Survivors>,
+}
+
+impl Judgement {
+    /// Whether a floor, or the survivor maximum, of layer `id` was missed.
+    pub(crate) fn missed(&self, id: &str) -> bool {
+        match id {
+            "coverage" => self.measured.coverage_problems > 0,
+            "crap" => self.measured.crap_problems > 0,
+            "mutation" => self
+                .survivors
+                .as_ref()
+                .is_some_and(|found| !found.ledger.passes(found.max)),
+            _ => false,
+        }
+    }
+}
+
+/// The mutation ledger and the maximum it was judged against.
+pub(crate) struct Survivors {
+    pub(crate) ledger: Ledger,
+    pub(crate) max: i64,
 }
 
 /// What `judge` reads.
@@ -69,7 +97,7 @@ pub(crate) fn judge(
 ) -> Result<Judgement, Fault> {
     let total = law_total(dir);
     if mode == Mode::DryRun {
-        return Ok(dry_judgement(plan, done, total));
+        return Ok(dry_judgement(cfg, plan, done, total));
     }
     let inputs = Inputs {
         dir,
@@ -78,24 +106,102 @@ pub(crate) fn judge(
         done,
     };
     let mut failed = run_problems(done);
+    let survivors = judge_survivors(&inputs, &mut failed);
     // The coverage floors and the CRAP ratchet, on the reports just written.
     let measured = floors::judge(dir, cfg, &done.runs, &plan.report);
     failed.extend(measured.problems.iter().cloned());
+    add_expired(cfg, &mut failed);
     let laws = judge_laws(&inputs, prepared, total, &mut failed)?;
-    Ok(finish(&inputs, failed, measured, laws, total))
+    Ok(finish(&inputs, failed, measured, laws, total, survivors))
+}
+
+/// One problem for every exemption record that has expired, or whose date
+/// is not a day, whatever its layer and whether or not the layer ran (§19).
+pub(crate) fn expired_problems(cfg: &TopsConfig) -> Vec<String> {
+    let today = exemptions::today();
+    let records = cfg.exemptions.as_ref();
+    let mut layers: Vec<&str> = Vec::new();
+    for layer in records
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("layer")?.as_str())
+    {
+        if !layers.contains(&layer) {
+            layers.push(layer);
+        }
+    }
+    layers
+        .into_iter()
+        .flat_map(|layer| {
+            exemptions::for_layer(records, layer)
+                .into_iter()
+                .filter(|record| !record.live(&today))
+                .map(|record| record.expired_problem(layer))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Add each expired record to `failed`. A record a floor already named is
+/// not named twice.
+fn add_expired(cfg: &TopsConfig, failed: &mut Vec<String>) {
+    for problem in expired_problems(cfg) {
+        if !failed.contains(&problem) {
+            failed.push(problem);
+        }
+    }
+}
+
+/// The crate's directory under the workspace root, which is what the
+/// `file` of a mutant is relative to. Empty for a crate at the root.
+fn crate_prefix(dir: &Path, name: &str) -> String {
+    let Some(root) = laws::workspace_root(dir) else {
+        return String::new();
+    };
+    crate_root(dir, name)
+        .strip_prefix(&root)
+        .map(|rest| rest.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The survivors of this run's `cargo mutants`, matched to the live
+/// `layer: mutation` records, and the problem when more than
+/// `unexplained_survivors_max` are left. An outcomes file that could not be
+/// read is already the layer's failure.
+fn judge_survivors(inputs: &Inputs<'_, '_>, failed: &mut Vec<String>) -> Option<Survivors> {
+    let Some(Ok(found)) = &inputs.done.found else {
+        return None;
+    };
+    let cfg = inputs.cfg;
+    let today = exemptions::today();
+    let mut live = exemptions::for_layer(cfg.exemptions.as_ref(), "mutation");
+    live.retain(|record| record.live(&today));
+    let prefix = crate_prefix(inputs.dir, &cfg.crate_.name);
+    let max = cfg.gates.mutation.unexplained_survivors_max;
+    let ledger = mutation::explain(found, &live, &prefix);
+    failed.extend(ledger.problem(max));
+    Some(Survivors { ledger, max })
 }
 
 /// Nothing ran, so the count is short for every layer: a dry run lists the
 /// commands and is never a pass.
-fn dry_judgement(plan: &GatePlan<'_>, done: &Executed<'_>, total: usize) -> Judgement {
+fn dry_judgement(
+    cfg: &TopsConfig,
+    plan: &GatePlan<'_>,
+    done: &Executed<'_>,
+    total: usize,
+) -> Judgement {
     let (count, _) = command_count(0, &plan.enabled, &[], false, plan.max_tier, &done.shared);
     let mut failed = done.not_run.clone();
     failed.push(count.clone());
+    add_expired(cfg, &mut failed);
     Judgement {
         failed,
         evaluated: format!("laws evaluated: 0/{total} (dry run: bend did not run)"),
         count,
         ran: 0,
+        commands: 0,
         vacuous: 0,
         measured: floors::Judged::default(),
         laws_seconds: 0.0,
@@ -103,6 +209,7 @@ fn dry_judgement(plan: &GatePlan<'_>, done: &Executed<'_>, total: usize) -> Judg
         laws_failed: false,
         environment: false,
         law_total: total,
+        survivors: None,
     }
 }
 
@@ -130,17 +237,21 @@ fn finish(
     measured: floors::Judged,
     laws: LawsOutcome,
     law_total: usize,
+    survivors: Option<Survivors>,
 ) -> Judgement {
     let (plan, done) = (inputs.plan, inputs.done);
     // A layer that took another's run ran no command of its own.
     let ran = done.runs.len() - done.shared.len();
+    // The `count:` line and the closing `fail:` line say the same number:
+    // commands that ran.
+    let commands = ran_commands(&done.runs, laws.ran, &done.shared);
     let vacuous = done
         .runs
         .iter()
         .filter(|run| run.outcome == Outcome::Vacuous)
         .count();
     let (count, short) = command_count(
-        ran_commands(&done.runs, laws.ran, &done.shared),
+        commands,
         &plan.enabled,
         &done.runs,
         laws.ran,
@@ -155,6 +266,7 @@ fn finish(
         evaluated: laws.evaluated,
         count,
         ran,
+        commands,
         vacuous,
         measured,
         laws_seconds: laws.seconds,
@@ -165,6 +277,59 @@ fn finish(
             .iter()
             .any(|run| run.outcome == Outcome::ToolMissing),
         law_total,
+        survivors,
+    }
+}
+
+/// The verdict of a layer's runs: a failure outranks a missing tool, which
+/// outranks a vacuous run.
+fn runs_verdict(runs: &[&Run]) -> &'static str {
+    let any = |outcome: Outcome| runs.iter().any(|run| run.outcome == outcome);
+    if any(Outcome::Failed) {
+        "fail"
+    } else if any(Outcome::ToolMissing) {
+        "tool-missing"
+    } else if any(Outcome::Vacuous) {
+        "vacuous"
+    } else {
+        "pass"
+    }
+}
+
+/// The verdict of a layer enabled above `--max-tier`: it is not judged.
+pub(crate) fn above_range_verdict() -> &'static str {
+    "not-evaluated"
+}
+
+/// The verdict of a row the run never reached (a fault before it ran).
+pub(crate) fn unreached_verdict() -> &'static str {
+    "not-run"
+}
+
+/// The verdict of the laws layer: `not-run` when `bend` did not run.
+pub(crate) fn laws_verdict(judged: Option<&Judgement>) -> &'static str {
+    match judged.filter(|judged| judged.bend_ran) {
+        None => "not-run",
+        Some(judged) if judged.laws_failed => "fail",
+        Some(_) => "pass",
+    }
+}
+
+/// The row verdict of layer `id`: `not-run` when nothing ran for it,
+/// otherwise its worst run. A run that passed still fails the row when its
+/// floors, or its survivors, did not.
+pub(crate) fn layer_verdict(
+    done: &Executed<'_>,
+    judged: Option<&Judgement>,
+    id: &str,
+) -> &'static str {
+    let runs: Vec<&Run> = done.runs.iter().filter(|run| run.layer == id).collect();
+    if runs.is_empty() {
+        return "not-run";
+    }
+    match runs_verdict(&runs) {
+        "pass" if judged.is_some_and(|judged| judged.missed(id)) => "fail",
+        verdict => verdict,
     }
 }
 
@@ -336,7 +501,8 @@ pub(crate) fn run_failure(run: &Run) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::clear_cases;
+    use super::{clear_cases, crate_prefix, laws_verdict, Judgement};
+    use crate::floors;
     use std::fs;
     use std::path::PathBuf;
 
@@ -380,5 +546,60 @@ mod tests {
             fault.error
         );
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_crate_under_the_workspace_root_is_named_by_its_directory() {
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace");
+        assert_eq!(crate_prefix(&workspace, "cargo-tops"), "crates/cargo-tops");
+        // No such package, or no cargo project here: the gate directory.
+        assert_eq!(crate_prefix(&workspace, "no-such-package"), "");
+        let empty = scratch("prefix-none");
+        assert_eq!(crate_prefix(&empty, "cargo-tops"), "");
+        fs::remove_dir_all(&empty).ok();
+    }
+
+    /// A judgement of a run in which the laws layer did not run.
+    fn quiet() -> Judgement {
+        Judgement {
+            failed: Vec::new(),
+            evaluated: String::new(),
+            count: String::new(),
+            ran: 0,
+            commands: 0,
+            vacuous: 0,
+            measured: floors::Judged::default(),
+            laws_seconds: 0.0,
+            bend_ran: false,
+            laws_failed: false,
+            environment: false,
+            law_total: 0,
+            survivors: None,
+        }
+    }
+
+    #[test]
+    fn the_laws_row_is_not_run_unless_bend_ran_and_then_pass_or_fail() {
+        assert_eq!(laws_verdict(None), "not-run");
+        assert_eq!(laws_verdict(Some(&quiet())), "not-run");
+        let failed_without_bend = Judgement {
+            laws_failed: true,
+            ..quiet()
+        };
+        assert_eq!(laws_verdict(Some(&failed_without_bend)), "not-run");
+        let passed = Judgement {
+            bend_ran: true,
+            ..quiet()
+        };
+        assert_eq!(laws_verdict(Some(&passed)), "pass");
+        let failed = Judgement {
+            bend_ran: true,
+            laws_failed: true,
+            ..quiet()
+        };
+        assert_eq!(laws_verdict(Some(&failed)), "fail");
     }
 }

@@ -449,10 +449,23 @@ fn origin_head(dir: &Path) -> Result<String, String> {
         Some(name) => Err(format!(
             "origin/HEAD: points at {name}, which is not a commit"
         )),
-        // Not a symbolic ref. A direct ref that names a commit is a base.
-        None if names_a_commit(dir, "origin/HEAD") => Ok("origin/HEAD".to_string()),
-        None => Err("origin/HEAD: not set".to_string()),
+        // Not a symbolic ref: a direct one, or none.
+        None => direct_head(dir),
     }
+}
+
+/// `origin/HEAD` as a direct ref: a base when it names a commit.
+fn direct_head(dir: &Path) -> Result<String, String> {
+    if names_a_commit(dir, "origin/HEAD") {
+        return Ok("origin/HEAD".to_string());
+    }
+    let exists = git_line(dir, &["rev-parse", "--verify", "--quiet", "origin/HEAD"]).is_some();
+    Err(if exists {
+        "origin/HEAD: not a commit"
+    } else {
+        "origin/HEAD: not set"
+    }
+    .to_string())
 }
 
 /// Why the mutation layer stopped before `cargo mutants`, and its outcome.
@@ -527,11 +540,28 @@ fn no_base_outside_ci(tried: &[String]) -> (Outcome, String) {
     (
         Outcome::Vacuous,
         format!(
-            "no mutation base ({}); the mutation diff is empty; \
+            "{}; the mutation diff is empty; \
              cargo mutants did not run and no law counts this layer",
-            tried.join("; ")
+            no_base(tried)
         ),
     )
+}
+
+/// What was looked for and not found, with no outcome after it.
+fn no_base(tried: &[String]) -> String {
+    format!("no mutation base ({})", tried.join("; "))
+}
+
+/// What is wrong with the base, worded with no outcome: a row that never
+/// reached the diff (a missing tool, a dry run) says only this. `None` for
+/// a base that is a commit.
+pub(crate) fn base_finding(base: &Base) -> Option<String> {
+    match base {
+        Base::Found { .. } => None,
+        Base::Missing { tried, ci: false } => Some(no_base(tried)),
+        Base::Missing { tried, ci: true } => Some(no_base_in_ci(tried).1),
+        Base::Unresolved { .. } => stop_note(base, Outcome::Failed).map(|(_, note)| note),
+    }
 }
 
 /// The first line git prints for `args`, when it succeeds with one.
@@ -585,6 +615,10 @@ pub(crate) struct MutationPlan {
     pub diff_path: PathBuf,
     pub mutants: Step,
     pub base: Base,
+    /// Where `cargo mutants` writes `mutants.out`: the report directory, so
+    /// the gate reads the files this run wrote and no setting of the
+    /// adopter's moves them.
+    pub output: PathBuf,
 }
 
 impl MutationPlan {
@@ -598,6 +632,7 @@ impl MutationPlan {
         };
         let script = mutation_diff_script(report_dir, &diff_path, from);
         let diff = Step::command(["sh", "-c", script.as_str()]);
+        let output_arg = report_dir.display().to_string();
         let mutants = Step::tool([
             "cargo",
             "mutants",
@@ -605,12 +640,15 @@ impl MutationPlan {
             diff_arg.as_str(),
             "-j",
             "2",
+            "--output",
+            output_arg.as_str(),
         ]);
         Self {
             diff,
             diff_path,
             mutants,
             base,
+            output: report_dir.to_path_buf(),
         }
     }
 
@@ -985,8 +1023,8 @@ mod expiry {
 #[cfg(test)]
 mod base {
     use super::{
-        ci_active, git_line, mutation_diff_script, shell_quote, stop_note, Base, BaseSource,
-        MutationPlan, Outcome,
+        base_finding, ci_active, git_line, mutation_diff_script, shell_quote, stop_note, Base,
+        BaseSource, MutationPlan, Outcome,
     };
     use std::path::Path;
 
@@ -1161,6 +1199,40 @@ mod base {
     fn a_passed_diff_does_not_stop_the_layer() {
         for base in [found(), missing_in_ci(), missing_outside_ci()] {
             assert_eq!(stop_note(&base, Outcome::Passed), None);
+        }
+    }
+
+    #[test]
+    fn a_base_finding_names_the_fault_and_no_outcome() {
+        assert_eq!(base_finding(&found()), None);
+        let tried = vec![
+            "--base: not given".to_string(),
+            "origin/HEAD: not set".to_string(),
+        ];
+        let outside = Base::Missing {
+            tried: tried.clone(),
+            ci: false,
+        };
+        assert_eq!(
+            base_finding(&outside).as_deref(),
+            Some("no mutation base (--base: not given; origin/HEAD: not set)")
+        );
+        let inside = Base::Missing { tried, ci: true };
+        let finding = base_finding(&inside).expect("a finding");
+        assert!(finding.starts_with("no mutation base ("), "{finding}");
+        assert!(finding.contains("fetch-depth: 0"), "{finding}");
+        let unresolved = Base::Unresolved {
+            source: BaseSource::Flag,
+            name: "nope".to_string(),
+        };
+        let finding = base_finding(&unresolved).expect("a finding");
+        assert!(
+            finding.contains("`nope`") && finding.contains("not a commit"),
+            "{finding}"
+        );
+        for base in [&outside, &inside, &unresolved] {
+            let finding = base_finding(base).expect("a finding");
+            assert!(!finding.contains("is empty") && !finding.contains("did not run"));
         }
     }
 }

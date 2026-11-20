@@ -50,6 +50,11 @@ if [ "$*" = "crap --version" ]; then
   echo 'cargo-crap 0.9.0'
   exit 0
 fi
+# 27.1.0 finds nothing to mutate in a diff of comments, tests, docs or CI:
+# it says so on stderr, exits 0 and writes no `mutants.out`.
+if [ "$1" = "mutants" ]; then
+  echo ' INFO No mutants to filter' >&2
+fi
 prev=
 for arg in "$@"; do
   case $prev in
@@ -1856,7 +1861,12 @@ fn a_real_diff_runs_mutants_on_the_report_dir_diff() {
     let body = fs::read_to_string(&diff).expect("diff under the report dir");
     assert!(body.contains("src/lib.rs"), "{body}");
     let log = cargo_log(&fixture);
-    let want = format!("mutants --in-diff {} -j 2", diff.display());
+    let report_dir = diff.parent().expect("the diff is in the report dir");
+    let want = format!(
+        "mutants --in-diff {} -j 2 --output {}",
+        diff.display(),
+        report_dir.display()
+    );
     assert!(log.lines().any(|line| line == want), "{log}");
     assert!(!log.contains("/tmp/rust-tops.diff"), "{log}");
     assert!(!text.contains("/tmp/rust-tops.diff"), "{text}");
