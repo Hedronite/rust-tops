@@ -482,7 +482,7 @@ pub(crate) fn run_failure(run: &Run) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::clear_cases;
+    use super::{clear_cases, crate_prefix};
     use std::fs;
     use std::path::PathBuf;
 
@@ -526,5 +526,19 @@ mod tests {
             fault.error
         );
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_crate_under_the_workspace_root_is_named_by_its_directory() {
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace");
+        assert_eq!(crate_prefix(&workspace, "cargo-tops"), "crates/cargo-tops");
+        // No such package, or no cargo project here: the gate directory.
+        assert_eq!(crate_prefix(&workspace, "no-such-package"), "");
+        let empty = scratch("prefix-none");
+        assert_eq!(crate_prefix(&empty, "cargo-tops"), "");
+        fs::remove_dir_all(&empty).ok();
     }
 }

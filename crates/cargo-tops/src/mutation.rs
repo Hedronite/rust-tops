@@ -118,30 +118,63 @@ fn missed(scenario: &Value) -> Result<Missed, String> {
     })
 }
 
-/// Add one outcome to `found`. The baseline run is not a mutant.
-fn take(found: &mut Outcomes, outcome: &Value) -> Result<(), String> {
+/// What one outcome says happened to its mutant.
+#[derive(Clone, Copy)]
+enum Kind {
+    Caught,
+    Missed,
+    Timeout,
+    Unviable,
+}
+
+/// The scenario and the summary of one outcome.
+fn parts(outcome: &Value) -> Result<(&Value, &str), String> {
     let scenario = field(outcome, "scenario")?;
     let summary = field(outcome, "summary")?
         .as_str()
         .ok_or("outcomes.json `summary` is not a string")?;
-    if scenario.as_str() == Some("Baseline") {
-        return match summary {
-            "Success" => Ok(()),
-            other => Err(format!("the baseline run ended as `{other}`")),
-        };
-    }
+    Ok((scenario, summary))
+}
+
+/// The baseline run is not a mutant: it must have succeeded.
+fn baseline(summary: &str) -> Result<(), String> {
     match summary {
-        "CaughtMutant" => found.caught += 1,
-        "MissedMutant" => found.missed.push(missed(scenario)?),
-        "Timeout" => found.timeouts += 1,
-        "Unviable" => found.unviable += 1,
-        other => {
-            return Err(format!(
-                "outcomes.json has an outcome `{other}` this gate does not know"
-            ))
-        }
+        "Success" => Ok(()),
+        other => Err(format!("the baseline run ended as `{other}`")),
     }
-    Ok(())
+}
+
+fn kind(summary: &str) -> Result<Kind, String> {
+    match summary {
+        "CaughtMutant" => Ok(Kind::Caught),
+        "MissedMutant" => Ok(Kind::Missed),
+        "Timeout" => Ok(Kind::Timeout),
+        "Unviable" => Ok(Kind::Unviable),
+        other => Err(format!(
+            "outcomes.json has an outcome `{other}` this gate does not know"
+        )),
+    }
+}
+
+impl Outcomes {
+    fn add(&mut self, kind: Kind, scenario: &Value) -> Result<(), String> {
+        match kind {
+            Kind::Caught => self.caught += 1,
+            Kind::Missed => self.missed.push(missed(scenario)?),
+            Kind::Timeout => self.timeouts += 1,
+            Kind::Unviable => self.unviable += 1,
+        }
+        Ok(())
+    }
+}
+
+/// Add one outcome to `found`.
+fn take(found: &mut Outcomes, outcome: &Value) -> Result<(), String> {
+    let (scenario, summary) = parts(outcome)?;
+    if scenario.as_str() == Some("Baseline") {
+        return baseline(summary);
+    }
+    found.add(kind(summary)?, scenario)
 }
 
 /// Read `outcomes.json`. Any shape but the pinned one is an `Err` saying
