@@ -35,19 +35,23 @@ slow-timeout = { period = "10s", terminate-after = 6 }
 # kit suite and matches nothing in an adopter. Alone it ran in 2.2 s to 8.6 s.
 # In the full suite it measured 16.1 s to 16.7 s at a load of about 10, and
 # timed out at 20 s once at a load of about 30 on the build machine. This one
-# test gets 40 s; the profile timeout is not raised.
+# test gets 60 s; the profile timeout is not raised. (It got 40 s until the gate
+# asked the pinned tools for their versions: alone at a load of 16 it then ran
+# 39.8 s.)
 [[profile.ci.overrides]]
 filter = "test(=a_dry_run_runs_nothing_and_never_passes)"
-slow-timeout = { period = "10s", terminate-after = 4 }
+slow-timeout = { period = "10s", terminate-after = 6 }
 
 # `init` then `gate` for every class, with the laws layer off. This is for the
 # kit suite and matches nothing in an adopter. Alone it ran in 2.4 s to 12.5 s
 # in 5 runs under load on the build machine. In the full suite it measured
 # 7.2 s to 10.3 s in 5 runs at a load of 10 to 16, and timed out at 20 s in
-# 1 of 6 runs. This one test gets 40 s; the profile timeout is not raised.
+# 1 of 6 runs. This one test gets 60 s; the profile timeout is not raised. (It
+# got 40 s until the gate asked the pinned tools for their versions: alone at a
+# load of 16 it then timed out at 40 s.)
 [[profile.ci.overrides]]
 filter = "test(=fresh_init_then_gate_passes_for_every_class)"
-slow-timeout = { period = "10s", terminate-after = 4 }
+slow-timeout = { period = "10s", terminate-after = 6 }
 
 # These tests run real `cargo nextest` on a small crate, one build each, for
 # the kit suite only; they match nothing in an adopter. Alone each ran in
