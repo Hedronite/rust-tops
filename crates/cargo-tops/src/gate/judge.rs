@@ -12,7 +12,7 @@ use super::{Fault, Mode};
 use crate::config::{self, TopsConfig};
 use crate::facts::{self, Outcome, Run};
 use crate::mutation::Ledger;
-use crate::scope::crate_root;
+use crate::scope::{crate_root, examined_files};
 use crate::{config_path, exemptions, floors, laws, mutation, profiles, steps};
 
 /// What the judging found.
@@ -179,7 +179,8 @@ fn judge_survivors(inputs: &Inputs<'_, '_>, failed: &mut Vec<String>) -> Option<
     live.retain(|record| record.live(&today));
     let prefix = crate_prefix(inputs.dir, &cfg.crate_.name);
     let max = cfg.gates.mutation.unexplained_survivors_max;
-    let ledger = mutation::explain(found, &live, &prefix);
+    let examined = examined_files(&crate_root(inputs.dir, &cfg.crate_.name));
+    let ledger = mutation::explain(found, &live, &prefix, &examined);
     failed.extend(ledger.problem(max));
     Some(Survivors { ledger, max })
 }

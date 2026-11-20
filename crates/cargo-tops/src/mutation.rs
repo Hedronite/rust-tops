@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::exemptions::Exemption;
-use crate::tiers::covers_crate;
+use crate::tiers::whole_tree;
 
 /// Where cargo-mutants writes the run's outcomes, under the directory it ran in.
 const OUTCOMES: &str = "mutants.out/outcomes.json";
@@ -83,7 +83,7 @@ pub(crate) fn clear(dir: &Path) -> Result<()> {
 pub(crate) fn read(dir: &Path, code: i32, stderr: &str) -> Result<Outcomes, String> {
     let text = match fs::read_to_string(dir.join(OUTCOMES)) {
         Ok(text) => text,
-        Err(_) if code == 0 && NO_MUTANTS.iter().any(|line| stderr.contains(line)) => {
+        Err(_) if code == 0 && says_no_mutants(stderr) => {
             return Ok(Outcomes::default());
         }
         Err(err) => {
@@ -96,6 +96,38 @@ pub(crate) fn read(dir: &Path, code: i32, stderr: &str) -> Result<Outcomes, Stri
     let found = parse(&text)?;
     check_exit(&found, code)?;
     Ok(found)
+}
+
+/// Whether a whole line of `stderr` is cargo-mutants' `INFO` line for a diff
+/// with nothing to mutate (colour codes and surrounding space aside).
+fn says_no_mutants(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        let plain = without_colour(line);
+        let text = plain.trim();
+        NO_MUTANTS.iter().any(|said| {
+            text.strip_prefix("INFO")
+                .is_some_and(|rest| rest.trim() == *said)
+        })
+    })
+}
+
+/// `line` without ANSI colour sequences.
+fn without_colour(line: &str) -> String {
+    let mut plain = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // `ESC [ ... letter`
+            for skipped in chars.by_ref() {
+                if skipped.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
 }
 
 /// The exit code and the file must agree: 2 says mutants were missed and 3
@@ -268,12 +300,12 @@ fn relative<'f>(file: &'f str, crate_prefix: &str) -> &'f str {
 
 /// Whether `record` explains a survivor in `function` of the file `rel`
 /// (`None`: in no function, as in a `const`, a `static`, a type alias or a
-/// field type). A record with no symbol and a whole-tree path lifts a floor
-/// and explains nothing. A symbol names a function, so a survivor in none is
+/// field type). A record with no symbol that matches every Rust file the
+/// scope examines ([`whole_tree`]) lifts a floor and explains nothing. A symbol names a function, so a survivor in none is
 /// explained only by a record with no symbol.
-fn explains(record: &Exemption, rel: &str, function: Option<&str>) -> bool {
+fn explains(record: &Exemption, rel: &str, function: Option<&str>, examined: &[String]) -> bool {
     let named = record.symbol.is_some();
-    if !named && covers_crate(&record.path) {
+    if !named && whole_tree(&record.path, examined) {
         return false;
     }
     if named && function.is_none() {
@@ -285,11 +317,16 @@ fn explains(record: &Exemption, rel: &str, function: Option<&str>) -> bool {
 /// Sort the missed mutants. `live` are the layer's records that have not
 /// expired; `crate_prefix` is the crate's directory under the workspace root,
 /// which the records' globs are relative to.
-pub(crate) fn explain(found: &Outcomes, live: &[Exemption], crate_prefix: &str) -> Ledger {
+pub(crate) fn explain(
+    found: &Outcomes,
+    live: &[Exemption],
+    crate_prefix: &str,
+    examined: &[String],
+) -> Ledger {
     let (explained, unexplained) = found.missed.iter().cloned().partition(|mutant: &Missed| {
         let rel = relative(&mutant.file, crate_prefix);
         live.iter()
-            .any(|record| explains(record, rel, mutant.function.as_deref()))
+            .any(|record| explains(record, rel, mutant.function.as_deref(), examined))
     });
     Ledger {
         caught: found.caught,
@@ -456,7 +493,7 @@ mod tests {
     #[test]
     fn a_record_for_one_function_explains_only_its_survivors() {
         let found = parse(FIXTURE).expect("parses");
-        let ledger = explain(&found, &[record("src/**", Some("double"))], "");
+        let ledger = explain(&found, &[record("src/**", Some("double"))], "", &[]);
         assert_eq!(ledger.explained.len(), 5);
         assert_eq!(ledger.unexplained.len(), 5);
         assert!(ledger
@@ -476,17 +513,17 @@ mod tests {
     #[test]
     fn a_symbol_matches_the_last_path_segment_and_a_symbol_free_record_covers_its_glob() {
         let found = parse(FIXTURE).expect("parses");
-        let nested = explain(&found, &[record("src/lib.rs", Some("triple"))], "");
+        let nested = explain(&found, &[record("src/lib.rs", Some("triple"))], "", &[]);
         assert_eq!(nested.explained.len(), 5);
         let both = [
             record("src/lib.rs", Some("double")),
             record("src/lib.rs", Some("inner::triple")),
         ];
-        assert!(explain(&found, &both, "").unexplained.is_empty());
-        let all = explain(&found, &[record("src/**", None)], "");
+        assert!(explain(&found, &both, "", &[]).unexplained.is_empty());
+        let all = explain(&found, &[record("src/**", None)], "", &[]);
         assert_eq!(all.explained.len(), 10);
         assert!(all.passes(0) && all.problem(0).is_none());
-        let elsewhere = explain(&found, &[record("other/**", None)], "");
+        let elsewhere = explain(&found, &[record("other/**", None)], "", &[]);
         assert_eq!(elsewhere.unexplained.len(), 10);
     }
 
@@ -505,24 +542,35 @@ mod tests {
         // workspace-relative file is `crates/sample/src/lib.rs`.
         let inside = [record("src/lib.rs", None)];
         assert_eq!(
-            explain(&found, &inside, "crates/sample").explained.len(),
+            explain(&found, &inside, "crates/sample", &[])
+                .explained
+                .len(),
             10
         );
         assert_eq!(
-            explain(&found, &inside, "crates/sample/").explained.len(),
+            explain(&found, &inside, "crates/sample/", &[])
+                .explained
+                .len(),
             10
         );
         // A record that spells the workspace path matches only when no
         // prefix is stripped.
         let spelled = [record("crates/sample/src/lib.rs", None)];
-        assert_eq!(explain(&found, &spelled, "").explained.len(), 10);
+        assert_eq!(explain(&found, &spelled, "", &[]).explained.len(), 10);
         assert_eq!(
-            explain(&found, &spelled, "crates/sample").explained.len(),
+            explain(&found, &spelled, "crates/sample", &[])
+                .explained
+                .len(),
             0
         );
         // A record for another crate's file explains nothing.
         let other = [record("crates/other/src/lib.rs", None)];
-        assert_eq!(explain(&found, &other, "crates/sample").explained.len(), 0);
+        assert_eq!(
+            explain(&found, &other, "crates/sample", &[])
+                .explained
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -539,7 +587,7 @@ mod tests {
     #[test]
     fn the_judged_numbers_count_every_kind_and_the_max() {
         let found = parse(FIXTURE).expect("parses");
-        let ledger = explain(&found, &[record("src/lib.rs", Some("double"))], "");
+        let ledger = explain(&found, &[record("src/lib.rs", Some("double"))], "", &[]);
         let judged = ledger.to_json(2);
         assert_eq!(judged["caught"], 11);
         assert_eq!(judged["missed"], 10);
@@ -558,7 +606,7 @@ mod tests {
             timeouts: 4,
             unviable: 9,
         };
-        let ledger = explain(&only, &[], "");
+        let ledger = explain(&only, &[], "", &[]);
         assert!(ledger.passes(0) && ledger.problem(0).is_none());
         assert_eq!(ledger.timeouts, 4);
         assert_eq!(ledger.unviable, 9);
@@ -566,7 +614,7 @@ mod tests {
 
     #[test]
     fn a_negative_max_is_never_met() {
-        let ledger = explain(&Outcomes::default(), &[], "");
+        let ledger = explain(&Outcomes::default(), &[], "", &[]);
         assert!(!ledger.passes(-1));
     }
 
@@ -588,15 +636,22 @@ mod tests {
                 && m.function.as_deref() == Some("qa_h4_survivor_miss")));
         let by_symbol = [record("src/qa_h4_plant.rs", Some("qa_h4_survivor_miss"))];
         assert_eq!(
-            explain(&found, &by_symbol, "crates/plant").explained.len(),
+            explain(&found, &by_symbol, "crates/plant", &[])
+                .explained
+                .len(),
             2
         );
-        assert_eq!(explain(&found, &by_symbol, "").explained.len(), 2);
+        assert_eq!(explain(&found, &by_symbol, "", &[]).explained.len(), 2);
         let other = [record("src/qa_h4_plant.rs", Some("another"))];
-        assert_eq!(explain(&found, &other, "crates/plant").unexplained.len(), 2);
+        assert_eq!(
+            explain(&found, &other, "crates/plant", &[])
+                .unexplained
+                .len(),
+            2
+        );
         let wrong_file = [record("src/lib.rs", Some("qa_h4_survivor_miss"))];
         assert_eq!(
-            explain(&found, &wrong_file, "crates/plant")
+            explain(&found, &wrong_file, "crates/plant", &[])
                 .unexplained
                 .len(),
             2
@@ -649,8 +704,9 @@ mod tests {
     fn no_file_is_zero_mutants_only_for_exit_0_and_a_line_the_run_printed() {
         let dir = scratch("nothing");
         for line in super::NO_MUTANTS {
+            let said = format!(" INFO {line}\n");
             assert_eq!(
-                read(&dir, 0, line).expect("zero mutants"),
+                read(&dir, 0, &said).expect("zero mutants"),
                 Outcomes::default()
             );
         }
@@ -659,14 +715,25 @@ mod tests {
             read(&dir, 0, &said).expect("zero mutants"),
             Outcomes::default()
         );
-        for (code, said) in [
-            (0, ""),
-            (0, "Diff file is empty"),
-            (2, NOTHING),
-            (3, NOTHING),
-            (1, NOTHING),
+        // With colour on, only the level is coloured.
+        let coloured = "\u{1b}[32m INFO\u{1b}[0m No mutants to filter\n";
+        assert_eq!(
+            read(&dir, 0, coloured).expect("zero mutants"),
+            Outcomes::default()
+        );
+        // Not a whole line of its own: the phrase inside another line is not it.
+        for said in [
+            "WARN path src/No mutants to filter.rs ignored\n",
+            " INFO No mutants to filter.rs was skipped\n",
+            " WARN No mutants to filter\n",
+            "No mutants to filter\n",
+            "",
+            "Diff file is empty\n",
         ] {
-            assert!(read(&dir, code, said).is_err(), "exit {code} {said:?}");
+            assert!(read(&dir, 0, said).is_err(), "{said:?}");
+        }
+        for code in [2, 3, 1] {
+            assert!(read(&dir, code, NOTHING).is_err(), "exit {code}");
         }
         // A file that is there is read, whatever the run printed.
         fs::create_dir_all(dir.join("mutants.out")).expect("mkdir");
@@ -734,7 +801,7 @@ mod tests {
             found.missed.iter().filter(|m| m.function.is_none()).count(),
             7
         );
-        let count = |records: &[Exemption]| explain(&found, records, "").explained.len();
+        let count = |records: &[Exemption]| explain(&found, records, "", &[]).explained.len();
         assert_eq!(count(&[record("src/lib.rs", Some("get"))]), 5);
         assert_eq!(count(&[record("src/lib.rs", Some("no_such_fn"))]), 0);
         assert_eq!(count(&[record("src/lib.rs", None)]), 12);
@@ -758,7 +825,7 @@ mod tests {
     #[test]
     fn a_survivor_is_named_once_by_its_own_name() {
         let found = parse(FIXTURE).expect("parses");
-        let ledger = explain(&found, &[], "");
+        let ledger = explain(&found, &[], "", &[]);
         let problem = ledger.problem(0).expect("fails");
         let first = &found.missed[0];
         assert_eq!(problem.matches(&first.name).count(), 1, "{problem}");

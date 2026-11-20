@@ -808,12 +808,17 @@ fn a_survivor_in_no_function_is_explained_only_by_a_record_with_no_symbol() {
     assert_eq!(unexplained(Some("get"), "src/lib.rs"), 7);
     assert_eq!(unexplained(Some("no_such_fn"), "src/lib.rs"), 12);
     assert_eq!(unexplained(None, "src/lib.rs"), 0);
-    assert_eq!(unexplained(None, "src/**"), 0);
+    // In this crate every file is under src/, so `src/**` is the whole tree.
+    assert_eq!(unexplained(None, "src/**"), 12);
 }
 
 #[test]
 fn a_whole_tree_record_lifts_the_floor_and_explains_no_survivor() {
-    for path in ["**", "./**", "**/*", "*", ".", "./"] {
+    // The listed spellings reach every Rust file, however they are written.
+    for path in [
+        "**", "/**", "**/", "**/**", "./**", "**/*", "*", "*.rs", "**/*.rs", "*/**", ".", "./",
+        "src/**",
+    ] {
         let fixture = fixture("whole-tree", "main");
         set_max(&fixture, 10);
         exempt(&fixture, path, None, "2099-01-01");
