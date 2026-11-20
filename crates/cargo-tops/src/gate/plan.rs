@@ -330,6 +330,15 @@ fn report_dir(dir: &Path) -> Result<PathBuf, Fault> {
     Ok(report)
 }
 
+/// The mutation base, looked up only when a mutation layer is in range.
+fn base_for(enabled: &[&config::Layer], dir: &Path, flag: Option<&str>, key: Option<&str>) -> Base {
+    if enabled.iter().any(|layer| layer.id == "mutation") {
+        steps::resolve_base(dir, flag, key)
+    } else {
+        Base::unused()
+    }
+}
+
 /// What each enabled layer other than `laws` does.
 fn units_of<'a>(
     enabled: &[&'a config::Layer],
@@ -372,11 +381,7 @@ pub(crate) fn build<'a>(
     }
     let report = report_dir(dir)?;
     let tests = TestCommands::new(&enabled, &report);
-    let base = if enabled.iter().any(|layer| layer.id == "mutation") {
-        steps::resolve_base(dir, base_flag, cfg.gates.base_ref.as_deref())
-    } else {
-        Base::unused()
-    };
+    let base = base_for(&enabled, dir, base_flag, cfg.gates.base_ref.as_deref());
     let crap_pin = if enabled.iter().any(|layer| layer.id == "crap") {
         tool_pin(dir, "cargo-crap").map_err(Fault::config)?
     } else {
@@ -400,8 +405,50 @@ pub(crate) fn build<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{GatePlan, TestCommands};
+    use super::{base_for, GatePlan, TestCommands};
+    use crate::config::Layer;
+    use crate::steps::{Base, BaseSource};
     use std::path::PathBuf;
+    use std::process::Command;
+
+    fn layer(id: &str) -> Layer {
+        serde_saphyr::from_str(&format!(
+            "{{ id: {id}, enabled: true, tier: 0, runner: x }}"
+        ))
+        .expect("layer")
+    }
+
+    #[test]
+    fn the_base_is_looked_up_only_with_a_mutation_layer_in_range() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-base-for-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .expect("spawn git");
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+        let mutation = layer("mutation");
+        let unit = layer("unit");
+        let found = Base::Found {
+            source: BaseSource::Flag,
+            name: "HEAD".to_string(),
+        };
+        assert_eq!(base_for(&[&mutation], &dir, Some("HEAD"), None), found);
+        assert_eq!(
+            base_for(&[&unit, &mutation], &dir, Some("HEAD"), None),
+            found
+        );
+        assert_eq!(base_for(&[&unit], &dir, Some("HEAD"), None), Base::unused());
+        assert_eq!(base_for(&[], &dir, Some("HEAD"), None), Base::unused());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn a_layer_with_no_unit_in_the_plan_has_no_commands() {

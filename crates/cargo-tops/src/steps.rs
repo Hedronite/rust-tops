@@ -894,7 +894,9 @@ mod expiry {
 
 #[cfg(test)]
 mod base {
-    use super::{ci_active, mutation_diff_script, shell_quote, Base, BaseSource, MutationPlan};
+    use super::{
+        ci_active, git_line, mutation_diff_script, shell_quote, Base, BaseSource, MutationPlan,
+    };
     use std::path::Path;
 
     #[test]
@@ -956,5 +958,37 @@ mod base {
         let none = MutationPlan::new(Path::new("/r"), Base::unused());
         assert_eq!(none.base, Base::Missing { tried: Vec::new() });
         assert!(!none.diff.argv.join(" ").contains("merge-base"));
+    }
+
+    #[test]
+    fn a_line_is_what_a_successful_git_prints_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-git-line-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let git = |args: &[&str]| {
+            git_line(&dir, args);
+        };
+        git(&["init", "-q"]);
+        assert_eq!(
+            git_line(&dir, &["rev-parse", "--git-dir"]).as_deref(),
+            Some(".git")
+        );
+        // Success with no output is no line.
+        assert_eq!(git_line(&dir, &["status", "--porcelain"]), None);
+        // Failure with output is no line either: `diff --exit-code` prints
+        // the change and exits 1.
+        std::fs::write(dir.join("f"), "one\n").expect("write");
+        let add = std::process::Command::new("git")
+            .args(["add", "-N", "f"])
+            .current_dir(&dir)
+            .status()
+            .expect("spawn git");
+        assert!(add.success());
+        assert_eq!(git_line(&dir, &["diff", "--exit-code"]), None);
+        assert_eq!(
+            git_line(&dir, &["status", "--porcelain"]).as_deref(),
+            Some("A f")
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
