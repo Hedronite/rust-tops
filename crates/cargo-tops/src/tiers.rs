@@ -234,8 +234,8 @@ fn live_exemption(doc: &Value, layer: &str, today: &str) -> bool {
 /// Whether an exemption path covers the whole crate, the only reach that may
 /// lift a floor (VD-R7). A narrower glob exempts files, not the floor. A record
 /// that names a symbol exempts one function, so it never lifts a floor.
-fn covers_crate(path: &str) -> bool {
-    matches!(path, "**" | "./**" | "**/*" | "." | "./")
+pub(crate) fn covers_crate(path: &str) -> bool {
+    matches!(path, "**" | "./**" | "**/*" | "*" | "." | "./")
 }
 
 fn required_problems(

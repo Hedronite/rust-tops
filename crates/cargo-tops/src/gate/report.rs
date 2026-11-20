@@ -337,6 +337,16 @@ fn row(
     row
 }
 
+/// A layer enabled above `--max-tier`: named, not judged.
+fn above_range_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
+    let mut entry = row(id, tier, judge::above_range_verdict(), &[], 0.0, None);
+    entry.insert(
+        "detail".into(),
+        json!(format!("above --max-tier {}", parts.opts.max_tier)),
+    );
+    entry
+}
+
 /// One row per enabled layer, in `rust-tops.yaml` order, and the ids of the
 /// layers that are off.
 fn layer_rows(parts: &Parts<'_>) -> (Vec<Value>, Vec<String>) {
@@ -352,12 +362,7 @@ fn layer_rows(parts: &Parts<'_>) -> (Vec<Value>, Vec<String>) {
         }
         let tier = crate::tiers::tier_for(layer);
         let mut entry = if tier > parts.opts.max_tier {
-            let mut entry = row(&layer.id, tier, "not-evaluated", &[], 0.0, None);
-            entry.insert(
-                "detail".into(),
-                json!(format!("above --max-tier {}", parts.opts.max_tier)),
-            );
-            entry
+            above_range_row(parts, &layer.id, tier)
         } else if layer.id == "laws" {
             laws_row(parts, tier)
         } else {
@@ -396,7 +401,7 @@ fn judged_numbers(parts: &Parts<'_>, id: &str) -> Option<Value> {
 
 fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
     let (Some(plan), Some(done)) = (parts.plan, parts.done) else {
-        return row(id, tier, "not-run", &[], 0.0, None);
+        return row(id, tier, judge::unreached_verdict(), &[], 0.0, None);
     };
     let numbers = judged_numbers(parts, id);
     let verdict = judge::layer_verdict(done, parts.judged, id);
@@ -488,10 +493,10 @@ fn laws_row(parts: &Parts<'_>, tier: u8) -> Map<String, Value> {
         "bend".to_string(),
         parts.report_dir.join("cases.bend").display().to_string(),
     ]];
+    let verdict = judge::laws_verdict(parts.judged);
     let Some(judged) = parts.judged.filter(|judged| judged.bend_ran) else {
-        return row("laws", tier, "not-run", &argv, 0.0, None);
+        return row("laws", tier, verdict, &argv, 0.0, None);
     };
-    let verdict = if judged.laws_failed { "fail" } else { "pass" };
     let cases = read_cases(&parts.report_dir);
     let version = cases.as_ref().and_then(|cases| cases.get("bend")?.as_str());
     row("laws", tier, verdict, &argv, judged.laws_seconds, version)

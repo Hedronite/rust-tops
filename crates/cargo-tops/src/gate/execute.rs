@@ -1,8 +1,9 @@
 //! Run a plan: each command in order, timed. A dry run lists the commands
 //! and runs none.
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{ChildStderr, Command, ExitStatus, Stdio};
 use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result};
@@ -464,21 +465,46 @@ pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Resu
         )));
     };
     ran.push(mutants.display());
-    mutation::clear(dir)?;
-    let outcome = run_mutants(dir, mutants)?;
-    let mut run = finish(layer, &ran, outcome);
-    if outcome != Outcome::Passed {
-        return Ok(Mutated::without_outcomes(run));
+    mutation::clear(&plan.output)?;
+    let ended = run_mutants(dir, mutants)?;
+    Ok(settled(
+        finish(layer, &ran, ended.outcome),
+        &ended,
+        &plan.output,
+    ))
+}
+
+/// The run of `cargo mutants` once it ended. A command that failed says what
+/// its exit means; one that finished (exit 0, 2 or 3) is judged from the
+/// outcomes it wrote.
+fn settled(mut run: Run, ended: &Ended, output: &Path) -> Mutated {
+    if ended.outcome != Outcome::Passed {
+        run.note = exit_note(&run.step, ended);
+        return Mutated::without_outcomes(run);
     }
-    let found = mutation::read(dir);
+    let found = mutation::read(output, ended.code.unwrap_or_default(), &ended.stderr);
     if let Err(why) = &found {
         run.outcome = Outcome::Failed;
         run.note = Some(why.clone());
     }
-    Ok(Mutated {
+    Mutated {
         run,
         found: Some(found),
-    })
+    }
+}
+
+/// What a failed `cargo mutants` exit means, in cargo-mutants' own terms.
+fn exit_note(step: &str, ended: &Ended) -> Option<String> {
+    if ended.outcome != Outcome::Failed {
+        return None;
+    }
+    let what = match ended.code {
+        Some(1) => "exited 1: it was given arguments it does not accept",
+        Some(4) => "exited 4: the tests fail in the unmutated tree, so no mutant was tested",
+        Some(code) => return Some(format!("`{step}` exited {code}")),
+        None => "was ended by a signal",
+    };
+    Some(format!("`{step}` {what}"))
 }
 
 /// The run of a layer that stopped on its base or its diff: prints the
@@ -522,15 +548,79 @@ pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
     })
 }
 
+/// How `cargo mutants` ended: its outcome, exit code and what it printed.
+struct Ended {
+    outcome: Outcome,
+    code: Option<i32>,
+    stderr: String,
+}
+
+impl Ended {
+    fn without_output(outcome: Outcome) -> Self {
+        Self {
+            outcome,
+            code: None,
+            stderr: String::new(),
+        }
+    }
+}
+
 /// `cargo mutants` exits 2 when mutants were missed and 3 when some timed
 /// out: those and 0 are a finished run, judged by the ledger. Any other exit
-/// is a failed command.
-fn run_mutants(dir: &Path, step: &Step) -> Result<Outcome> {
-    Ok(match spawn(dir, step)? {
-        Spawned::Exited(status) if matches!(status.code(), Some(0 | 2 | 3)) => Outcome::Passed,
-        Spawned::Exited(_) | Spawned::NoProgram => Outcome::Failed,
-        Spawned::Missing => Outcome::ToolMissing,
+/// is a failed command. What it prints to stderr is shown and kept, because
+/// a run that found nothing to mutate says so there and writes no file.
+fn run_mutants(dir: &Path, step: &Step) -> Result<Ended> {
+    let Some((program, args)) = step.program() else {
+        return Ok(Ended::without_output(Outcome::Failed));
+    };
+    let mut child = match Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "{}",
+                steps::MissingTool {
+                    binary: program.to_string()
+                }
+            );
+            return Ok(Ended::without_output(Outcome::ToolMissing));
+        }
+        Err(err) => return Err(err).with_context(|| format!("spawn: {}", step.display())),
+    };
+    let stderr = tee(child.stderr.take());
+    let status = child
+        .wait()
+        .with_context(|| format!("wait: {}", step.display()))?;
+    let code = status.code();
+    let outcome = if matches!(code, Some(0 | 2 | 3)) {
+        Outcome::Passed
+    } else {
+        Outcome::Failed
+    };
+    Ok(Ended {
+        outcome,
+        code,
+        stderr,
     })
+}
+
+/// Everything `pipe` yields, passed on to our own stderr as it comes.
+fn tee(pipe: Option<ChildStderr>) -> String {
+    let Some(pipe) = pipe else {
+        return String::new();
+    };
+    let mut kept = String::new();
+    for line in BufReader::new(pipe).split(b'\n').map_while(Result::ok) {
+        let line = String::from_utf8_lossy(&line).into_owned();
+        eprintln!("{line}");
+        kept.push_str(&line);
+        kept.push('\n');
+    }
+    kept
 }
 
 /// How a spawned command ended.
@@ -649,7 +739,8 @@ mod tests {
         for (code, want) in wants {
             let step = Step::command(["sh".to_string(), "-c".to_string(), format!("exit {code}")]);
             let got = run_mutants(Path::new("."), &step).expect("it ran");
-            assert_eq!(got, want, "exit {code}");
+            assert_eq!(got.outcome, want, "exit {code}");
+            assert_eq!(got.code, Some(code), "exit {code}");
             // Any other command still fails on every nonzero exit.
             let plain = run_step(Path::new("."), &step).expect("it ran");
             let plain_want = if code == 0 {
@@ -661,7 +752,9 @@ mod tests {
         }
         let nowhere = Step::command(["/no/such/program/here"]);
         assert_eq!(
-            run_mutants(Path::new("."), &nowhere).expect("an outcome"),
+            run_mutants(Path::new("."), &nowhere)
+                .expect("an outcome")
+                .outcome,
             Outcome::ToolMissing
         );
     }

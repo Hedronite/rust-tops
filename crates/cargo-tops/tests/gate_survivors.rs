@@ -8,8 +8,9 @@
 //! unknown shape fails the layer.
 //!
 //! `cargo` is a stub that, for `mutants`, copies a planted `outcomes.json`
-//! into `mutants.out/` and exits as cargo-mutants does (2 when mutants were
-//! missed, 3 when some timed out). The planted files come from the fixture
+//! into `<--output>/mutants.out/` and exits as cargo-mutants does (2 when
+//! mutants were missed, 3 when some timed out). It writes nothing, and prints
+//! what a run prints, when a test says so. The planted files come from the fixture
 //! recorded from a real 27.1.0 run. Every report is validated against the
 //! schema.
 use std::fs;
@@ -35,8 +36,16 @@ if [ -n "${CARGO_STUB_LOG:-}" ]; then echo "$*" >> "$CARGO_STUB_LOG"; fi
 if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
 case "$*" in *--version) echo "stub-tool 1.2.3"; exit 0 ;; esac
 if [ "$1" = "mutants" ]; then
+  out=
+  prev=
+  for arg in "$@"; do
+    if [ "$prev" = "--output" ]; then out=$arg; fi
+    prev=$arg
+  done
+  if [ -z "$out" ]; then echo "no --output given" >&2; exit 64; fi
+  if [ -n "${MUTANTS_SAYS:-}" ]; then echo "$MUTANTS_SAYS" >&2; fi
   if [ -n "${MUTANTS_OUTCOMES:-}" ]; then
-    mkdir -p mutants.out && cp "$MUTANTS_OUTCOMES" mutants.out/outcomes.json
+    mkdir -p "$out/mutants.out" && cp "$MUTANTS_OUTCOMES" "$out/mutants.out/outcomes.json"
   fi
   exit "${MUTANTS_EXIT:-0}"
 fi
@@ -248,6 +257,18 @@ fn mutation_problems(report: &Value) -> Vec<String> {
 /// `inner::triple`), 1 timeout, 1 unviable.
 const RECORDED: &str = include_str!("fixtures/mutants-27.1.0/outcomes.json");
 
+/// A real 27.1.0 run over a crate with a `const`, a `static`, a type alias, a
+/// struct field type and one untested `fn get`: 12 missed (7 with `function:
+/// null`, 5 in `get`) and 1 unviable.
+const NULL_FUNCTION: &str = include_str!("fixtures/mutants-27.1.0/null-function/outcomes.json");
+
+/// `text` planted under the fixture.
+fn planted_text(fixture: &Fixture, text: &str) -> PathBuf {
+    let path = fixture.root.join("outcomes.json");
+    fs::write(&path, text).expect("plant outcomes.json");
+    path
+}
+
 /// The recorded run with `change` applied, planted under the fixture.
 fn planted(fixture: &Fixture, change: impl FnOnce(&mut Value)) -> PathBuf {
     let mut doc: Value = serde_json::from_str(RECORDED).expect("fixture is JSON");
@@ -265,6 +286,32 @@ fn outcomes_mut(doc: &mut Value) -> &mut Vec<Value> {
         .expect("outcomes")
 }
 
+/// Set each total to what the outcomes list, so an edit keeps the file whole.
+fn recount(doc: &mut Value) {
+    let summaries: Vec<String> = outcomes_mut(doc)
+        .iter()
+        .skip(1)
+        .map(|outcome| {
+            at(outcome, "/summary")
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    let of = |summary: &str| summaries.iter().filter(|s| *s == summary).count();
+    let totals = [
+        ("caught", of("CaughtMutant")),
+        ("missed", of("MissedMutant")),
+        ("timeout", of("Timeout")),
+        ("unviable", of("Unviable")),
+    ];
+    let all: usize = totals.iter().map(|(_, n)| n).sum();
+    for (key, n) in totals {
+        set(doc, key, json!(n));
+    }
+    set(doc, "total_mutants", json!(all));
+}
+
 /// Keep only the missed mutants for which `keep(function)` holds, and
 /// correct the totals.
 fn keep_missed(doc: &mut Value, keep: impl Fn(&str) -> bool) {
@@ -274,11 +321,7 @@ fn keep_missed(doc: &mut Value, keep: impl Fn(&str) -> bool) {
             .unwrap_or_default();
         at(outcome, "/summary") != "MissedMutant" || keep(function)
     });
-    let missed = outcomes_mut(doc)
-        .iter()
-        .filter(|outcome| at(outcome, "/summary") == "MissedMutant")
-        .count();
-    set(doc, "missed", json!(missed));
+    recount(doc);
 }
 
 /// One survivor in `double` and one in `inner::triple`.
@@ -296,11 +339,21 @@ fn one_each(doc: &mut Value) {
         seen.push(function);
         first
     });
-    set(doc, "missed", json!(2));
+    recount(doc);
 }
 
 /// Run the gate with `outcomes` planted, the way cargo-mutants exits for it.
 fn gate_with(fixture: &Fixture, outcomes: Option<&Path>, exit: &str) -> (Output, String) {
+    gate_saying(fixture, outcomes, exit, "")
+}
+
+/// As [`gate_with`], and `says` is what the run prints to stderr.
+fn gate_saying(
+    fixture: &Fixture,
+    outcomes: Option<&Path>,
+    exit: &str,
+    says: &str,
+) -> (Output, String) {
     git(fixture, &fixture.repo, &["checkout", "-q", "-b", "feature"]);
     commit_file(fixture, "b.rs");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-tops"));
@@ -310,6 +363,7 @@ fn gate_with(fixture: &Fixture, outcomes: Option<&Path>, exit: &str) -> (Output,
         .env("HOME", &fixture.home)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("MUTANTS_EXIT", exit)
+        .env("MUTANTS_SAYS", says)
         .env_remove("MUTANTS_OUTCOMES")
         .env_remove("CARGO_TARGET_DIR")
         .env_remove("CI");
@@ -491,7 +545,7 @@ fn a_maximum_of_one_passes_one_unexplained_survivor_and_fails_two() {
         outcomes_mut(doc).retain(|o| {
             at(o, "/summary") != "MissedMutant" || at(o, "/scenario/Mutant/replacement") == "0"
         });
-        set(doc, "missed", json!(1));
+        recount(doc);
     });
     let (out, text) = gate_with(&first, Some(&one), "2");
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -563,7 +617,7 @@ fn a_file_that_is_not_json_fails() {
 fn no_outcomes_file_is_a_failure_and_a_stale_one_is_never_read() {
     let fixture = fixture("no-outcomes", "main");
     // An earlier run left a clean file behind. This run wrote none.
-    let stale = fixture.repo.join("mutants.out");
+    let stale = fixture.repo.join("target/rust-tops/mutants.out");
     fs::create_dir_all(&stale).expect("mkdir");
     let clean = planted(&fixture, |doc| keep_missed(doc, |_| false));
     fs::copy(&clean, stale.join("outcomes.json")).expect("plant stale outcomes");
@@ -578,4 +632,204 @@ fn a_dry_run_reads_no_outcomes() {
     let (out, text) = gate(&fixture, &["--dry-run"], None);
     assert_eq!(out.status.code(), Some(1), "{text}");
     assert!(!fixture.repo.join("mutants.out").exists());
+    assert!(!fixture.repo.join("target/rust-tops/mutants.out").exists());
+}
+
+/// What 27.1.0 prints when the diff leaves nothing to mutate.
+const NO_MUTANTS: [&str; 2] = [
+    " INFO Diff changes no Rust source files",
+    " INFO No mutants to filter",
+];
+
+#[test]
+fn a_diff_with_nothing_to_mutate_passes_as_zero_mutants() {
+    for says in NO_MUTANTS {
+        let fixture = fixture("nothing-to-mutate", "main");
+        let (out, text) = gate_saying(&fixture, None, "0", says);
+        assert_eq!(out.status.code(), Some(0), "{says}: {text}");
+        let report = report(&fixture);
+        let row = mutation(&report);
+        assert_eq!(at(row, "/verdict"), "pass", "{says}: {row}");
+        assert_eq!(counts(row), [0; 6], "{says}: {row}");
+        assert!(mutation_problems(&report).is_empty());
+    }
+}
+
+#[test]
+fn no_file_is_zero_mutants_only_when_the_run_said_so_and_exited_0() {
+    // Said nothing, or something else: the file went missing.
+    for says in [
+        "",
+        " INFO Found 3 mutants to test",
+        " INFO Diff file is empty",
+    ] {
+        let fixture = fixture("went-missing", "main");
+        let (out, text) = gate_saying(&fixture, None, "0", says);
+        assert_eq!(out.status.code(), Some(1), "{says:?}: {text}");
+        let problems = mutation_problems(&report(&fixture));
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems
+                .iter()
+                .all(|p| p.contains("outcomes.json") && p.contains("exited 0")),
+            "{problems:?}"
+        );
+    }
+    // The line, and an exit that says mutants were missed, or any failure.
+    for exit in ["2", "3", "1", "4"] {
+        let fixture = fixture("line-and-exit", "main");
+        let (out, text) = gate_saying(&fixture, None, exit, NO_MUTANTS[1]);
+        assert_eq!(out.status.code(), Some(1), "exit {exit}: {text}");
+    }
+}
+
+#[test]
+fn a_failed_cargo_mutants_says_what_its_exit_means() {
+    for (exit, words) in [
+        ("1", "exited 1"),
+        ("4", "unmutated tree"),
+        ("9", "exited 9"),
+    ] {
+        let fixture = fixture("exit-meaning", "main");
+        let (out, text) = gate_with(&fixture, None, exit);
+        assert_eq!(out.status.code(), Some(1), "exit {exit}: {text}");
+        let problems = mutation_problems(&report(&fixture));
+        assert!(
+            problems
+                .iter()
+                .all(|p| p.contains("cargo mutants") && p.contains(words)),
+            "exit {exit}: {problems:?}"
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+}
+
+#[test]
+fn the_gate_names_the_output_directory_so_an_adopters_setting_cannot_move_it() {
+    let fixture = fixture("output-dir", "main");
+    fs::create_dir_all(fixture.repo.join(".cargo")).expect("mkdir");
+    fs::write(
+        fixture.repo.join(".cargo/mutants.toml"),
+        "output = \"elsewhere\"\n",
+    )
+    .expect("write mutants.toml");
+    let file = planted(&fixture, |doc| keep_missed(doc, |_| false));
+    let (out, text) = gate_with(&fixture, Some(&file), "3");
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(fixture
+        .repo
+        .join("target/rust-tops/mutants.out/outcomes.json")
+        .exists());
+    assert!(!fixture.repo.join("elsewhere").exists());
+}
+
+type Disagreement = (&'static str, Edit, &'static str, &'static [&'static str]);
+
+/// Each planted file, with the exit its run had, fails naming `words`.
+fn expect_disagreements(name: &str, cases: &[Disagreement]) {
+    for (what, change, exit, words) in cases {
+        let fixture = fixture(name, "main");
+        let file = planted(&fixture, *change);
+        let (out, text) = gate_with(&fixture, Some(&file), exit);
+        assert_eq!(out.status.code(), Some(1), "{what}: {text}");
+        let problems = mutation_problems(&report(&fixture));
+        assert_eq!(problems.len(), 1, "{what}: {problems:?}");
+        for word in *words {
+            assert!(
+                problems.iter().all(|p| p.contains(word)),
+                "{what} lacks {word}: {problems:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_total_that_is_wrong_or_missing_fails_naming_both_numbers() {
+    expect_disagreements(
+        "bad-total",
+        &[
+            (
+                "a wrong total",
+                |d| set(d, "total_mutants", json!(999)),
+                "2",
+                &["says 999", "lists 23"],
+            ),
+            (
+                "no total",
+                |d| {
+                    d.as_object_mut().expect("object").remove("total_mutants");
+                },
+                "2",
+                &["total_mutants"],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn an_exit_code_the_file_does_not_bear_out_fails_naming_both() {
+    expect_disagreements(
+        "bad-exit",
+        &[
+            (
+                "exit 2, nothing missed",
+                |d| keep_missed(d, |_| false),
+                "2",
+                &["exited 2", "no missed"],
+            ),
+            (
+                "exit 3, no timeout",
+                |d| {
+                    outcomes_mut(d).retain(|o| at(o, "/summary") != "Timeout");
+                    set(d, "timeout", json!(0));
+                    set(d, "total_mutants", json!(22));
+                },
+                "3",
+                &["exited 3", "no timeout"],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_survivor_in_no_function_is_explained_only_by_a_record_with_no_symbol() {
+    // 7 of the 12 survivors are in a const, a static, a type alias and a
+    // field type: cargo-mutants 27.1.0 writes `function: null` for them.
+    let unexplained = |symbol: Option<&str>, path: &str| -> u64 {
+        let fixture = fixture("null-function", "main");
+        exempt(&fixture, path, symbol, "2099-01-01");
+        let file = planted_text(&fixture, NULL_FUNCTION);
+        let (_, text) = gate_with(&fixture, Some(&file), "2");
+        let report = report(&fixture);
+        let row = mutation(&report);
+        assert_eq!(counts(row)[1], 12, "{text}");
+        counts(row)[3]
+    };
+    assert_eq!(unexplained(Some("get"), "src/lib.rs"), 7);
+    assert_eq!(unexplained(Some("no_such_fn"), "src/lib.rs"), 12);
+    assert_eq!(unexplained(None, "src/lib.rs"), 0);
+    assert_eq!(unexplained(None, "src/**"), 0);
+}
+
+#[test]
+fn a_whole_tree_record_lifts_the_floor_and_explains_no_survivor() {
+    for path in ["**", "./**", "**/*", "*", ".", "./"] {
+        let fixture = fixture("whole-tree", "main");
+        set_max(&fixture, 10);
+        exempt(&fixture, path, None, "2099-01-01");
+        let file = planted(&fixture, |_| {});
+        let (out, text) = gate_with(&fixture, Some(&file), "2");
+        assert_eq!(out.status.code(), Some(0), "{path}: {text}");
+        let report = report(&fixture);
+        let row = mutation(&report);
+        // 10 missed, none explained: the max decides.
+        assert_eq!(counts(row), [11, 10, 0, 10, 1, 1], "{path}: {row}");
+    }
+    // At a max of 9 the same record changes nothing: 10 survivors fail.
+    let fixture = fixture("whole-tree-nine", "main");
+    set_max(&fixture, 9);
+    exempt(&fixture, "**", None, "2099-01-01");
+    let file = planted(&fixture, |_| {});
+    let (out, text) = gate_with(&fixture, Some(&file), "2");
+    assert_eq!(out.status.code(), Some(1), "{text}");
 }

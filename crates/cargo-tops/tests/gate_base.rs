@@ -25,15 +25,16 @@ mod profiles {
 const REPORT_SCHEMA: &str = include_str!("../../../schema/gate-report.schema.json");
 
 /// Logs its argv when `$CARGO_STUB_LOG` is set; answers every `--version`;
-/// `cargo mutants` writes what 27.1.0 writes for a run with no mutants;
+/// `cargo mutants` does what 27.1.0 does for a diff with nothing to mutate;
 /// passes everything else.
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ -n "${CARGO_STUB_LOG:-}" ]; then echo "$*" >> "$CARGO_STUB_LOG"; fi
 if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
 case "$*" in *--version) echo "stub-tool 1.2.3"; exit 0 ;; esac
+# 27.1.0 finds nothing to mutate in a diff of comments, tests, docs or CI:
+# it says so on stderr, exits 0 and writes no `mutants.out`.
 if [ "$1" = "mutants" ]; then
-  mkdir -p mutants.out
-  echo '{"outcomes":[{"scenario":"Baseline","summary":"Success"}],"total_mutants":0,"missed":0,"caught":0,"timeout":0,"unviable":0,"success":0,"cargo_mutants_version":"27.1.0"}' > mutants.out/outcomes.json
+  echo ' INFO No mutants to filter' >&2
 fi
 exit 0
 "#;
@@ -849,6 +850,8 @@ fn the_help_and_the_schema_say_what_exit_2_covers() {
             "rust-tops.yaml",
             "rust-tops.lock",
             "no enabled layer at or below --max-tier",
+            "usage error",
+            "unreadable when a layer in range needs a pin",
         ] {
             assert!(text.contains(phrase), "{name} lacks `{phrase}`: {text}");
         }

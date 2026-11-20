@@ -296,6 +296,25 @@ fn runs_verdict(runs: &[&Run]) -> &'static str {
     }
 }
 
+/// The verdict of a layer enabled above `--max-tier`: it is not judged.
+pub(crate) fn above_range_verdict() -> &'static str {
+    "not-evaluated"
+}
+
+/// The verdict of a row the run never reached (a fault before it ran).
+pub(crate) fn unreached_verdict() -> &'static str {
+    "not-run"
+}
+
+/// The verdict of the laws layer: `not-run` when `bend` did not run.
+pub(crate) fn laws_verdict(judged: Option<&Judgement>) -> &'static str {
+    match judged.filter(|judged| judged.bend_ran) {
+        None => "not-run",
+        Some(judged) if judged.laws_failed => "fail",
+        Some(_) => "pass",
+    }
+}
+
 /// The row verdict of layer `id`: `not-run` when nothing ran for it,
 /// otherwise its worst run. A run that passed still fails the row when its
 /// floors, or its survivors, did not.

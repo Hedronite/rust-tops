@@ -17,9 +17,16 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::exemptions::Exemption;
+use crate::tiers::covers_crate;
 
 /// Where cargo-mutants writes the run's outcomes, under the directory it ran in.
 const OUTCOMES: &str = "mutants.out/outcomes.json";
+
+/// What cargo-mutants 27.1.0 prints (to stderr) when the diff leaves nothing
+/// to mutate, and then exits 0 without writing `mutants.out`: no Rust source
+/// file changed, or the changed lines are in no function it mutates (a
+/// comment, a test, a documentation or CI file). Recorded from real runs.
+const NO_MUTANTS: [&str; 2] = ["Diff changes no Rust source files", "No mutants to filter"];
 
 /// The cargo-mutants release whose `outcomes.json` this reads.
 pub(crate) const PINNED: &str = "27.1.0";
@@ -68,12 +75,43 @@ pub(crate) fn clear(dir: &Path) -> Result<()> {
     }
 }
 
-/// The outcomes `cargo mutants` just wrote under `dir`. Call [`clear`] before
-/// the run: a file that is there afterwards is this run's.
-pub(crate) fn read(dir: &Path) -> Result<Outcomes, String> {
-    let text = fs::read_to_string(dir.join(OUTCOMES))
-        .map_err(|err| format!("no {OUTCOMES} after cargo mutants ran: {err}"))?;
-    parse(&text)
+/// The outcomes `cargo mutants` just wrote under `dir`, after it ended with
+/// `code` and printed `stderr`. Call [`clear`] before the run: a file that is
+/// there afterwards is this run's. No file is the zero mutants of a diff with
+/// nothing to mutate only when the run exited 0 and said so itself; any other
+/// missing file is a failure.
+pub(crate) fn read(dir: &Path, code: i32, stderr: &str) -> Result<Outcomes, String> {
+    let text = match fs::read_to_string(dir.join(OUTCOMES)) {
+        Ok(text) => text,
+        Err(_) if code == 0 && NO_MUTANTS.iter().any(|line| stderr.contains(line)) => {
+            return Ok(Outcomes::default());
+        }
+        Err(err) => {
+            return Err(format!(
+                "no {OUTCOMES} after cargo mutants exited {code}, and its output does not \
+                 say it found no mutants: {err}"
+            ));
+        }
+    };
+    let found = parse(&text)?;
+    check_exit(&found, code)?;
+    Ok(found)
+}
+
+/// The exit code and the file must agree: 2 says mutants were missed and 3
+/// says some timed out.
+fn check_exit(found: &Outcomes, code: i32) -> Result<(), String> {
+    match code {
+        2 if found.missed.is_empty() => Err(
+            "cargo mutants exited 2 (mutants were missed) but outcomes.json lists no missed mutant"
+                .to_string(),
+        ),
+        3 if found.timeouts == 0 => Err(
+            "cargo mutants exited 3 (mutants timed out) but outcomes.json lists no timeout"
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 fn field<'v>(value: &'v Value, key: &str) -> Result<&'v Value, String> {
@@ -202,6 +240,10 @@ pub(crate) fn parse(text: &str) -> Result<Outcomes, String> {
         ("missed", found.missed.len()),
         ("timeout", found.timeouts),
         ("unviable", found.unviable),
+        (
+            "total_mutants",
+            found.caught + found.missed.len() + found.timeouts + found.unviable,
+        ),
     ];
     for (key, seen) in totals {
         let said = count(&doc, key)?;
@@ -224,6 +266,22 @@ fn relative<'f>(file: &'f str, crate_prefix: &str) -> &'f str {
         .unwrap_or(file)
 }
 
+/// Whether `record` explains a survivor in `function` of the file `rel`
+/// (`None`: in no function, as in a `const`, a `static`, a type alias or a
+/// field type). A record with no symbol and a whole-tree path lifts a floor
+/// and explains nothing. A symbol names a function, so a survivor in none is
+/// explained only by a record with no symbol.
+fn explains(record: &Exemption, rel: &str, function: Option<&str>) -> bool {
+    let named = record.symbol.is_some();
+    if !named && covers_crate(&record.path) {
+        return false;
+    }
+    if named && function.is_none() {
+        return false;
+    }
+    record.covers(rel, function)
+}
+
 /// Sort the missed mutants. `live` are the layer's records that have not
 /// expired; `crate_prefix` is the crate's directory under the workspace root,
 /// which the records' globs are relative to.
@@ -231,7 +289,7 @@ pub(crate) fn explain(found: &Outcomes, live: &[Exemption], crate_prefix: &str) 
     let (explained, unexplained) = found.missed.iter().cloned().partition(|mutant: &Missed| {
         let rel = relative(&mutant.file, crate_prefix);
         live.iter()
-            .any(|record| record.covers(rel, mutant.function.as_deref()))
+            .any(|record| explains(record, rel, mutant.function.as_deref()))
     });
     Ledger {
         caught: found.caught,
@@ -257,7 +315,7 @@ impl Ledger {
         let named: Vec<String> = self
             .unexplained
             .iter()
-            .map(|mutant| format!("{}:{} {}", mutant.file, mutant.line, mutant.name))
+            .map(|mutant| mutant.name.clone())
             .collect();
         Some(format!(
             "mutation: {} unexplained survivor(s), above unexplained_survivors_max {max}: {}",
@@ -286,7 +344,7 @@ impl Ledger {
     reason = "the tests edit and read JSON they built from the recorded fixture"
 )]
 mod tests {
-    use super::{clear, explain, parse, read, relative, Outcomes, PINNED};
+    use super::{check_exit, clear, explain, parse, read, relative, Outcomes, PINNED};
     use crate::exemptions::Exemption;
     use serde_json::Value;
     use std::fs;
@@ -569,16 +627,141 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    const NOTHING: &str = " INFO No mutants to filter\n";
+
     #[test]
     fn what_the_run_wrote_is_read_and_a_missing_file_is_an_error() {
         let dir = scratch("read");
-        let err = read(&dir).expect_err("no file");
+        let err = read(&dir, 0, "").expect_err("no file");
         assert!(err.contains("mutants.out/outcomes.json"), "{err}");
+        assert!(err.contains("exited 0"), "{err}");
         fs::create_dir_all(dir.join("mutants.out")).expect("mkdir");
         fs::write(dir.join("mutants.out/outcomes.json"), "not json").expect("write");
-        assert!(read(&dir).expect_err("not json").contains("not JSON"));
+        assert!(read(&dir, 2, "")
+            .expect_err("not json")
+            .contains("not JSON"));
         fs::write(dir.join("mutants.out/outcomes.json"), FIXTURE).expect("write");
-        assert_eq!(read(&dir).expect("parses").missed.len(), 10);
+        assert_eq!(read(&dir, 2, "").expect("parses").missed.len(), 10);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_file_is_zero_mutants_only_for_exit_0_and_a_line_the_run_printed() {
+        let dir = scratch("nothing");
+        for line in super::NO_MUTANTS {
+            assert_eq!(
+                read(&dir, 0, line).expect("zero mutants"),
+                Outcomes::default()
+            );
+        }
+        let said = format!("found 3 mutants\n{NOTHING}more\n");
+        assert_eq!(
+            read(&dir, 0, &said).expect("zero mutants"),
+            Outcomes::default()
+        );
+        for (code, said) in [
+            (0, ""),
+            (0, "Diff file is empty"),
+            (2, NOTHING),
+            (3, NOTHING),
+            (1, NOTHING),
+        ] {
+            assert!(read(&dir, code, said).is_err(), "exit {code} {said:?}");
+        }
+        // A file that is there is read, whatever the run printed.
+        fs::create_dir_all(dir.join("mutants.out")).expect("mkdir");
+        fs::write(dir.join("mutants.out/outcomes.json"), FIXTURE).expect("write");
+        assert_eq!(read(&dir, 0, NOTHING).expect("parses").caught, 11);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_exit_code_and_the_file_must_agree() {
+        let found = parse(FIXTURE).expect("parses");
+        assert!(check_exit(&found, 2).is_ok() && check_exit(&found, 3).is_ok());
+        assert!(check_exit(&found, 0).is_ok());
+        let none = Outcomes {
+            missed: Vec::new(),
+            timeouts: 0,
+            ..found
+        };
+        let two = check_exit(&none, 2).expect_err("nothing missed");
+        assert!(
+            two.contains("exited 2") && two.contains("no missed"),
+            "{two}"
+        );
+        let three = check_exit(&none, 3).expect_err("no timeout");
+        assert!(
+            three.contains("exited 3") && three.contains("no timeout"),
+            "{three}"
+        );
+        // Missed but no timeout is fine for 2; a timeout but none missed for 3.
+        let only_missed = Outcomes {
+            timeouts: 0,
+            ..found
+        };
+        assert!(check_exit(&only_missed, 2).is_ok());
+        assert!(check_exit(&only_missed, 3).is_err());
+        let only_timeout = Outcomes {
+            missed: Vec::new(),
+            ..found
+        };
+        assert!(check_exit(&only_timeout, 3).is_ok());
+        assert!(check_exit(&only_timeout, 2).is_err());
+    }
+
+    #[test]
+    fn the_total_must_be_there_and_agree() {
+        let wrong = edited(|doc| doc["total_mutants"] = Value::from(999));
+        let err = parse(&wrong).expect_err("999 is not 23");
+        assert!(err.contains("says 999 total_mutants but lists 23"), "{err}");
+        let gone = edited(|doc| {
+            doc.as_object_mut().expect("object").remove("total_mutants");
+        });
+        assert!(parse(&gone)
+            .expect_err("no total")
+            .contains("total_mutants"));
+    }
+
+    const NULL_FUNCTION: &str =
+        include_str!("../tests/fixtures/mutants-27.1.0/null-function/outcomes.json");
+
+    #[test]
+    fn a_survivor_in_no_function_takes_no_symbol_and_a_whole_tree_record_explains_none() {
+        let found = parse(NULL_FUNCTION).expect("parses");
+        assert_eq!(found.missed.len(), 12);
+        assert_eq!(
+            found.missed.iter().filter(|m| m.function.is_none()).count(),
+            7
+        );
+        let count = |records: &[Exemption]| explain(&found, records, "").explained.len();
+        assert_eq!(count(&[record("src/lib.rs", Some("get"))]), 5);
+        assert_eq!(count(&[record("src/lib.rs", Some("no_such_fn"))]), 0);
+        assert_eq!(count(&[record("src/lib.rs", None)]), 12);
+        assert_eq!(count(&[record("src/**", None)]), 12);
+        // Symbol and no symbol: every survivor once.
+        assert_eq!(
+            count(&[
+                record("src/lib.rs", Some("get")),
+                record("src/lib.rs", None)
+            ]),
+            12
+        );
+        for whole in ["**", "./**", "**/*", "*", ".", "./"] {
+            assert_eq!(count(&[record(whole, None)]), 0, "{whole}");
+        }
+        // A symbol never lifts a floor, so a symbol record with a whole-tree
+        // path still names its function.
+        assert_eq!(count(&[record("**", Some("get"))]), 5);
+    }
+
+    #[test]
+    fn a_survivor_is_named_once_by_its_own_name() {
+        let found = parse(FIXTURE).expect("parses");
+        let ledger = explain(&found, &[], "");
+        let problem = ledger.problem(0).expect("fails");
+        let first = &found.missed[0];
+        assert_eq!(problem.matches(&first.name).count(), 1, "{problem}");
+        assert!(!problem.contains(&format!("{}:{} {}", first.file, first.line, first.name)));
     }
 }

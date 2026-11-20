@@ -615,6 +615,10 @@ pub(crate) struct MutationPlan {
     pub diff_path: PathBuf,
     pub mutants: Step,
     pub base: Base,
+    /// Where `cargo mutants` writes `mutants.out`: the report directory, so
+    /// the gate reads the files this run wrote and no setting of the
+    /// adopter's moves them.
+    pub output: PathBuf,
 }
 
 impl MutationPlan {
@@ -628,6 +632,7 @@ impl MutationPlan {
         };
         let script = mutation_diff_script(report_dir, &diff_path, from);
         let diff = Step::command(["sh", "-c", script.as_str()]);
+        let output_arg = report_dir.display().to_string();
         let mutants = Step::tool([
             "cargo",
             "mutants",
@@ -635,12 +640,15 @@ impl MutationPlan {
             diff_arg.as_str(),
             "-j",
             "2",
+            "--output",
+            output_arg.as_str(),
         ]);
         Self {
             diff,
             diff_path,
             mutants,
             base,
+            output: report_dir.to_path_buf(),
         }
     }
 

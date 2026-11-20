@@ -94,8 +94,9 @@ enum Commands {
     #[command(after_help = "Writes <target>/rust-tops/report.json on every run.\n\
 Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
 2  the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable \
-or failing check, rust-tops.lock unreadable, or no enabled layer at or below --max-tier; \
-a command-line usage error is 2 too. An expired exemption is not 2: it is 1\n  \
+or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable \
+when a layer in range needs a pin (crap today); a command-line usage error is 2 too and \
+writes no report. An expired exemption is not 2: it is 1\n  \
 3  the environment: a required tool or cargo metadata is missing, or report.json \
 cannot be written\n\
 Where more than one applies, 2 wins over 3, and 3 over 1.")]
