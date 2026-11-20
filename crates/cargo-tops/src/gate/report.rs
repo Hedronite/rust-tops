@@ -410,15 +410,11 @@ fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
         done.seconds(id),
         version.as_deref(),
     );
-    let unmapped = plan
-        .units
-        .iter()
-        .any(|unit| unit.layer.id == id && matches!(unit.what, What::NotRun));
-    if unmapped {
-        entry.insert("detail".into(), json!("enabled and no command is mapped"));
-    }
     if let Some(numbers) = numbers {
         entry.insert("judged".into(), numbers);
+    }
+    if let Some(detail) = layer_detail(plan, done, id) {
+        entry.insert("detail".into(), json!(detail));
     }
     if id == "mutation" {
         name_the_base(plan, done, &mut entry);
@@ -448,17 +444,35 @@ fn name_the_base(plan: &GatePlan<'_>, done: &Executed<'_>, entry: &mut Map<Strin
         Base::Missing { tried, .. } => json!({ "ref": null, "source": null, "tried": tried }),
     };
     put_judged(entry, "base", base);
-    let ran = done
-        .runs
-        .iter()
-        .find(|run| run.layer == "mutation")
-        .and_then(|run| run.note.clone());
+    let ran = run_note(done, "mutation");
     let planned = (!matches!(mutation.base, Base::Found { .. }))
         .then(|| steps::stop_note(&mutation.base, Outcome::Vacuous).map(|(_, note)| note))
         .flatten();
     if let Some(detail) = ran.or(planned) {
         entry.insert("detail".into(), json!(detail));
     }
+}
+
+/// Why a layer has no plain pass or fail: no command is mapped for it, or
+/// its run kept a note (the credit evidence of `property` and `acceptance`).
+fn layer_detail(plan: &GatePlan<'_>, done: &Executed<'_>, id: &str) -> Option<String> {
+    let unmapped = plan
+        .units
+        .iter()
+        .any(|unit| unit.layer.id == id && matches!(unit.what, What::NotRun));
+    if unmapped {
+        return Some("enabled and no command is mapped".to_string());
+    }
+    run_note(done, id)
+}
+
+/// The note `layer`'s run kept: why it stopped, in the words the report and
+/// the failure line both use.
+fn run_note(done: &Executed<'_>, layer: &str) -> Option<String> {
+    done.runs
+        .iter()
+        .find(|run| run.layer == layer)
+        .and_then(|run| run.note.clone())
 }
 
 /// Set `key` in the row's `judged` object, keeping what else is there.

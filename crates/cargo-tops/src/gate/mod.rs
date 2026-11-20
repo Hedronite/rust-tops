@@ -127,7 +127,7 @@ pub(crate) fn config_error(dir: &Path, error: &anyhow::Error, opts: Options) -> 
 #[cfg(test)]
 mod tests {
     use super::judge::{command_count, ran_commands};
-    use super::plan::{plan_for, Plan, TestCommands};
+    use super::plan::{plan_for, Filters, Plan, TestCommands};
     use crate::facts::{Outcome, Run};
     use crate::steps::{self, Base, Kind, Step};
     use crate::{config, credit};
@@ -142,7 +142,12 @@ mod tests {
     }
 
     fn chains(id: &str) -> Vec<Vec<Step>> {
-        match plan_for(&layer(id), Path::new("/r"), &Base::unused()) {
+        match plan_for(
+            &layer(id),
+            Path::new("/r"),
+            &Base::unused(),
+            &Filters::default(),
+        ) {
             Some(Plan::Chains(chains)) => chains,
             _ => panic!("{id} has no chains"),
         }
@@ -280,7 +285,7 @@ mod tests {
             .map(layer)
             .collect();
         let enabled: Vec<&config::Layer> = layers.iter().collect();
-        let tests = TestCommands::new(&enabled, Path::new("/r"));
+        let tests = TestCommands::new(&enabled, Path::new("/r"), &Filters::default());
         assert!(tests.coverage_in_range);
         assert!(
             credit::coverage_grants_credit(&tests.coverage),
@@ -300,7 +305,7 @@ mod tests {
             .copied()
             .filter(|l| l.id != "coverage")
             .collect();
-        let tests = TestCommands::new(&unit_only, Path::new("/r"));
+        let tests = TestCommands::new(&unit_only, Path::new("/r"), &Filters::default());
         assert!(!tests.coverage_in_range);
         assert!(tests.coverage.is_empty());
         assert_eq!(tests.shared_from("integration"), Some("unit"));
@@ -402,7 +407,9 @@ mod tests {
             source: steps::BaseSource::Flag,
             name: "origin/trunk".to_string(),
         };
-        let Some(Plan::Mutation(plan)) = plan_for(&layer("mutation"), report, &base) else {
+        let Some(Plan::Mutation(plan)) =
+            plan_for(&layer("mutation"), report, &base, &Filters::default())
+        else {
             panic!("mutation has no plan");
         };
         assert_eq!(plan.diff_path, report.join("rust-tops.diff"));
@@ -448,7 +455,6 @@ mod tests {
     #[test]
     fn unmapped_layers_have_no_plan() {
         for id in [
-            "acceptance",
             "fuzz",
             "miri",
             "sanitizer",
@@ -458,7 +464,13 @@ mod tests {
             "laws",
         ] {
             assert!(
-                plan_for(&layer(id), Path::new("/r"), &Base::unused()).is_none(),
+                plan_for(
+                    &layer(id),
+                    Path::new("/r"),
+                    &Base::unused(),
+                    &Filters::default()
+                )
+                .is_none(),
                 "{id}"
             );
         }

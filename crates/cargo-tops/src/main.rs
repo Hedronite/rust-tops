@@ -24,6 +24,7 @@ mod config;
 mod coverage_floor;
 mod crap_ratchet;
 mod credit;
+mod evidence;
 mod exemptions;
 mod facts;
 mod floors;

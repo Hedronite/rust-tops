@@ -48,3 +48,11 @@ slow-timeout = { period = "10s", terminate-after = 4 }
 [[profile.ci.overrides]]
 filter = "test(=fresh_init_then_gate_passes_for_every_class)"
 slow-timeout = { period = "10s", terminate-after = 4 }
+
+# These tests run real `cargo nextest` on a small crate, one build each, for
+# the kit suite only; they match nothing in an adopter. Alone each ran in
+# 1.4 s to 6.2 s. Under the full suite on a loaded runner they take longer,
+# so they get 60 s; the profile timeout is not raised.
+[[profile.ci.overrides]]
+filter = "binary(gate_credit_nextest)"
+slow-timeout = { period = "10s", terminate-after = 6 }

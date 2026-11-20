@@ -4,7 +4,9 @@
 //! a layer and [`recorded_outcome`] after the source layer has finished.
 //! A missing or failed coverage run is not a pass. A coverage command that
 //! lacks `--workspace`, `--all-features`, or the nextest profile grants no
-//! credit, and `unit`, `integration`, and `property` run themselves.
+//! credit, and `unit`, `integration`, `property`, and `acceptance` run
+//! themselves. `property` and `acceptance` also need evidence from the run
+//! ([`crate::evidence`]).
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #![allow(dead_code, reason = "main.rs calls the credit decision")]
 
@@ -66,7 +68,10 @@ pub(crate) fn recorded_outcome(query: &Query<'_>) -> Option<Outcome> {
 fn takes_coverage(query: &Query<'_>) -> bool {
     query.coverage_in_range
         && coverage_grants_credit(query.coverage_argv)
-        && matches!(query.layer, "unit" | "integration" | "property")
+        && matches!(
+            query.layer,
+            "unit" | "integration" | "property" | "acceptance"
+        )
 }
 
 fn takes_unit(query: &Query<'_>) -> bool {
