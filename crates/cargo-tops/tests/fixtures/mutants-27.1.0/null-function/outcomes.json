@@ -1,0 +1,750 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.346787875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.405252542,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:1:27: replace + with -",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 1,
+              "column": 27
+            },
+            "end": {
+              "line": 1,
+              "column": 28
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__lib.rs_line_1_col_27.log",
+      "diff_path": "diff/src__lib.rs_line_1_col_27.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.060888917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:1:27: replace + with *",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 1,
+              "column": 27
+            },
+            "end": {
+              "line": 1,
+              "column": 28
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_1_col_27_001.log",
+      "diff_path": "diff/src__lib.rs_line_1_col_27_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.111410833,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.392369083,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:28: replace * with +",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 28
+            },
+            "end": {
+              "line": 3,
+              "column": 29
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_3_col_28.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_28.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.113310791,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.460165542,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:3:28: replace * with /",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 3,
+              "column": 28
+            },
+            "end": {
+              "line": 3,
+              "column": 29
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_3_col_28_001.log",
+      "diff_path": "diff/src__lib.rs_line_3_col_28_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.118249292,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.298558834,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:5:23: replace + with -",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 5,
+              "column": 23
+            },
+            "end": {
+              "line": 5,
+              "column": 24
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_5_col_23.log",
+      "diff_path": "diff/src__lib.rs_line_5_col_23.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.121582667,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.404460041,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:5:23: replace + with *",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 5,
+              "column": 23
+            },
+            "end": {
+              "line": 5,
+              "column": 24
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_5_col_23_001.log",
+      "diff_path": "diff/src__lib.rs_line_5_col_23_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.113811834,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.363051042,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:19: replace + with -",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 19
+            },
+            "end": {
+              "line": 8,
+              "column": 20
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_19.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_19.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.12164225,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.408842875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:19: replace + with *",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 19
+            },
+            "end": {
+              "line": 8,
+              "column": 20
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_19_001.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_19_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.120965875,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.068054125,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:5: replace get -> i32 with 0",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "get",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 5
+            },
+            "end": {
+              "line": 12,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.118840291,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.08889725,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:5: replace get -> i32 with 1",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "get",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 5
+            },
+            "end": {
+              "line": 12,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.121670917,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.732568292,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:5: replace get -> i32 with -1",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "get",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 5
+            },
+            "end": {
+              "line": 12,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.120978583,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.233461208,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:7: replace + with - in get",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "get",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 7
+            },
+            "end": {
+              "line": 12,
+              "column": 8
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.115573167,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.274348375,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:7: replace + with * in get",
+          "package": "nofn",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "get",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 7
+            },
+            "end": {
+              "line": 12,
+              "column": 8
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.111984334,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.232997167,
+          "process_status": "Success",
+          "argv": [
+            "cargo",
+            "test",
+            "--verbose",
+            "--package=nofn@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 13,
+  "missed": 12,
+  "caught": 0,
+  "timeout": 0,
+  "unviable": 1,
+  "success": 0,
+  "start_time": "2026-11-20T06:57:08.422784Z",
+  "end_time": "2026-11-20T06:57:23.625455Z",
+  "cargo_mutants_version": "27.1.0"
+}

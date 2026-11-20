@@ -386,6 +386,10 @@ jobs:
           tool: cargo-mutants@27.1.0
       - run: cargo install --path crates/cargo-tops --locked
       - run: cargo tops gate --max-tier 1 --base "origin/${{ github.base_ref || github.event.repository.default_branch }}"
+        env:
+          # The gate's own tests include a run of the real cargo-mutants: it
+          # must run here, never skip.
+          RUST_TOPS_REQUIRE_MUTANTS: "1"
 
   # mutants-diff: class overlay. Diff-scoped; no --baseline skip; default
   # features usually need no FFI sysdeps. Do not mark required until one

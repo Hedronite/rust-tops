@@ -1,8 +1,9 @@
 //! Run a plan: each command in order, timed. A dry run lists the commands
 //! and runs none.
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{ChildStderr, Command, ExitStatus, Stdio};
 use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result};
@@ -12,6 +13,7 @@ use super::{Fault, Mode};
 use crate::config::Layer;
 use crate::evidence;
 use crate::facts::{Outcome, Run};
+use crate::mutation::{self, Outcomes};
 use crate::steps::{self, Base, Kind, MutationPlan, Step};
 use crate::{laws, TOOL_LOCK};
 
@@ -56,6 +58,9 @@ pub(crate) struct Executed<'a> {
     pub(crate) not_run: Vec<String>,
     /// Commands named, whether or not they ran.
     pub(crate) listed: usize,
+    /// What `cargo mutants` left in this run's `outcomes.json`: `None` when it
+    /// did not finish, `Err` when the file is not the shape [`mutation`] reads.
+    pub(crate) found: Option<Result<Outcomes, String>>,
 }
 
 /// The pinned Bend is fetched first: a missing Bend fails before any work.
@@ -136,6 +141,7 @@ pub(crate) fn run<'a>(dir: &Path, plan: &GatePlan<'a>, mode: Mode) -> Result<Exe
             shared: Vec::new(),
             not_run: Vec::new(),
             listed: 0,
+            found: None,
         },
         versions: HashMap::new(),
     };
@@ -206,7 +212,9 @@ impl<'a> Runner<'_, 'a> {
         self.done.listed += 1;
         if self.live {
             let clock = Clock::start();
-            let run = run_mutation(self.dir, &layer.id, mutation).map_err(Fault::env)?;
+            let Mutated { run, found } =
+                run_mutation(self.dir, &layer.id, mutation).map_err(Fault::env)?;
+            self.done.found = found;
             // The tool is asked for its version only when it ran: a vacuous
             // or failed diff runs no `cargo mutants`.
             let version = (run.outcome != Outcome::ToolMissing
@@ -411,33 +419,92 @@ pub(crate) fn run_pinned_crap(dir: &Path, layer: &str, chain: &[Step], pin: &str
     Ok(run)
 }
 
+/// A mutation layer's run, and what its `outcomes.json` held.
+pub(crate) struct Mutated {
+    pub(crate) run: Run,
+    pub(crate) found: Option<Result<Outcomes, String>>,
+}
+
+impl Mutated {
+    fn without_outcomes(run: Run) -> Self {
+        Self { run, found: None }
+    }
+}
+
 /// `cargo-mutants` is looked up before the diff, so an empty diff cannot
 /// hide a missing tool. A base that was named and is not a commit fails the
 /// layer before any command runs. A failed diff is `Failed`; nothing waives
 /// it. An empty one is `Vacuous` and `cargo mutants` does not run, except
 /// that no base at all fails under CI. [`steps::stop_note`] words every one
-/// of these stops.
-pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Run> {
+/// of these stops. When `cargo mutants` runs, an `outcomes.json` from an
+/// earlier run is removed first, and exit 0, 2 (missed) and 3 (timeouts)
+/// are a finished run whose ledger the judge reads.
+pub(crate) fn run_mutation(dir: &Path, layer: &str, plan: &MutationPlan) -> Result<Mutated> {
     if let Err(missing) = steps::check_tool(&plan.mutants.argv) {
         println!("{missing}");
-        return Ok(finish(
+        return Ok(Mutated::without_outcomes(finish(
             layer,
             &[plan.mutants.display()],
             Outcome::ToolMissing,
-        ));
+        )));
     }
     if matches!(plan.base, Base::Unresolved { .. }) {
-        return Ok(stopped(layer, &[], &plan.base, Outcome::Failed));
+        return Ok(Mutated::without_outcomes(stopped(
+            layer,
+            &[],
+            &plan.base,
+            Outcome::Failed,
+        )));
     }
     let mut ran = vec![plan.diff.display()];
     let diff_ok = run_step(dir, &plan.diff)? == Outcome::Passed;
     let diff = steps::judge_diff(diff_ok, &plan.diff_path);
     let Some(mutants) = plan.after_diff(diff) else {
-        return Ok(stopped(layer, &ran, &plan.base, diff));
+        return Ok(Mutated::without_outcomes(stopped(
+            layer, &ran, &plan.base, diff,
+        )));
     };
     ran.push(mutants.display());
-    let outcome = run_step(dir, mutants)?;
-    Ok(finish(layer, &ran, outcome))
+    mutation::clear(&plan.output)?;
+    let ended = run_mutants(dir, mutants)?;
+    Ok(settled(
+        finish(layer, &ran, ended.outcome),
+        &ended,
+        &plan.output,
+    ))
+}
+
+/// The run of `cargo mutants` once it ended. A command that failed says what
+/// its exit means; one that finished (exit 0, 2 or 3) is judged from the
+/// outcomes it wrote.
+fn settled(mut run: Run, ended: &Ended, output: &Path) -> Mutated {
+    if ended.outcome != Outcome::Passed {
+        // A missing tool has its own line; a failed run says what its exit means.
+        run.note = (ended.outcome == Outcome::Failed)
+            .then(|| format!("`{}` {}", run.step, exit_meaning(ended.code)));
+        return Mutated::without_outcomes(run);
+    }
+    let found = mutation::read(output, ended.code.unwrap_or_default(), &ended.stderr);
+    if let Err(why) = &found {
+        run.outcome = Outcome::Failed;
+        run.note = Some(why.clone());
+    }
+    Mutated {
+        run,
+        found: Some(found),
+    }
+}
+
+/// What a failed `cargo mutants` exit means, in cargo-mutants' own terms.
+fn exit_meaning(code: Option<i32>) -> String {
+    match code {
+        Some(1) => "exited 1: it was given arguments it does not accept".to_string(),
+        Some(4) => {
+            "exited 4: the tests fail in the unmutated tree, so no mutant was tested".to_string()
+        }
+        Some(code) => format!("exited {code}"),
+        None => "was ended by a signal".to_string(),
+    }
 }
 
 /// The run of a layer that stopped on its base or its diff: prints the
@@ -474,12 +541,45 @@ pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
         }
         Kind::Command => {}
     }
+    Ok(match spawn(dir, step)? {
+        Spawned::Exited(status) if status.success() => Outcome::Passed,
+        Spawned::Exited(_) | Spawned::NoProgram => Outcome::Failed,
+        Spawned::Missing => Outcome::ToolMissing,
+    })
+}
+
+/// How `cargo mutants` ended: its outcome, exit code and what it printed.
+struct Ended {
+    outcome: Outcome,
+    code: Option<i32>,
+    stderr: String,
+}
+
+impl Ended {
+    fn without_output(outcome: Outcome) -> Self {
+        Self {
+            outcome,
+            code: None,
+            stderr: String::new(),
+        }
+    }
+}
+
+/// `cargo mutants` exits 2 when mutants were missed and 3 when some timed
+/// out: those and 0 are a finished run, judged by the ledger. Any other exit
+/// is a failed command. What it prints to stderr is shown and kept, because
+/// a run that found nothing to mutate says so there and writes no file.
+fn run_mutants(dir: &Path, step: &Step) -> Result<Ended> {
     let Some((program, args)) = step.program() else {
-        return Ok(Outcome::Failed);
+        return Ok(Ended::without_output(Outcome::Failed));
     };
-    match Command::new(program).args(args).current_dir(dir).status() {
-        Ok(status) if status.success() => Ok(Outcome::Passed),
-        Ok(_) => Ok(Outcome::Failed),
+    let mut child = match Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             println!(
                 "{}",
@@ -487,7 +587,65 @@ pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
                     binary: program.to_string()
                 }
             );
-            Ok(Outcome::ToolMissing)
+            return Ok(Ended::without_output(Outcome::ToolMissing));
+        }
+        Err(err) => return Err(err).with_context(|| format!("spawn: {}", step.display())),
+    };
+    let stderr = tee(child.stderr.take());
+    let status = child
+        .wait()
+        .with_context(|| format!("wait: {}", step.display()))?;
+    let code = status.code();
+    let outcome = if matches!(code, Some(0 | 2 | 3)) {
+        Outcome::Passed
+    } else {
+        Outcome::Failed
+    };
+    Ok(Ended {
+        outcome,
+        code,
+        stderr,
+    })
+}
+
+/// Everything `pipe` yields, passed on to our own stderr as it comes.
+fn tee(pipe: Option<ChildStderr>) -> String {
+    let Some(pipe) = pipe else {
+        return String::new();
+    };
+    let mut kept = String::new();
+    for line in BufReader::new(pipe).split(b'\n').map_while(Result::ok) {
+        let line = String::from_utf8_lossy(&line).into_owned();
+        eprintln!("{line}");
+        kept.push_str(&line);
+        kept.push('\n');
+    }
+    kept
+}
+
+/// How a spawned command ended.
+enum Spawned {
+    Exited(ExitStatus),
+    /// The program is not there; the missing-tool line is already printed.
+    Missing,
+    /// The step names no program.
+    NoProgram,
+}
+
+fn spawn(dir: &Path, step: &Step) -> Result<Spawned> {
+    let Some((program, args)) = step.program() else {
+        return Ok(Spawned::NoProgram);
+    };
+    match Command::new(program).args(args).current_dir(dir).status() {
+        Ok(status) => Ok(Spawned::Exited(status)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "{}",
+                steps::MissingTool {
+                    binary: program.to_string()
+                }
+            );
+            Ok(Spawned::Missing)
         }
         Err(err) => Err(err).with_context(|| format!("spawn: {}", step.display())),
     }
@@ -495,7 +653,7 @@ pub(crate) fn run_step(dir: &Path, step: &Step) -> Result<Outcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_step, version_ask, Executed, Timing};
+    use super::{exit_meaning, run_mutants, run_step, version_ask, Executed, Timing};
     use crate::facts::Outcome;
     use crate::steps::Step;
     use std::fs;
@@ -541,6 +699,7 @@ mod tests {
             shared: Vec::new(),
             not_run: Vec::new(),
             listed: 0,
+            found: None,
         };
         assert!((done.seconds("a") - 3.5).abs() < 1e-9);
         assert!((done.seconds("b") - 4.0).abs() < 1e-9);
@@ -565,5 +724,60 @@ mod tests {
         let err = run_step(Path::new("."), &blocked).expect_err("not spawnable");
         assert!(format!("{err:#}").contains("spawn"), "{err:#}");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cargo_mutants_exits_0_2_and_3_are_a_finished_run() {
+        let wants = [
+            (0, Outcome::Passed),
+            (1, Outcome::Failed),
+            (2, Outcome::Passed),
+            (3, Outcome::Passed),
+            (4, Outcome::Failed),
+            (101, Outcome::Failed),
+        ];
+        for (code, want) in wants {
+            let step = Step::command(["sh".to_string(), "-c".to_string(), format!("exit {code}")]);
+            let got = run_mutants(Path::new("."), &step).expect("it ran");
+            assert_eq!(got.outcome, want, "exit {code}");
+            assert_eq!(got.code, Some(code), "exit {code}");
+            // Any other command still fails on every nonzero exit.
+            let plain = run_step(Path::new("."), &step).expect("it ran");
+            let plain_want = if code == 0 {
+                Outcome::Passed
+            } else {
+                Outcome::Failed
+            };
+            assert_eq!(plain, plain_want, "exit {code}");
+        }
+        let nowhere = Step::command(["/no/such/program/here"]);
+        assert_eq!(
+            run_mutants(Path::new("."), &nowhere)
+                .expect("an outcome")
+                .outcome,
+            Outcome::ToolMissing
+        );
+    }
+
+    #[test]
+    fn a_mutants_spawn_error_is_an_error_and_a_signal_is_named() {
+        let dir = std::env::temp_dir().join(format!("cargo-tops-mutexec-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let plain = dir.join("plain");
+        fs::write(&plain, "x").expect("write");
+        let blocked = Step::command([plain.display().to_string()]);
+        let err = run_mutants(Path::new("."), &blocked)
+            .err()
+            .expect("not spawnable");
+        assert!(format!("{err:#}").contains("spawn"), "{err:#}");
+        fs::remove_dir_all(&dir).ok();
+        let killed = Step::command(["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()]);
+        let ended = run_mutants(Path::new("."), &killed).expect("it ran");
+        assert_eq!((ended.outcome, ended.code), (Outcome::Failed, None));
+        assert!(exit_meaning(None).contains("signal"));
+        assert!(exit_meaning(Some(4)).contains("unmutated tree"));
+        assert!(exit_meaning(Some(1)).contains("exited 1"));
+        assert_eq!(exit_meaning(Some(77)), "exited 77");
     }
 }
