@@ -486,13 +486,27 @@ fn survivors_that_every_record_explains_pass() {
 }
 
 #[test]
-fn a_record_with_no_symbol_covers_every_function_in_its_glob() {
-    let fixture = fixture("no-symbol", "main");
-    exempt(&fixture, "src/lib.rs", None, "2099-01-01");
-    let file = planted(&fixture, |_| {});
-    let (out, text) = gate_with(&fixture, Some(&file), "2");
-    assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(counts(mutation(&report(&fixture))), [11, 10, 10, 0, 1, 1]);
+fn a_record_with_no_symbol_explains_no_survivor_inside_a_function() {
+    // Whatever its glob: only a symbol names a function.
+    for path in ["src/lib.rs", "src/**", "**", "*", "."] {
+        let fixture = fixture("no-symbol", "main");
+        exempt(&fixture, path, None, "2099-01-01");
+        let file = planted(&fixture, |_| {});
+        let (out, text) = gate_with(&fixture, Some(&file), "2");
+        assert_eq!(out.status.code(), Some(1), "{path}: {text}");
+        let report = report(&fixture);
+        let row = mutation(&report);
+        assert_eq!(counts(row), [11, 10, 0, 10, 1, 1], "{path}: {row}");
+        // Every survivor is named: the max of 0 decides.
+        let problems = mutation_problems(&report);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems
+                .iter()
+                .all(|p| p.contains("double") && p.contains("triple")),
+            "{problems:?}"
+        );
+    }
 }
 
 #[test]
@@ -807,19 +821,19 @@ fn a_survivor_in_no_function_is_explained_only_by_a_record_with_no_symbol() {
     };
     assert_eq!(unexplained(Some("get"), "src/lib.rs"), 7);
     assert_eq!(unexplained(Some("no_such_fn"), "src/lib.rs"), 12);
-    assert_eq!(unexplained(None, "src/lib.rs"), 0);
-    // In this crate every file is under src/, so `src/**` is the whole tree.
-    assert_eq!(unexplained(None, "src/**"), 12);
+    // A record with no symbol explains the 7 in no function, never the 5
+    // in `get`, whatever its glob covers.
+    assert_eq!(unexplained(None, "src/lib.rs"), 5);
+    assert_eq!(unexplained(None, "src/**"), 5);
+    assert_eq!(unexplained(None, "**"), 5);
 }
 
 #[test]
-fn a_whole_tree_record_lifts_the_floor_and_explains_no_survivor() {
-    // The listed spellings reach every Rust file, however they are written.
-    for path in [
-        "**", "/**", "**/", "**/**", "./**", "**/*", "*", "*.rs", "**/*.rs", "*/**", ".", "./",
-        "src/**",
-    ] {
-        let fixture = fixture("whole-tree", "main");
+fn a_whole_crate_record_lifts_the_floor_and_explains_no_survivor() {
+    // The spellings `check` accepts to lift the floor of the max; the max
+    // then decides, because none of them explains a survivor.
+    for path in ["**", "./**", "**/*", ".", "./"] {
+        let fixture = fixture("whole-crate", "main");
         set_max(&fixture, 10);
         exempt(&fixture, path, None, "2099-01-01");
         let file = planted(&fixture, |_| {});
@@ -831,10 +845,23 @@ fn a_whole_tree_record_lifts_the_floor_and_explains_no_survivor() {
         assert_eq!(counts(row), [11, 10, 0, 10, 1, 1], "{path}: {row}");
     }
     // At a max of 9 the same record changes nothing: 10 survivors fail.
-    let fixture = fixture("whole-tree-nine", "main");
+    let fixture = fixture("whole-crate-nine", "main");
     set_max(&fixture, 9);
     exempt(&fixture, "**", None, "2099-01-01");
     let file = planted(&fixture, |_| {});
     let (out, text) = gate_with(&fixture, Some(&file), "2");
     assert_eq!(out.status.code(), Some(1), "{text}");
+}
+
+#[test]
+fn a_symbol_record_explains_only_its_own_function() {
+    let fixture = fixture("own-function", "main");
+    exempt(&fixture, "**", Some("double"), "2099-01-01");
+    let file = planted(&fixture, |_| {});
+    let (out, text) = gate_with(&fixture, Some(&file), "2");
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    let report = report(&fixture);
+    let row = mutation(&report);
+    assert_eq!(counts(row), [11, 10, 5, 5, 1, 1], "{row}");
+    expect_failed_naming(&text, &report, "triple", " double ");
 }

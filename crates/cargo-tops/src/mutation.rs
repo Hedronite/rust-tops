@@ -17,7 +17,6 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::exemptions::Exemption;
-use crate::tiers::whole_tree;
 
 /// Where cargo-mutants writes the run's outcomes, under the directory it ran in.
 const OUTCOMES: &str = "mutants.out/outcomes.json";
@@ -298,35 +297,25 @@ fn relative<'f>(file: &'f str, crate_prefix: &str) -> &'f str {
         .unwrap_or(file)
 }
 
-/// Whether `record` explains a survivor in `function` of the file `rel`
-/// (`None`: in no function, as in a `const`, a `static`, a type alias or a
-/// field type). A record with no symbol that matches every Rust file the
-/// scope examines ([`whole_tree`]) lifts a floor and explains nothing. A symbol names a function, so a survivor in none is
-/// explained only by a record with no symbol.
-fn explains(record: &Exemption, rel: &str, function: Option<&str>, examined: &[String]) -> bool {
-    let named = record.symbol.is_some();
-    if !named && whole_tree(&record.path, examined) {
-        return false;
-    }
-    if named && function.is_none() {
-        return false;
-    }
-    record.covers(rel, function)
+/// Whether `record` explains a survivor in `function` of the file `rel`,
+/// per function: a survivor inside a function is explained only by a record
+/// whose `symbol` names that function and whose glob covers its file. A
+/// survivor in no function (`function: null`: a `const` or `static`
+/// initialiser, a type alias, a field type) is explained only by a record
+/// with no symbol whose glob covers its file. No record explains every
+/// survivor, so `unexplained_survivors_max` always decides.
+fn explains(record: &Exemption, rel: &str, function: Option<&str>) -> bool {
+    record.symbol.is_some() == function.is_some() && record.covers(rel, function)
 }
 
 /// Sort the missed mutants. `live` are the layer's records that have not
 /// expired; `crate_prefix` is the crate's directory under the workspace root,
 /// which the records' globs are relative to.
-pub(crate) fn explain(
-    found: &Outcomes,
-    live: &[Exemption],
-    crate_prefix: &str,
-    examined: &[String],
-) -> Ledger {
+pub(crate) fn explain(found: &Outcomes, live: &[Exemption], crate_prefix: &str) -> Ledger {
     let (explained, unexplained) = found.missed.iter().cloned().partition(|mutant: &Missed| {
         let rel = relative(&mutant.file, crate_prefix);
         live.iter()
-            .any(|record| explains(record, rel, mutant.function.as_deref(), examined))
+            .any(|record| explains(record, rel, mutant.function.as_deref()))
     });
     Ledger {
         caught: found.caught,
@@ -493,7 +482,7 @@ mod tests {
     #[test]
     fn a_record_for_one_function_explains_only_its_survivors() {
         let found = parse(FIXTURE).expect("parses");
-        let ledger = explain(&found, &[record("src/**", Some("double"))], "", &[]);
+        let ledger = explain(&found, &[record("src/**", Some("double"))], "");
         assert_eq!(ledger.explained.len(), 5);
         assert_eq!(ledger.unexplained.len(), 5);
         assert!(ledger
@@ -511,20 +500,31 @@ mod tests {
     }
 
     #[test]
-    fn a_symbol_matches_the_last_path_segment_and_a_symbol_free_record_covers_its_glob() {
+    fn a_symbol_matches_the_last_path_segment_and_a_symbol_free_record_explains_no_function() {
         let found = parse(FIXTURE).expect("parses");
-        let nested = explain(&found, &[record("src/lib.rs", Some("triple"))], "", &[]);
+        let nested = explain(&found, &[record("src/lib.rs", Some("triple"))], "");
         assert_eq!(nested.explained.len(), 5);
         let both = [
             record("src/lib.rs", Some("double")),
             record("src/lib.rs", Some("inner::triple")),
         ];
-        assert!(explain(&found, &both, "", &[]).unexplained.is_empty());
-        let all = explain(&found, &[record("src/**", None)], "", &[]);
-        assert_eq!(all.explained.len(), 10);
-        assert!(all.passes(0) && all.problem(0).is_none());
-        let elsewhere = explain(&found, &[record("other/**", None)], "", &[]);
+        assert!(explain(&found, &both, "").unexplained.is_empty());
+        // No record explains every survivor: one with no symbol explains
+        // none of those inside a function.
+        let all = explain(&found, &[record("src/**", None)], "");
+        assert_eq!(all.explained.len(), 0);
+        assert_eq!(all.unexplained.len(), 10);
+        assert!(!all.passes(0) && all.problem(0).is_some());
+        let elsewhere = explain(&found, &[record("other/**", None)], "");
         assert_eq!(elsewhere.unexplained.len(), 10);
+    }
+
+    /// One record per function of the recorded run, over `path`.
+    fn both(path: &str) -> [Exemption; 2] {
+        [
+            record(path, Some("double")),
+            record(path, Some("inner::triple")),
+        ]
     }
 
     #[test]
@@ -540,37 +540,26 @@ mod tests {
         let found = parse(&text).expect("parses");
         // The record is relative to the crate: it names `src/lib.rs`, and the
         // workspace-relative file is `crates/sample/src/lib.rs`.
-        let inside = [record("src/lib.rs", None)];
+        let inside = both("src/lib.rs");
         assert_eq!(
-            explain(&found, &inside, "crates/sample", &[])
-                .explained
-                .len(),
+            explain(&found, &inside, "crates/sample").explained.len(),
             10
         );
         assert_eq!(
-            explain(&found, &inside, "crates/sample/", &[])
-                .explained
-                .len(),
+            explain(&found, &inside, "crates/sample/").explained.len(),
             10
         );
         // A record that spells the workspace path matches only when no
         // prefix is stripped.
-        let spelled = [record("crates/sample/src/lib.rs", None)];
-        assert_eq!(explain(&found, &spelled, "", &[]).explained.len(), 10);
+        let spelled = both("crates/sample/src/lib.rs");
+        assert_eq!(explain(&found, &spelled, "").explained.len(), 10);
         assert_eq!(
-            explain(&found, &spelled, "crates/sample", &[])
-                .explained
-                .len(),
+            explain(&found, &spelled, "crates/sample").explained.len(),
             0
         );
         // A record for another crate's file explains nothing.
-        let other = [record("crates/other/src/lib.rs", None)];
-        assert_eq!(
-            explain(&found, &other, "crates/sample", &[])
-                .explained
-                .len(),
-            0
-        );
+        let other = both("crates/other/src/lib.rs");
+        assert_eq!(explain(&found, &other, "crates/sample").explained.len(), 0);
     }
 
     #[test]
@@ -587,7 +576,7 @@ mod tests {
     #[test]
     fn the_judged_numbers_count_every_kind_and_the_max() {
         let found = parse(FIXTURE).expect("parses");
-        let ledger = explain(&found, &[record("src/lib.rs", Some("double"))], "", &[]);
+        let ledger = explain(&found, &[record("src/lib.rs", Some("double"))], "");
         let judged = ledger.to_json(2);
         assert_eq!(judged["caught"], 11);
         assert_eq!(judged["missed"], 10);
@@ -606,7 +595,7 @@ mod tests {
             timeouts: 4,
             unviable: 9,
         };
-        let ledger = explain(&only, &[], "", &[]);
+        let ledger = explain(&only, &[], "");
         assert!(ledger.passes(0) && ledger.problem(0).is_none());
         assert_eq!(ledger.timeouts, 4);
         assert_eq!(ledger.unviable, 9);
@@ -614,7 +603,7 @@ mod tests {
 
     #[test]
     fn a_negative_max_is_never_met() {
-        let ledger = explain(&Outcomes::default(), &[], "", &[]);
+        let ledger = explain(&Outcomes::default(), &[], "");
         assert!(!ledger.passes(-1));
     }
 
@@ -636,22 +625,15 @@ mod tests {
                 && m.function.as_deref() == Some("qa_h4_survivor_miss")));
         let by_symbol = [record("src/qa_h4_plant.rs", Some("qa_h4_survivor_miss"))];
         assert_eq!(
-            explain(&found, &by_symbol, "crates/plant", &[])
-                .explained
-                .len(),
+            explain(&found, &by_symbol, "crates/plant").explained.len(),
             2
         );
-        assert_eq!(explain(&found, &by_symbol, "", &[]).explained.len(), 2);
+        assert_eq!(explain(&found, &by_symbol, "").explained.len(), 2);
         let other = [record("src/qa_h4_plant.rs", Some("another"))];
-        assert_eq!(
-            explain(&found, &other, "crates/plant", &[])
-                .unexplained
-                .len(),
-            2
-        );
+        assert_eq!(explain(&found, &other, "crates/plant").unexplained.len(), 2);
         let wrong_file = [record("src/lib.rs", Some("qa_h4_survivor_miss"))];
         assert_eq!(
-            explain(&found, &wrong_file, "crates/plant", &[])
+            explain(&found, &wrong_file, "crates/plant")
                 .unexplained
                 .len(),
             2
@@ -794,38 +776,44 @@ mod tests {
         include_str!("../tests/fixtures/mutants-27.1.0/null-function/outcomes.json");
 
     #[test]
-    fn a_survivor_in_no_function_takes_no_symbol_and_a_whole_tree_record_explains_none() {
+    fn a_survivor_in_no_function_takes_a_symbol_free_record_and_nothing_explains_them_all() {
         let found = parse(NULL_FUNCTION).expect("parses");
         assert_eq!(found.missed.len(), 12);
         assert_eq!(
             found.missed.iter().filter(|m| m.function.is_none()).count(),
             7
         );
-        let count = |records: &[Exemption]| explain(&found, records, "", &[]).explained.len();
+        let count = |records: &[Exemption]| explain(&found, records, "").explained.len();
+        // A symbol explains the function it names: 5 in `get`, none outside.
         assert_eq!(count(&[record("src/lib.rs", Some("get"))]), 5);
         assert_eq!(count(&[record("src/lib.rs", Some("no_such_fn"))]), 0);
-        assert_eq!(count(&[record("src/lib.rs", None)]), 12);
-        assert_eq!(count(&[record("src/**", None)]), 12);
-        // Symbol and no symbol: every survivor once.
-        assert_eq!(
-            count(&[
-                record("src/lib.rs", Some("get")),
-                record("src/lib.rs", None)
-            ]),
-            12
-        );
-        for whole in ["**", "./**", "**/*", "*", ".", "./"] {
-            assert_eq!(count(&[record(whole, None)]), 0, "{whole}");
+        // No symbol: the 7 in no function, in the files the glob covers.
+        for path in ["src/lib.rs", "src/**", "**", "*", "**/*.rs"] {
+            assert_eq!(count(&[record(path, None)]), 7, "{path}");
         }
-        // A symbol never lifts a floor, so a symbol record with a whole-tree
-        // path still names its function.
+        assert_eq!(count(&[record("other/**", None)]), 0);
+        // Both kinds of record: every survivor, each counted once.
+        let both = [
+            record("src/lib.rs", Some("get")),
+            record("src/lib.rs", None),
+        ];
+        assert_eq!(count(&both), 12);
+        // A symbol with a whole-tree path still names only its function.
         assert_eq!(count(&[record("**", Some("get"))]), 5);
+        // In the recorded run every survivor is in a function: a symbol-free
+        // record explains none, whatever its glob, so the max decides.
+        let in_functions = parse(FIXTURE).expect("parses");
+        for path in ["**", "/**", "*", "*.rs", "src/**", ".", "src/lib.rs"] {
+            let ledger = explain(&in_functions, &[record(path, None)], "");
+            assert_eq!(ledger.explained.len(), 0, "{path}");
+            assert!(!ledger.passes(0), "{path}");
+        }
     }
 
     #[test]
     fn a_survivor_is_named_once_by_its_own_name() {
         let found = parse(FIXTURE).expect("parses");
-        let ledger = explain(&found, &[], "", &[]);
+        let ledger = explain(&found, &[], "");
         let problem = ledger.problem(0).expect("fails");
         let first = &found.missed[0];
         assert_eq!(problem.matches(&first.name).count(), 1, "{problem}");

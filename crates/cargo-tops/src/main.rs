@@ -258,13 +258,7 @@ fn load_config(path: &Path) -> Result<TopsConfig> {
             errors.join("\n  ")
         ));
     }
-    let examined = scope::examined_files(path);
-    let problems = tiers::check_with(
-        &file.display().to_string(),
-        &doc,
-        &exemptions::today(),
-        &examined,
-    );
+    let problems = tiers::check(&file.display().to_string(), &doc, &exemptions::today());
     if !problems.is_empty() {
         return Err(anyhow!("{}", problems.join("\n")));
     }

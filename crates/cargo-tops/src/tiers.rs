@@ -11,7 +11,6 @@ use serde_json::Value;
 
 use crate::exemptions;
 use crate::profile_data::class_profile;
-use crate::scope::glob_matches;
 
 /// The tier a layer runs at: the table's, else the instance's own for an id
 /// the table lacks, else 0.
@@ -137,28 +136,15 @@ const REQUIRED_BY_PROFILE: [(&str, &str); 5] = [
 /// Every problem in the instance `doc` (read from `file`): a tier that is not
 /// the table's, a floor looser than its class profile with no live exemption
 /// on `today` (`YYYY-MM-DD`), and a required layer that is off.
-pub(crate) fn check_with(file: &str, doc: &Value, today: &str, examined: &[String]) -> Vec<String> {
+pub(crate) fn check(file: &str, doc: &Value, today: &str) -> Vec<String> {
     let mut problems = tier_problems(file, doc);
     let class = doc.pointer("/crate/class").and_then(Value::as_str);
     let profile = class.and_then(class_profile);
     if let (Some(class), Some(profile)) = (class, profile.as_ref()) {
-        let when = When { today, examined };
-        problems.extend(floor_problems(file, doc, class, profile, &when));
+        problems.extend(floor_problems(file, doc, class, profile, today));
     }
     problems.extend(required_problems(file, doc, class, profile.as_ref()));
     problems
-}
-
-/// `check` with no Rust source files known: the tests of the floors.
-#[cfg(test)]
-fn check(file: &str, doc: &Value, today: &str) -> Vec<String> {
-    check_with(file, doc, today, &[])
-}
-
-/// The day, and the Rust files of the crate, that a floor's lift is judged on.
-struct When<'a> {
-    today: &'a str,
-    examined: &'a [String],
 }
 
 fn layers(doc: &Value) -> &[Value] {
@@ -196,11 +182,11 @@ fn floor_problems(
     doc: &Value,
     class: &str,
     profile: &Value,
-    when: &When<'_>,
+    today: &str,
 ) -> Vec<String> {
     FLOORS
         .iter()
-        .filter_map(|floor| floor_problem(file, doc, class, profile, when, floor))
+        .filter_map(|floor| floor_problem(file, doc, class, profile, today, floor))
         .collect()
 }
 
@@ -209,7 +195,7 @@ fn floor_problem(
     doc: &Value,
     class: &str,
     profile: &Value,
-    when: &When<'_>,
+    today: &str,
     floor: &Floor,
 ) -> Option<String> {
     let wanted = profile.pointer(floor.profile).and_then(Value::as_f64)?;
@@ -222,7 +208,7 @@ fn floor_problem(
         Bound::Min => have < wanted,
         Bound::Max => have > wanted,
     });
-    if !loose || live_exemption(doc, floor.layer, when) {
+    if !loose || live_exemption(doc, floor.layer, today) {
         return None;
     }
     let key = found.map_or(floor.key, |(key, _)| key);
@@ -239,42 +225,10 @@ fn floor_problem(
     ))
 }
 
-fn live_exemption(doc: &Value, layer: &str, when: &When<'_>) -> bool {
+fn live_exemption(doc: &Value, layer: &str, today: &str) -> bool {
     exemptions::for_layer(doc.get("exemptions"), layer)
         .iter()
-        .any(|record| {
-            record.live(when.today)
-                && record.symbol.is_none()
-                && lifts(layer, &record.path, when.examined)
-        })
-}
-
-/// Whether a record for `layer` at `path` covers the whole crate. The
-/// mutation layer decides it from the crate's Rust files ([`whole_tree`]);
-/// the coverage and CRAP floors keep the spellings of [`covers_crate`].
-fn lifts(layer: &str, path: &str, examined: &[String]) -> bool {
-    if layer == "mutation" {
-        whole_tree(path, examined)
-    } else {
-        covers_crate(path)
-    }
-}
-
-/// Whether `path`, a glob of a `layer: mutation` record with no symbol, is
-/// the whole tree: it matches every Rust source file the mutation scope
-/// examines (`examined`, relative to the crate root), or, read as a pattern,
-/// is made of `*` and `**` components only, or is `.`. Such a record lifts the
-/// floor on `unexplained_survivors_max` and explains no survivor; `check` and
-/// the gate both ask this one question.
-pub(crate) fn whole_tree(path: &str, examined: &[String]) -> bool {
-    let parts: Vec<&str> = path
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect();
-    let wild = parts.iter().all(|part| matches!(*part, "*" | "**"));
-    let every_file = !examined.is_empty() && examined.iter().all(|file| glob_matches(path, file));
-    // No component left (`.`, `./`) names the crate root: `wild` holds then.
-    wild || every_file
+        .any(|record| record.live(today) && record.symbol.is_none() && covers_crate(&record.path))
 }
 
 /// Whether an exemption path covers the whole crate, the only reach that may
@@ -327,7 +281,7 @@ fn required_problem(file: &str, doc: &Value, layer: &str, who: &str) -> Option<S
 
 #[cfg(test)]
 mod tests {
-    use super::{check, check_with, tier_of, whole_tree, TIERS};
+    use super::{check, tier_of, TIERS};
     use crate::facts::parse_yaml;
     use serde_json::{json, Value};
 
@@ -635,100 +589,5 @@ mod tests {
         let at = layer_index(&doc, "mutation");
         set(&mut doc, &format!("/layers/{at}/tier"), json!(5));
         assert!(one(&doc).contains("layers[id=mutation].tier is 5"));
-    }
-
-    const FILES: [&str; 3] = ["src/lib.rs", "src/gate/mod.rs", "src/gate/judge.rs"];
-
-    fn examined() -> Vec<String> {
-        FILES.iter().map(|file| (*file).to_string()).collect()
-    }
-
-    #[test]
-    fn every_spelling_that_reaches_every_file_is_the_whole_tree() {
-        let files = examined();
-        for path in [
-            "**", "/**", "**/", "**/**", "*", "*.rs", "**/*.rs", "*/**", "**/*", "./**", ".", "./",
-            "./**/*", "src/**",
-        ] {
-            assert!(whole_tree(path, &files), "{path}");
-        }
-        // Spelling alone is enough for the wild ones, even with no file known.
-        for path in [
-            "**", "/**", "**/", "**/**", "*", "*/**", "**/*", "./**", ".", "./",
-        ] {
-            assert!(whole_tree(path, &[]), "{path} with no files");
-        }
-        // Narrower than the tree: one file, one directory, one other crate.
-        for path in [
-            "src/lib.rs",
-            "src/gate/**",
-            "gate/*.rs",
-            "tests/**",
-            "src/other.rs",
-        ] {
-            assert!(!whole_tree(path, &files), "{path}");
-        }
-        assert!(!whole_tree("src/lib.rs", &[]));
-        // A crate's only file is the whole tree.
-        assert!(whole_tree("src/lib.rs", &["src/lib.rs".to_string()]));
-        // A build script outside src/ is also examined.
-        let with_build = [files, vec!["build.rs".to_string()]].concat();
-        assert!(!whole_tree("src/**", &with_build));
-        assert!(whole_tree("**/*.rs", &with_build));
-    }
-
-    #[test]
-    fn a_mutation_record_lifts_the_floor_by_the_files_and_check_says_so() {
-        let files = examined();
-        for path in [
-            "**", "/**", "**/", "**/**", "*", "*.rs", "**/*.rs", "*/**", "src/**",
-        ] {
-            let mut doc = golden("library-core");
-            set(
-                &mut doc,
-                "/gates/mutation/unexplained_survivors_max",
-                json!(3),
-            );
-            set(
-                &mut doc,
-                "/exemptions",
-                exemption_at(path, "mutation", "2026-12-31"),
-            );
-            assert!(
-                check_with("f.yaml", &doc, TODAY, &files).is_empty(),
-                "{path}"
-            );
-        }
-        let mut doc = golden("library-core");
-        set(
-            &mut doc,
-            "/gates/mutation/unexplained_survivors_max",
-            json!(3),
-        );
-        set(
-            &mut doc,
-            "/exemptions",
-            exemption_at("src/lib.rs", "mutation", "2026-12-31"),
-        );
-        assert!(!check_with("f.yaml", &doc, TODAY, &files).is_empty());
-    }
-
-    #[test]
-    fn a_star_record_does_not_relax_the_coverage_or_crap_floor() {
-        // As at base: `*` is not one of the spellings that lift those floors.
-        let mut doc = golden("library-core");
-        set(&mut doc, "/gates/coverage/line_min_pct", json!(50));
-        set(
-            &mut doc,
-            "/exemptions",
-            exemption_at("*", "coverage", "2026-12-31"),
-        );
-        assert!(one(&doc).contains("gates.coverage.line_min_pct is 50"));
-        set(
-            &mut doc,
-            "/exemptions",
-            exemption_at("**", "coverage", "2026-12-31"),
-        );
-        assert!(check("f.yaml", &doc, TODAY).is_empty());
     }
 }

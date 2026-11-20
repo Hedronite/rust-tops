@@ -127,35 +127,6 @@ pub(crate) fn package_dir(metadata: &str, name: &str) -> Option<PathBuf> {
     Path::new(manifest).parent().map(Path::to_path_buf)
 }
 
-/// The Rust source files cargo-mutants examines in the crate at `root`,
-/// relative to it with `/` separators: every `.rs` file under `src/`, and
-/// `build.rs`. Sorted.
-pub(crate) fn examined_files(root: &Path) -> Vec<String> {
-    let mut found = Vec::new();
-    walk_rs(&root.join("src"), "src", &mut found);
-    if root.join("build.rs").is_file() {
-        found.push("build.rs".to_string());
-    }
-    found.sort();
-    found
-}
-
-fn walk_rs(dir: &Path, rel: &str, found: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.filter_map(Result::ok) {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let path = entry.path();
-        let below = format!("{rel}/{name}");
-        if path.is_dir() {
-            walk_rs(&path, &below, found);
-        } else if name.ends_with(".rs") {
-            found.push(below);
-        }
-    }
-}
-
 /// Whether `glob` matches the `/`-separated `rel`, or a trailing part of it
 /// that starts at a directory.
 pub(crate) fn glob_matches(glob: &str, rel: &str) -> bool {
@@ -297,28 +268,5 @@ mod tests {
         fs::create_dir_all(&empty).expect("mkdir");
         assert_eq!(crate_root(&empty, "cargo-tops"), empty);
         fs::remove_dir_all(&empty).expect("cleanup");
-    }
-
-    #[test]
-    fn the_examined_files_are_the_rust_files_under_src_and_build_rs() {
-        let root = std::env::temp_dir().join(format!("cargo-tops-examined-{}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        for file in [
-            "src/lib.rs",
-            "src/a/b.rs",
-            "src/a/data.txt",
-            "tests/t.rs",
-            "build.rs",
-        ] {
-            let path = root.join(file);
-            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-            std::fs::write(&path, "").expect("write");
-        }
-        assert_eq!(
-            super::examined_files(&root),
-            ["build.rs", "src/a/b.rs", "src/lib.rs"]
-        );
-        assert!(super::examined_files(&root.join("nowhere")).is_empty());
-        std::fs::remove_dir_all(&root).ok();
     }
 }
