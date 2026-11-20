@@ -93,8 +93,11 @@ enum Commands {
     /// Run enabled Tier 0–1 tools in protocol order, then the Bend laws layer
     #[command(after_help = "Writes <target>/rust-tops/report.json on every run.\n\
 Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
-2  the config is invalid (rust-tops.yaml unreadable or failing check)\n  \
-3  the environment: a required tool or cargo metadata is missing\n\
+2  the config or the request cannot be gated: rust-tops.yaml missing, unreadable \
+or failing check, rust-tops.lock unreadable, or no enabled layer at or below --max-tier; \
+a command-line usage error is 2 too. An expired exemption is not 2: it is 1\n  \
+3  the environment: a required tool or cargo metadata is missing, or report.json \
+cannot be written\n\
 Where more than one applies, 2 wins over 3, and 3 over 1.")]
     Gate {
         #[arg(long, default_value = ".")]
@@ -182,15 +185,7 @@ fn run() -> Result<ExitCode> {
             init(&args)?;
             Ok(ExitCode::SUCCESS)
         }
-        Commands::Check { path } => {
-            let cfg = load_config(&path)?;
-            check(&cfg)?;
-            println!(
-                "ok: {} ({}) matches rust-tops {}",
-                cfg.crate_.name, cfg.crate_.class, cfg.protocol.version
-            );
-            Ok(ExitCode::SUCCESS)
-        }
+        Commands::Check { path } => check_command(&path),
         Commands::Gate {
             path,
             max_tier,
@@ -214,6 +209,21 @@ fn run() -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// `cargo tops check`: an expired exemption is a warning here and a failure
+/// of the gate; the config is still valid.
+fn check_command(path: &Path) -> Result<ExitCode> {
+    let cfg = load_config(path)?;
+    check(&cfg)?;
+    for problem in gate::judge::expired_problems(&cfg) {
+        println!("warning: {problem}");
+    }
+    println!(
+        "ok: {} ({}) matches rust-tops {}",
+        cfg.crate_.name, cfg.crate_.class, cfg.protocol.version
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `cargo tops gate`: a config that does not load, or fails `check`, is exit

@@ -58,24 +58,27 @@ impl Exemption {
     }
 }
 
-/// The records in `exemptions` whose `layer` is `layer`. A record without a
-/// string `path` or `expires` is skipped; the schema requires both.
+/// One record, when it has a string `path` and `expires`; the schema
+/// requires both.
+fn record_of(entry: &Value) -> Option<Exemption> {
+    Some(Exemption {
+        path: entry.get("path")?.as_str()?.to_string(),
+        symbol: entry
+            .get("symbol")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        expires: entry.get("expires")?.as_str()?.to_string(),
+    })
+}
+
+/// The records in `exemptions` whose `layer` is `layer`.
 pub(crate) fn for_layer(exemptions: Option<&Value>, layer: &str) -> Vec<Exemption> {
     exemptions
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter(|entry| entry.get("layer").and_then(Value::as_str) == Some(layer))
-        .filter_map(|entry| {
-            Some(Exemption {
-                path: entry.get("path")?.as_str()?.to_string(),
-                symbol: entry
-                    .get("symbol")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                expires: entry.get("expires")?.as_str()?.to_string(),
-            })
-        })
+        .filter_map(record_of)
         .collect()
 }
 

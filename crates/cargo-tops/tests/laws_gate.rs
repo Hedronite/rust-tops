@@ -50,6 +50,11 @@ if [ "$*" = "crap --version" ]; then
   echo 'cargo-crap 0.9.0'
   exit 0
 fi
+# `cargo mutants` leaves what 27.1.0 leaves for a run with no mutants.
+if [ "$1" = "mutants" ]; then
+  mkdir -p mutants.out
+  echo '{"outcomes":[{"scenario":"Baseline","summary":"Success"}],"total_mutants":0,"missed":0,"caught":0,"timeout":0,"unviable":0,"success":0,"cargo_mutants_version":"27.1.0"}' > mutants.out/outcomes.json
+fi
 prev=
 for arg in "$@"; do
   case $prev in

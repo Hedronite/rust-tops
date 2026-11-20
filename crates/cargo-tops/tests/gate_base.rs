@@ -25,11 +25,16 @@ mod profiles {
 const REPORT_SCHEMA: &str = include_str!("../../../schema/gate-report.schema.json");
 
 /// Logs its argv when `$CARGO_STUB_LOG` is set; answers every `--version`;
+/// `cargo mutants` writes what 27.1.0 writes for a run with no mutants;
 /// passes everything else.
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ -n "${CARGO_STUB_LOG:-}" ]; then echo "$*" >> "$CARGO_STUB_LOG"; fi
 if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
 case "$*" in *--version) echo "stub-tool 1.2.3"; exit 0 ;; esac
+if [ "$1" = "mutants" ]; then
+  mkdir -p mutants.out
+  echo '{"outcomes":[{"scenario":"Baseline","summary":"Success"}],"total_mutants":0,"missed":0,"caught":0,"timeout":0,"unviable":0,"success":0,"cargo_mutants_version":"27.1.0"}' > mutants.out/outcomes.json
+fi
 exit 0
 "#;
 
@@ -739,4 +744,113 @@ fn a_base_with_no_common_history_says_why_and_names_fetch_depth() {
         problems.iter().all(|p| p.contains("fetch-depth: 0")),
         "{problems:?}"
     );
+}
+
+/// The number that follows `after` in `text`.
+fn number_after(text: &str, after: &str) -> usize {
+    let tail = text.split(after).nth(1).unwrap_or_default();
+    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().unwrap_or(usize::MAX)
+}
+
+#[test]
+fn an_origin_head_that_names_a_tree_reads_not_a_commit() {
+    let fixture = fixture("tree-head", "main");
+    let tree = git(&fixture, &fixture.repo, &["rev-parse", "HEAD^{tree}"]);
+    git(
+        &fixture,
+        &fixture.repo,
+        &[
+            "update-ref",
+            "--no-deref",
+            "refs/remotes/origin/HEAD",
+            &tree,
+        ],
+    );
+    let (_, text) = gate(&fixture, &[], None);
+    assert!(text.contains("origin/HEAD: not a commit"), "{text}");
+    assert!(!text.contains("origin/HEAD: not set"), "{text}");
+}
+
+#[test]
+fn a_mutation_row_that_stopped_on_a_missing_tool_does_not_say_the_diff_is_empty() {
+    let fixture = fixture("tool-missing-words", "main");
+    fs::remove_file(fixture.bin.join("cargo-mutants")).expect("remove the stub");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let doc = report(&fixture);
+    assert_eq!(at(mutation(&doc), "/verdict"), "tool-missing", "{doc}");
+    let detail = at(mutation(&doc), "/detail").as_str().unwrap_or_default();
+    assert!(detail.contains("no mutation base"), "{detail}");
+    assert!(
+        !detail.contains("is empty") && !detail.contains("did not run"),
+        "{detail}"
+    );
+}
+
+#[test]
+fn a_dry_run_row_words_the_base_without_an_outcome() {
+    let fixture = fixture("dry-words", "main");
+    let (_, _) = gate(&fixture, &["--dry-run"], None);
+    let doc = report(&fixture);
+    let detail = at(mutation(&doc), "/detail").as_str().unwrap_or_default();
+    assert!(detail.contains("no mutation base"), "{detail}");
+    assert!(
+        !detail.contains("is empty") && !detail.contains("did not run"),
+        "{detail}"
+    );
+}
+
+#[test]
+fn the_summary_counts_commands_that_ran_as_the_count_line_does() {
+    // A missing tool ran no command: it is in neither number.
+    let fixture = fixture("count-words", "main");
+    fs::remove_file(fixture.bin.join("cargo-deny")).expect("remove the stub");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let said = number_after(&text, "count: ");
+    let closing = number_after(&text, "problem(s), ");
+    assert!(said != usize::MAX && closing != usize::MAX, "{text}");
+    assert_eq!(said, closing, "{text}");
+}
+
+#[test]
+fn a_report_that_cannot_be_written_ends_the_output_with_fail() {
+    let fixture = fixture("unwritable", "main");
+    fs::create_dir_all(fixture.repo.join("target/rust-tops/report.json")).expect("mkdir");
+    // At HEAD the diff is empty: without the write error this is a pass.
+    let (out, text) = gate(&fixture, &["--base", "HEAD"], None);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let last = stdout.lines().rev().find(|line| !line.trim().is_empty());
+    assert!(
+        last.is_some_and(|line| line.starts_with("fail:") && line.contains("report.json")),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("ok:")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_help_and_the_schema_say_what_exit_2_covers() {
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+        .args(["gate", "--help"])
+        .output()
+        .expect("spawn help");
+    let help = String::from_utf8_lossy(&out.stdout).replace("\n  ", " ");
+    let schema: Value = serde_json::from_str(REPORT_SCHEMA).expect("schema is JSON");
+    let described = at(&schema, "/properties/exit_code/description")
+        .as_str()
+        .unwrap_or_default();
+    for (name, text) in [("help", help.as_str()), ("schema", described)] {
+        for phrase in [
+            "rust-tops.yaml",
+            "rust-tops.lock",
+            "no enabled layer at or below --max-tier",
+        ] {
+            assert!(text.contains(phrase), "{name} lacks `{phrase}`: {text}");
+        }
+    }
 }

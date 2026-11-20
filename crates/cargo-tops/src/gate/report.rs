@@ -10,11 +10,10 @@ use std::process::{Command, ExitCode};
 use serde_json::{json, Map, Value};
 
 use super::execute::Executed;
-use super::judge::Judgement;
+use super::judge::{self, Judgement};
 use super::plan::{GatePlan, What};
 use super::{Fault, Mode, Options};
 use crate::config::TopsConfig;
-use crate::facts::{Outcome, Run};
 use crate::floors::{CoverageNumbers, CrapNumbers};
 use crate::steps::{self, Base};
 use crate::{laws, PROTOCOL_VERSION};
@@ -80,7 +79,6 @@ pub(crate) fn finish(
     done: &Executed<'_>,
     judged: &Judgement,
 ) -> ExitCode {
-    print_summary(opts, done, judged);
     let kind = if judged.failed.is_empty() {
         Kind::Pass
     } else if judged.environment {
@@ -88,7 +86,9 @@ pub(crate) fn finish(
     } else {
         Kind::Failed
     };
-    emit(&Parts {
+    // The report is written before the summary, so the summary's last line
+    // is true: a report that could not be written ends it with `fail:`.
+    let (code, unwritten) = write_report(&Parts {
         dir,
         cfg: Some(cfg),
         opts,
@@ -98,48 +98,67 @@ pub(crate) fn finish(
         done: Some(done),
         judged: Some(judged),
         report_dir: plan.report.clone(),
-    })
+    });
+    print_summary(opts, done, judged, unwritten.as_deref());
+    code
 }
 
-fn print_summary(opts: Options, done: &Executed<'_>, judged: &Judgement) {
+/// `unwritten` is the path of a report that could not be written.
+fn print_summary(opts: Options, done: &Executed<'_>, judged: &Judgement, unwritten: Option<&Path>) {
     println!();
     println!("{}", judged.evaluated);
     println!("{}", judged.count);
     if opts.mode == Mode::DryRun {
-        if done.not_run.is_empty() {
-            println!(
-                "dry-run: {} command(s) listed, 0 run; a dry run is not a pass",
-                done.listed
-            );
-        } else {
-            println!(
-                "dry-run: {} command(s) listed, 0 run; {} layer(s) NotRun, so the gate would fail",
-                done.listed,
-                done.not_run.len()
-            );
-        }
-        for problem in &judged.failed {
-            println!("  - {problem}");
-        }
+        print_dry_run(done, judged);
     } else if judged.failed.is_empty() {
-        if judged.vacuous == 0 {
-            println!("ok: {} command(s) passed", judged.ran);
-        } else {
-            println!(
-                "ok: {} command(s) passed, {} vacuous (counted for no law)",
-                judged.ran - judged.vacuous,
-                judged.vacuous
-            );
-        }
+        print_pass(judged, unwritten);
     } else {
         println!(
             "fail: {} problem(s), {} command(s) run",
             judged.failed.len(),
-            judged.ran
+            judged.commands
         );
-        for problem in &judged.failed {
-            println!("  - {problem}");
-        }
+        print_problems(judged);
+    }
+}
+
+fn print_problems(judged: &Judgement) {
+    for problem in &judged.failed {
+        println!("  - {problem}");
+    }
+}
+
+fn print_dry_run(done: &Executed<'_>, judged: &Judgement) {
+    if done.not_run.is_empty() {
+        println!(
+            "dry-run: {} command(s) listed, 0 run; a dry run is not a pass",
+            done.listed
+        );
+    } else {
+        println!(
+            "dry-run: {} command(s) listed, 0 run; {} layer(s) NotRun, so the gate would fail",
+            done.listed,
+            done.not_run.len()
+        );
+    }
+    print_problems(judged);
+}
+
+/// No problem: `ok`, unless the report that says so could not be written.
+fn print_pass(judged: &Judgement, unwritten: Option<&Path>) {
+    if let Some(path) = unwritten {
+        println!(
+            "fail: {} could not be written; the gate has no verdict on record",
+            path.display()
+        );
+    } else if judged.vacuous == 0 {
+        println!("ok: {} command(s) passed", judged.ran);
+    } else {
+        println!(
+            "ok: {} command(s) passed, {} vacuous (counted for no law)",
+            judged.ran - judged.vacuous,
+            judged.vacuous
+        );
     }
 }
 
@@ -210,9 +229,15 @@ struct Parts<'a> {
     report_dir: PathBuf,
 }
 
-/// Write the report. A report that cannot be written is an environment
-/// fault, unless the config fault is already the exit code.
+/// Write the report and return the exit code.
 fn emit(parts: &Parts<'_>) -> ExitCode {
+    write_report(parts).0
+}
+
+/// Write the report. A report that cannot be written is an environment
+/// fault, unless the config fault is already the exit code; its path is
+/// returned so the summary can say so.
+fn write_report(parts: &Parts<'_>) -> (ExitCode, Option<PathBuf>) {
     let mut kind = parts.kind;
     let path = parts.report_dir.join(REPORT);
     let wrote = fs::create_dir_all(&parts.report_dir).and_then(|()| {
@@ -220,13 +245,15 @@ fn emit(parts: &Parts<'_>) -> ExitCode {
             serde_json::to_string_pretty(&document(parts, kind)).map_err(std::io::Error::other)?;
         fs::write(&path, format!("{text}\n"))
     });
+    let mut unwritten = None;
     if let Err(err) = wrote {
         eprintln!("error: write {}: {err}", path.display());
         if matches!(kind, Kind::Pass | Kind::Failed) {
             kind = Kind::Env;
         }
+        unwritten = Some(path);
     }
-    ExitCode::from(kind.code())
+    (ExitCode::from(kind.code()), unwritten)
 }
 
 fn git_sha(dir: &Path) -> Option<String> {
@@ -349,58 +376,30 @@ fn layer_rows(parts: &Parts<'_>) -> (Vec<Value>, Vec<String>) {
     (rows, disabled)
 }
 
-/// The verdict of a layer's runs: a failure outranks a missing tool, which
-/// outranks a vacuous run.
-fn runs_verdict(runs: &[&Run]) -> &'static str {
-    let any = |outcome: Outcome| runs.iter().any(|run| run.outcome == outcome);
-    if any(Outcome::Failed) {
-        "fail"
-    } else if any(Outcome::ToolMissing) {
-        "tool-missing"
-    } else if any(Outcome::Vacuous) {
-        "vacuous"
-    } else {
-        "pass"
-    }
-}
-
-/// The numbers a layer's floors were judged on, and whether any floor missed.
-fn judged_numbers(parts: &Parts<'_>, id: &str) -> (Option<Value>, bool) {
-    let Some(measured) = parts.judged.map(|judged| &judged.measured) else {
-        return (None, false);
-    };
+/// The numbers a layer's floors, or its survivors, were judged on.
+fn judged_numbers(parts: &Parts<'_>, id: &str) -> Option<Value> {
+    let judged = parts.judged?;
     match id {
-        "coverage" => (
-            measured.coverage.as_ref().map(CoverageNumbers::to_json),
-            measured.coverage_problems > 0,
-        ),
-        "crap" => (
-            measured.crap.as_ref().map(CrapNumbers::to_json),
-            measured.crap_problems > 0,
-        ),
-        _ => (None, false),
+        "coverage" => judged
+            .measured
+            .coverage
+            .as_ref()
+            .map(CoverageNumbers::to_json),
+        "crap" => judged.measured.crap.as_ref().map(CrapNumbers::to_json),
+        "mutation" => judged
+            .survivors
+            .as_ref()
+            .map(|found| found.ledger.to_json(found.max)),
+        _ => None,
     }
-}
-
-/// `not-run` when nothing ran for the layer; otherwise its worst run.
-fn unit_verdict(done: &Executed<'_>, id: &str) -> &'static str {
-    let runs: Vec<&Run> = done.runs.iter().filter(|run| run.layer == id).collect();
-    if runs.is_empty() {
-        return "not-run";
-    }
-    runs_verdict(&runs)
 }
 
 fn unit_row(parts: &Parts<'_>, id: &str, tier: u8) -> Map<String, Value> {
     let (Some(plan), Some(done)) = (parts.plan, parts.done) else {
         return row(id, tier, "not-run", &[], 0.0, None);
     };
-    let (numbers, missed) = judged_numbers(parts, id);
-    let verdict = match unit_verdict(done, id) {
-        // The run passed and its floors did not.
-        "pass" if missed => "fail",
-        verdict => verdict,
-    };
+    let numbers = judged_numbers(parts, id);
+    let verdict = judge::layer_verdict(done, parts.judged, id);
     let version = done.tool_version(id);
     let mut entry = row(
         id,
@@ -444,11 +443,10 @@ fn name_the_base(plan: &GatePlan<'_>, done: &Executed<'_>, entry: &mut Map<Strin
         Base::Missing { tried, .. } => json!({ "ref": null, "source": null, "tried": tried }),
     };
     put_judged(entry, "base", base);
-    let ran = run_note(done, "mutation");
-    let planned = (!matches!(mutation.base, Base::Found { .. }))
-        .then(|| steps::stop_note(&mutation.base, Outcome::Vacuous).map(|(_, note)| note))
-        .flatten();
-    if let Some(detail) = ran.or(planned) {
+    // A run that stopped says why in its own words. A row with no such note
+    // (a missing tool, a dry run) names the base's fault and no outcome.
+    if let Some(detail) = run_note(done, "mutation").or_else(|| steps::base_finding(&mutation.base))
+    {
         entry.insert("detail".into(), json!(detail));
     }
 }

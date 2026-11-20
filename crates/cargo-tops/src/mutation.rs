@@ -9,11 +9,17 @@
 //! count is at most `gates.mutation.unexplained_survivors_max`. Timeouts and
 //! unviable mutants are counted and reported; they are not survivors.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
-#![allow(dead_code, reason = "the gate wires these items in G2")]
 
+use std::fs;
+use std::path::Path;
+
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::exemptions::Exemption;
+
+/// Where cargo-mutants writes the run's outcomes, under the directory it ran in.
+const OUTCOMES: &str = "mutants.out/outcomes.json";
 
 /// The cargo-mutants release whose `outcomes.json` this reads.
 pub(crate) const PINNED: &str = "27.1.0";
@@ -48,6 +54,26 @@ pub(crate) struct Ledger {
     pub unexplained: Vec<Missed>,
     pub timeouts: usize,
     pub unviable: usize,
+}
+
+/// Remove the `outcomes.json` an earlier run left, so one found after
+/// `cargo mutants` is the one it just wrote.
+pub(crate) fn clear(dir: &Path) -> Result<()> {
+    let path = dir.join(OUTCOMES);
+    match fs::remove_file(&path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+            Err(err).with_context(|| format!("remove {}", path.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The outcomes `cargo mutants` just wrote under `dir`. Call [`clear`] before
+/// the run: a file that is there afterwards is this run's.
+pub(crate) fn read(dir: &Path) -> Result<Outcomes, String> {
+    let text = fs::read_to_string(dir.join(OUTCOMES))
+        .map_err(|err| format!("no {OUTCOMES} after cargo mutants ran: {err}"))?;
+    parse(&text)
 }
 
 fn field<'v>(value: &'v Value, key: &str) -> Result<&'v Value, String> {
@@ -227,9 +253,10 @@ impl Ledger {
     reason = "the tests edit and read JSON they built from the recorded fixture"
 )]
 mod tests {
-    use super::{explain, parse, relative, Outcomes, PINNED};
+    use super::{clear, explain, parse, read, relative, Outcomes, PINNED};
     use crate::exemptions::Exemption;
     use serde_json::Value;
+    use std::fs;
 
     /// A real run of cargo-mutants 27.1.0 over a small crate: 11 caught, 10
     /// missed (5 in `double`, 5 in `inner::triple`), 1 timeout, 1 unviable.
@@ -483,5 +510,42 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("cargo-tops-mutation-{name}-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).expect("mkdir");
+        dir
+    }
+
+    #[test]
+    fn an_outcomes_file_from_an_earlier_run_is_removed_and_none_is_nothing() {
+        let dir = scratch("clear");
+        assert!(clear(&dir).is_ok());
+        fs::create_dir_all(dir.join("mutants.out")).expect("mkdir");
+        let file = dir.join("mutants.out/outcomes.json");
+        fs::write(&file, FIXTURE).expect("write");
+        assert!(clear(&dir).is_ok());
+        assert!(!file.exists());
+        // A directory where the file should be cannot be removed as a file.
+        fs::create_dir_all(file.join("inside")).expect("mkdir");
+        let err = clear(&dir).expect_err("a directory is not a report");
+        assert!(format!("{err:#}").contains("remove"), "{err:#}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn what_the_run_wrote_is_read_and_a_missing_file_is_an_error() {
+        let dir = scratch("read");
+        let err = read(&dir).expect_err("no file");
+        assert!(err.contains("mutants.out/outcomes.json"), "{err}");
+        fs::create_dir_all(dir.join("mutants.out")).expect("mkdir");
+        fs::write(dir.join("mutants.out/outcomes.json"), "not json").expect("write");
+        assert!(read(&dir).expect_err("not json").contains("not JSON"));
+        fs::write(dir.join("mutants.out/outcomes.json"), FIXTURE).expect("write");
+        assert_eq!(read(&dir).expect("parses").missed.len(), 10);
+        fs::remove_dir_all(&dir).ok();
     }
 }
