@@ -12,7 +12,7 @@ use serde_json::Value;
 
 /// `llvm-cov nextest` writes the stand-in LCOV, then runs real nextest when
 /// `$REAL_NEXTEST` is set. `llvm-cov report` writes a fully covered summary.
-/// Everything else (`cargo metadata`) is the real cargo.
+/// `cargo metadata` is the real cargo; any other subcommand passes.
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ "$1 $2" = "llvm-cov nextest" ]; then
   prev=
@@ -33,7 +33,12 @@ if [ "$1 $2" = "llvm-cov report" ]; then
   done
   exit 0
 fi
-PATH="$REAL_PATH" exec "$REAL_CARGO" "$@"
+# Only `cargo metadata` is real. Any other subcommand (`cargo deny`, which
+# the runners do not have) passes, so no other layer can fail this gate.
+if [ "$1" = metadata ]; then
+  PATH="$REAL_PATH" exec "$REAL_CARGO" "$@"
+fi
+exit 0
 "#;
 
 const WITH_TEST: &str =
@@ -283,7 +288,7 @@ fn a_report_from_an_earlier_run_is_stale_and_kept() {
         idle.detail
     );
     assert!(
-        idle.detail.contains("older than the credited run"),
+        idle.detail.contains("not written during the credited run"),
         "{}",
         idle.detail
     );

@@ -156,7 +156,9 @@ pub(crate) fn credit(
     filter: &str,
     since: SystemTime,
 ) -> Result<usize, String> {
-    let path = junit_path(root)?;
+    let who = format!("`{layer}` (filter `{filter}`)");
+    let path =
+        junit_path(root).map_err(|why| format!("{why}; {who} has no evidence without it"))?;
     let shown = path
         .strip_prefix(root)
         .unwrap_or(&path)
@@ -164,18 +166,19 @@ pub(crate) fn credit(
         .to_string();
     let xml = fs::read_to_string(&path).map_err(|_| {
         format!(
-            "no JUnit report at {shown}; the credited run must write one \
-             (`[profile.ci.junit]` and `[store] dir` in .config/nextest.toml)"
+            "no JUnit report at {shown}, so {who} has no evidence; the credited run must write \
+             one (`[profile.ci.junit]` and `[store] dir` in .config/nextest.toml)"
         )
     })?;
+    // Written during the credited run: not before it began, not after now.
     let fresh = fs::metadata(&path)
         .and_then(|meta| meta.modified())
-        .is_ok_and(|written| written >= since);
+        .is_ok_and(|written| written >= since && written <= SystemTime::now());
     if !fresh {
         return Err(format!(
-            "the JUnit report {shown} is older than the credited run, so it is not evidence \
-             of this run; make that run write it (`[profile.ci.junit]` and `[store] dir` in \
-             .config/nextest.toml)"
+            "the JUnit report {shown} was not written during the credited run (it is older \
+             than the run, or dated in the future), so it is no evidence for {who}; make that \
+             run write it (`[profile.ci.junit]` and `[store] dir` in .config/nextest.toml)"
         ));
     }
     let found = tally(&xml, filter);
@@ -342,6 +345,7 @@ mod tests {
             why.contains("no JUnit report at target/nextest/ci/junit.xml"),
             "{why}"
         );
+        assert!(why.contains("`property` (filter `property`)"), "{why}");
         assert!(why.contains("[profile.ci.junit]"), "{why}");
     }
 
@@ -350,6 +354,7 @@ mod tests {
         let dir = fixture(None, Some(REPORT));
         let why = run(&dir, "property").unwrap_err();
         assert!(why.starts_with("no JUnit report is configured"), "{why}");
+        assert!(why.contains("`property` (filter `property`)"), "{why}");
         assert!(why.contains("[profile.ci.junit]"), "{why}");
         let bare = fixture(Some("[profile.ci]\nretries = 0\n"), Some(REPORT));
         assert!(run(&bare, "property").is_err());
@@ -385,12 +390,26 @@ mod tests {
     }
 
     #[test]
+    fn a_report_dated_in_the_future_is_not_evidence() {
+        let dir = fixture(Some(CONFIG), Some(REPORT));
+        let file = fs::File::options()
+            .write(true)
+            .open(dir.path().join("target/nextest/ci/junit.xml"))
+            .unwrap();
+        file.set_modified(SystemTime::now() + Duration::from_secs(3600))
+            .unwrap();
+        let why = run(&dir, "property").unwrap_err();
+        assert!(why.contains("not written during the credited run"), "{why}");
+    }
+
+    #[test]
     fn a_report_older_than_the_run_is_not_evidence_and_is_kept() {
         let dir = fixture(Some(CONFIG), Some(REPORT));
         let later = SystemTime::now() + Duration::from_secs(3600);
         let why = credit("property", dir.path(), "property", later).unwrap_err();
         assert!(why.contains("target/nextest/ci/junit.xml"), "{why}");
-        assert!(why.contains("older than the credited run"), "{why}");
+        assert!(why.contains("not written during the credited run"), "{why}");
+        assert!(why.contains("`property` (filter `property`)"), "{why}");
         assert!(dir.path().join("target/nextest/ci/junit.xml").is_file());
         assert_eq!(
             credit("property", dir.path(), "property", UNIX_EPOCH),

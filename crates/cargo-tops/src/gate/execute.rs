@@ -21,9 +21,26 @@ pub(crate) struct Prepared {
     pub(crate) judge: Option<laws::Judge>,
 }
 
+/// When a layer's commands began, as wall time and as a stopwatch.
+struct Clock {
+    began: SystemTime,
+    watch: Instant,
+}
+
+impl Clock {
+    fn start() -> Self {
+        Self {
+            began: SystemTime::now(),
+            watch: Instant::now(),
+        }
+    }
+}
+
 /// Wall time and tool version of one layer's commands.
 pub(crate) struct Timing {
     pub(crate) layer: String,
+    /// When its commands began: a report older than this is not theirs.
+    pub(crate) began: SystemTime,
     pub(crate) seconds: f64,
     pub(crate) tool_version: Option<String>,
 }
@@ -188,7 +205,7 @@ impl<'a> Runner<'_, 'a> {
         );
         self.done.listed += 1;
         if self.live {
-            let clock = Instant::now();
+            let clock = Clock::start();
             let run = run_mutation(self.dir, &layer.id, mutation).map_err(Fault::env)?;
             // The tool is asked for its version only when it ran: a vacuous
             // or failed diff runs no `cargo mutants`.
@@ -196,7 +213,7 @@ impl<'a> Runner<'_, 'a> {
                 && run.cmd.contains(&mutation.mutants.display()))
             .then(|| version_of(self.dir, &mutation.mutants.argv, &mut self.versions))
             .flatten();
-            self.done.record(run, clock, version);
+            self.done.record(run, &clock, version);
         }
         Ok(())
     }
@@ -216,7 +233,7 @@ impl<'a> Runner<'_, 'a> {
         if !self.live {
             return Ok(());
         }
-        let clock = Instant::now();
+        let clock = Clock::start();
         let run = match pin {
             Some(pin) => run_pinned_crap(self.dir, &layer.id, chain, pin),
             None => run_chain(self.dir, &layer.id, chain),
@@ -234,7 +251,7 @@ impl<'a> Runner<'_, 'a> {
                 .filter(|_| run.outcome != Outcome::ToolMissing)
                 .and_then(|argv| version_of(self.dir, argv, &mut self.versions)),
         };
-        self.done.record(run, clock, version);
+        self.done.record(run, &clock, version);
         Ok(())
     }
 
@@ -265,7 +282,14 @@ impl<'a> Runner<'_, 'a> {
             return run;
         }
         let root = laws::workspace_root(self.dir).unwrap_or_else(|| self.dir.to_path_buf());
-        if let Err(why) = evidence::credit(layer, &root, filter, self.done.started) {
+        // A report older than the credited run's own start is not its report.
+        let since = self
+            .done
+            .timing
+            .iter()
+            .find(|timing| timing.layer == from)
+            .map_or(self.done.started, |timing| timing.began);
+        if let Err(why) = evidence::credit(layer, &root, filter, since) {
             run.outcome = Outcome::Failed;
             run.note = Some(why);
         }
@@ -285,6 +309,7 @@ impl<'a> Runner<'_, 'a> {
             self.done.runs.push(run);
             self.done.timing.push(Timing {
                 layer: layer.to_string(),
+                began: SystemTime::now(),
                 seconds: 0.0,
                 tool_version: None,
             });
@@ -294,10 +319,11 @@ impl<'a> Runner<'_, 'a> {
 
 impl Executed<'_> {
     /// Keep `run` with the time since `clock` and the tool's version.
-    fn record(&mut self, run: Run, clock: Instant, tool_version: Option<String>) {
+    fn record(&mut self, run: Run, clock: &Clock, tool_version: Option<String>) {
         self.timing.push(Timing {
             layer: run.layer.clone(),
-            seconds: clock.elapsed().as_secs_f64(),
+            began: clock.began,
+            seconds: clock.watch.elapsed().as_secs_f64(),
             tool_version,
         });
         self.runs.push(run);
@@ -500,6 +526,7 @@ mod tests {
     fn timing(layer: &str, seconds: f64) -> Timing {
         Timing {
             layer: layer.to_string(),
+            began: SystemTime::UNIX_EPOCH,
             seconds,
             tool_version: None,
         }

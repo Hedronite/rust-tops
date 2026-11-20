@@ -1,6 +1,6 @@
 //! A credited `property` or `acceptance` layer passes only when the credited
-//! run's nextest JUnit report holds a passed test whose name contains the
-//! layer's `test_filter` (PROTOCOL.md §6, §9).
+//! run's nextest JUnit report holds a passed test with a `::` segment of its
+//! name starting with the layer's `test_filter` (PROTOCOL.md §6, §9).
 //!
 //! Cargo and its plugins are stubs. The cargo stub plays the coverage run:
 //! it writes the JUnit report the test put in the fixture's `reports/` to
@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 const CARGO_STUB: &str = r#"#!/bin/sh
 if [ "$1 $2" = "crap --version" ]; then echo "cargo-crap 0.9.0"; exit 0; fi
 if [ "$1" = metadata ]; then cat "$REPORTS/metadata.json"; exit 0; fi
+if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/coverage-fails" ]; then exit 1; fi
 if [ "$1 $2" = "llvm-cov nextest" ] && [ -f "$REPORTS/junit.xml" ]; then
   mkdir -p "$REPORTS/../repo/target/nextest/ci"
   cp "$REPORTS/junit.xml" "$REPORTS/../repo/target/nextest/ci/junit.xml"
@@ -303,6 +304,34 @@ fn a_missing_junit_report_fails_and_names_the_setting() {
         text.contains("but it is no credit: no JUnit report at"),
         "{text}"
     );
+}
+
+#[test]
+fn a_failed_coverage_run_fails_property_without_reading_evidence() {
+    let fixture = fixture("covfail", &[], Some(&junit(&[("property_ok", true)])));
+    fs::write(fixture.reports.join("coverage-fails"), "").expect("mark");
+    let (code, text, verdict, detail) = gate(&fixture, "property");
+    assert_eq!(code, Some(1), "{text}");
+    assert_eq!(verdict, "fail");
+    // Coverage really failed, so the problem blames it, and no evidence
+    // text is given for a run that never produced any.
+    assert!(!detail.contains("JUnit"), "{detail}");
+    assert!(problems(&fixture)
+        .iter()
+        .any(|p| p.contains("run it took is Failed")));
+}
+
+#[test]
+fn unit_and_integration_need_no_matching_test() {
+    let fixture = fixture(
+        "unit",
+        &["unit", "integration"],
+        Some(&junit(&[("property_ok", true)])),
+    );
+    for layer in ["unit", "integration"] {
+        let (_, text, verdict, _) = gate(&fixture, layer);
+        assert_eq!(verdict, "pass", "{layer}: {text}");
+    }
 }
 
 #[test]
