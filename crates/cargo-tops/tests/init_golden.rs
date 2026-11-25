@@ -8,6 +8,8 @@
 //! Re-recorded for protocol 1.2.0 / package 0.4.0: `RUST-TOPS.md`, the
 //! adoption record filled per class, the `protocol.version` and the
 //! cargo-tops install pin.
+//! Re-recorded for protocol 1.4.0 / package 0.5.0: `RUST-TOPS.md` spec tag
+//! and `cargo-tops` install pin updated to `v0.5.0` / `0.5.0`.
 //!
 //! Re-recorded for P0 G2: `init` reads the crate it runs in (name, edition,
 //! `rust-version`, the lint table), writes `rust-tops.lock`, writes no Bend

@@ -7,11 +7,15 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 | Plane | What | Where |
 | --- | --- | --- |
 | Protocol | rust-tops contract | `PROTOCOL.md` header (`1.4.0`) and `schema/` |
-| Package | `cargo-tops` and git tag | `v0.4.0`, Cargo `0.4.0` |
+| Package | `cargo-tops` and git tag | `v0.5.0`, Cargo `0.5.0` |
 
-Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0.
+Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0. Protocol 1.3.0 and 1.4.0 first ship with package 0.5.0.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-11-25
+
+**Breaking 0.x minor.** First release shipping protocol **1.3.0** and protocol **1.4.0**. Package plane moves to **0.5.0**.
 
 ### Added
 
@@ -23,7 +27,7 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - `rust-tops-review` ([#45](https://github.com/Hedronite/rust-tops/pull/45)): the new `style` command gives the style findings on the review range, and `answers` checks that every judgment rule was answered. `files` and `diff` are unchanged byte for byte.
   - Eval regression ([#46](https://github.com/Hedronite/rust-tops/pull/46)): fixtures that check the skills against upstream's eval cases.
 
-- Verdict pack (protocol 1.3.0, package unreleased). Protocol file rename and wiring: [#53](https://github.com/Hedronite/rust-tops/pull/53).
+- Verdict pack (protocol 1.3.0). Protocol file rename and wiring: [#53](https://github.com/Hedronite/rust-tops/pull/53).
   - Tidy-up ([#49](https://github.com/Hedronite/rust-tops/pull/49), [#48](https://github.com/Hedronite/rust-tops/pull/48)): `port inventory` finds C and C++ tests outside `tests/`, `answers` prints relative paths, the skills share one `command` rule and one golden variable (`RUST_TOPS_BLESS`), the README pin table names Nushell and `xtask docs` guards it, the adopter `nextest.toml` carries no kit-only overrides, the `init` unsafe note is exact for the `forbid` fallback, and the toolchain-pin search walks up to the workspace or git root.
   - One report ([#51](https://github.com/Hedronite/rust-tops/pull/51)): every `cargo tops gate` run writes `<target>/rust-tops/report.json` (schema `schema/gate-report.schema.json`) with per-layer verdicts, commands, tool versions and seconds, and the law verdicts. `cases.json` is still written for Bend.
   - Exit codes ([#51](https://github.com/Hedronite/rust-tops/pull/51)): 0 pass; 1 the gate ran and failed (including a dry run and the short-command rule); 2 the config is invalid; 3 the environment (a required tool, or `cargo metadata`, is unavailable). Any non-zero exit still fails CI; the codes only say which kind.
@@ -31,7 +35,7 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
   - Fixed tiers ([#50](https://github.com/Hedronite/rust-tops/pull/50)): a layer's tier comes from its id (§3), and `security-advisory` moved from tier 5 to tier 0 so the default `--max-tier 1` gate runs the advisory check. `cargo tops check` now fails an instance whose layer tier differs from the table, whose floor is looser than its class profile, or that disables a layer its class requires.
   - Protocol file rename ([#53](https://github.com/Hedronite/rust-tops/pull/53)): `RUST_TOPS.md` is now `PROTOCOL.md` (§14.4 still requires each repo's root `RUST-TOPS.md`). A test fails if a tracked file other than this changelog names the old file.
 
-- Honest pack (protocol 1.4.0, package unreleased). The gate passes a layer only on evidence from the run.
+- Honest pack (protocol 1.4.0). The gate passes a layer only on evidence from the run.
   - Mutation base ([#55](https://github.com/Hedronite/rust-tops/pull/55)): the diff starts at the merge base with `--base <ref>`, then `gates.base_ref`, then `origin/HEAD`. A missing base fails under CI (fix: `fetch-depth: 0` and `--base`) and is `vacuous` otherwise, and the report names the base used.
   - Credited layers ([#56](https://github.com/Hedronite/rust-tops/pull/56)): a credited `property` or `acceptance` layer passes only when the credited run's nextest JUnit report holds a passed test with a `::` segment of its name starting with `gates.<layer>.test_filter` (default the layer id; letters, digits and underscore only). A layer that runs itself selects tests the same way, with `-E 'test(/(^|::)<filter>/)'` instead of a positional filter. `acceptance` now runs (it was `NotRun`). Fix for a failing layer: add a matching test, or set the filter.
   - Tidy-up ([#54](https://github.com/Hedronite/rust-tops/pull/54)): the fresh-init test gets a nextest slow-timeout override, and the Bend script, its README and `BEND2-INTEGRATION.md` use neutral wording.
@@ -51,24 +55,18 @@ Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. 
 - The `AGENTS.md` template (and its copies) no longer calls the upstream review skill an optional style pass; `rust-tops-review` runs it.
 - `.gitignore` lists `/mutants.out*`, the output the gate's mutation layer leaves in the repository root.
 
-### The drop-in on `main` needs the next release
+### Upgrade
 
-After the mutation-base change, `config/drop-in/rust-tops.yml`, its template and the init goldens pass `--base` and run `cargo tops lock --verify --max-tier 1`, while still installing `cargo-tops` 0.4.0, which rejects `--base` with exit 2 and has no `lock` command. Until the next release ships, copy the drop-in from the `v0.4.0` tag. An adopter who runs `cargo tops init` with the new binary gets the matching template.
-
-### Upgrade to protocol 1.3.0
-
-Set `protocol.version: "1.3.0"`. `cargo tops check` now fails these, each with a message naming the file, key, class value and fix:
-
-- `layers[id=<layer>].tier` that differs from §3: set the table's tier or delete the key.
-- A floor looser than the class profile (`gates.coverage.line_min_pct`, `region_min_pct`, `gates.crap.threshold_agent`, `threshold_human`, `gates.mutation.kill_rate_min_pct`, `unexplained_survivors_max`) or a missing one: set the class value, or add a dated exemption for that layer with `path: "**"` and no `symbol`.
-- A disabled or absent `security-advisory` layer, or a layer your class requires: add it with `enabled: true`.
-- Links to `RUST_TOPS.md` break: use `PROTOCOL.md`.
+- `cargo tops gate --base` and `cargo tops lock --verify` require `cargo-tops` 0.5.0 (earlier releases reject `--base` with exit 2 and have no `lock` subcommand).
+- Protocol 1.3.0: set `protocol.version: "1.3.0"` (or `"1.4.0"`). `cargo tops check` now fails these, each with a message naming the file, key, class value and fix:
+  - `layers[id=<layer>].tier` that differs from §3: set the table's tier or delete the key.
+  - A floor looser than the class profile (`gates.coverage.line_min_pct`, `region_min_pct`, `gates.crap.threshold_agent`, `threshold_human`, `gates.mutation.kill_rate_min_pct`, `unexplained_survivors_max`) or a missing one: set the class value, or add a dated exemption for that layer with `path: "**"` and no `symbol`.
+  - A disabled or absent `security-advisory` layer, or a layer your class requires: add it with `enabled: true`.
+  - Links to `RUST_TOPS.md` break: use `PROTOCOL.md`.
 
 ## [0.4.0] - 2026-11-17
 
 **Breaking 0.x minor.** `cargo tops gate` now fails on the coverage floors and the CRAP threshold and ratchet that `rust-tops.yaml` names. Protocol plane moves to **1.2.0** (prose and one optional schema key; no default threshold and no part of the CRAP formula changed). Package plane moves to **0.4.0**.
-
-Not tagged or published yet.
 
 ### Upgrade
 
@@ -284,7 +282,9 @@ First public kit. Protocol body is rust-tops **1.0.0**. Package / git tag is **0
 - `cargo-tops` CLI: `init` / `check` / `gate` (orchestrates existing Cargo tools).
 - Fixtures: `examples/parser-codec`, `examples/no-std-embedded`.
 
-[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Hedronite/rust-tops/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Hedronite/rust-tops/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Hedronite/rust-tops/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Hedronite/rust-tops/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Hedronite/rust-tops/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Hedronite/rust-tops/compare/v0.1.3...v0.1.4

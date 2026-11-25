@@ -1,6 +1,6 @@
 # Adopt the rust-tops floor
 
-Floor for a workspace that adopts protocol 1.3.0 with `cargo-tops` 0.4.0. Coverage, CRAP, mutants, and Bend stay optional.
+Floor for a workspace that adopts protocol 1.4.0 with `cargo-tops` 0.5.0. Coverage, CRAP, mutants, and Bend stay optional.
 
 ## Floor
 
@@ -22,7 +22,7 @@ Do not enable the `laws` layer. `cargo tops init` turns that layer on and fetche
 
 ## Class map
 
-One `rust-tops.yaml` per crate, protocol 1.3.0, beside that crate. The repo root keeps one `RUST-TOPS.md` with a row per crate (PROTOCOL.md §14.4). A binary crate is `binary-cli`. A library crate is `library-core`. `library-util` has no profile, so those crates use `library-core`. Do not add a root `workspace-root` file.
+One `rust-tops.yaml` per crate, protocol 1.4.0, beside that crate. The repo root keeps one `RUST-TOPS.md` with a row per crate (PROTOCOL.md §14.4). A binary crate is `binary-cli`. A library crate is `library-core`. `library-util` has no profile, so those crates use `library-core`. Do not add a root `workspace-root` file.
 
 `crate.msrv` is that repo's own MSRV. Do not set a product toolchain to 1.99.1. That version is only the compiler that builds `cargo-tops`.
 
@@ -30,10 +30,10 @@ One `rust-tops.yaml` per crate, protocol 1.3.0, beside that crate. The repo root
 
 ## cargo-tops pin
 
-`cargo-tops` 0.4.0 is not a dependency inside the product repo. On the build host:
+`cargo-tops` 0.5.0 is not a dependency inside the product repo. On the build host:
 
 ```
-cargo install cargo-tops --version 0.4.0 --locked
+cargo install cargo-tops --version 0.5.0 --locked
 ```
 
 ## CI operating systems

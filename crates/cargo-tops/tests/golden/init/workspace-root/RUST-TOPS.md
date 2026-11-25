@@ -10,8 +10,8 @@ This repository adopts the Rust-TOPS protocol from
 | Item | Value |
 | --- | --- |
 | Protocol version | `1.4.0` |
-| Spec | <https://github.com/Hedronite/rust-tops/blob/v0.4.0/PROTOCOL.md> |
-| cargo-tops | 0.4.0 (`cargo install cargo-tops --version 0.4.0 --locked`) |
+| Spec | <https://github.com/Hedronite/rust-tops/blob/v0.5.0/PROTOCOL.md> |
+| cargo-tops | 0.5.0 (`cargo install cargo-tops --version 0.5.0 --locked`) |
 
 ## Crates and thresholds
 
