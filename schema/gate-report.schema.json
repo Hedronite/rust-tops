@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Hedronite/rust-tops/v0.4.0/schema/gate-report.schema.json",
+  "$id": "https://raw.githubusercontent.com/Hedronite/rust-tops/v0.5.0/schema/gate-report.schema.json",
   "title": "Rust-TOPS gate report",
   "description": "The report `cargo tops gate` writes to <target>/rust-tops/report.json on every run: a pass, a failure, a dry run, a missing tool, and a config error once the target is known.",
   "type": "object",

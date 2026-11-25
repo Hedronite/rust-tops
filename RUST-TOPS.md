@@ -8,7 +8,7 @@ and it adopts the protocol for its own code
 | --- | --- |
 | Protocol version | `1.4.0` |
 | Spec | [`PROTOCOL.md`](PROTOCOL.md) in this tree |
-| cargo-tops | built from this checkout (`cargo install --path crates/cargo-tops --locked`), package 0.4.0 |
+| cargo-tops | built from this checkout (`cargo install --path crates/cargo-tops --locked`), package 0.5.0 |
 
 ## Crates and thresholds
 
