@@ -893,11 +893,12 @@ fn stub_bend_allow_all(home: &Path) {
     );
 }
 
-fn gate_with_home(fixture: &Fixture, home: &Path) -> (Output, String) {
+fn gate_with_home(fixture: &Fixture, home: &Path, args: &[&str]) -> (Output, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .arg("gate")
         .arg("--path")
         .arg(&fixture.repo)
+        .args(args)
         .env("PATH", path(fixture))
         .env("HOME", home)
         .env_remove("CARGO_TOPS_BEND_PATH")
@@ -914,7 +915,7 @@ fn gate_with_home(fixture: &Fixture, home: &Path) -> (Output, String) {
 }
 
 fn assert_ok_matches_count(fixture: &Fixture, home: &Path, want_vacuous: usize) {
-    let (out, text) = gate_with_home(fixture, home);
+    let (out, text) = gate_with_home(fixture, home, &["--base", "HEAD"]);
     assert_eq!(out.status.code(), Some(0), "{text}");
     let count_line = text
         .lines()
