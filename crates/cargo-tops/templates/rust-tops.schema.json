@@ -30,6 +30,34 @@
         "adopted": { "type": "string", "format": "date" }
       }
     },
+    "enforce": {
+      "type": "string",
+      "enum": ["hard", "ratchet", "advisory"],
+      "description": "How floors and caps are applied (PROTOCOL.md section 2.3). Absent: the 1.4.0 behaviour. cargo tops init writes ratchet from 1.5.0."
+    },
+    "advisory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expires", "reason"],
+      "description": "Required by enforce: advisory (PROTOCOL.md section 2.3).",
+      "properties": {
+        "expires": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "UTC date, YYYY-MM-DD. The advisory expires at 00:00 UTC on it."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "At least three words."
+        }
+      }
+    },
+    "baseline": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Baseline v2 debt ledger (schema/baseline.schema.json), relative to the instance directory. Absent: rust-tops-baseline.json (PROTOCOL.md section 16.1)."
+    },
     "crate": {
       "type": "object",
       "additionalProperties": false,
