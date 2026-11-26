@@ -1862,7 +1862,7 @@ fn an_empty_diff_is_vacuous_and_counts_for_no_law() {
     );
     assert!(!text.contains("Vacuous: no origin/main"), "{text}");
     assert!(
-        text.contains("ok: 5 command(s) passed, 1 vacuous (counted for no law)"),
+        text.contains("ok: 6 command(s) passed, 1 vacuous (counted for no law)"),
         "{text}"
     );
     assert!(

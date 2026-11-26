@@ -763,21 +763,18 @@ mod tests {
 
     #[test]
     fn a_missing_program_is_a_missing_tool_and_any_other_spawn_error_is_not() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-exec-{}", std::process::id()));
-        fs::remove_dir_all(&dir).ok();
-        fs::create_dir_all(&dir).expect("mkdir");
-        let missing = Step::command([dir.join("no-such-program").display().to_string()]);
+        let scratch = super::super::tests::Scratch::new("exec");
+        let missing = Step::command([scratch.0.join("no-such-program").display().to_string()]);
         assert_eq!(
             run_step(Path::new("."), &missing).expect("a missing program is an outcome"),
             Outcome::ToolMissing
         );
         // A file with no execute bit exists but cannot be spawned.
-        let plain = dir.join("plain");
+        let plain = scratch.0.join("plain");
         fs::write(&plain, "x").expect("write");
         let blocked = Step::command([plain.display().to_string()]);
         let err = run_step(Path::new("."), &blocked).expect_err("not spawnable");
         assert!(format!("{err:#}").contains("spawn"), "{err:#}");
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -815,17 +812,14 @@ mod tests {
 
     #[test]
     fn a_mutants_spawn_error_is_an_error_and_a_signal_is_named() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-mutexec-{}", std::process::id()));
-        fs::remove_dir_all(&dir).ok();
-        fs::create_dir_all(&dir).expect("mkdir");
-        let plain = dir.join("plain");
+        let scratch = super::super::tests::Scratch::new("mutexec");
+        let plain = scratch.0.join("plain");
         fs::write(&plain, "x").expect("write");
         let blocked = Step::command([plain.display().to_string()]);
         let err = run_mutants(Path::new("."), &blocked)
             .err()
             .expect("not spawnable");
         assert!(format!("{err:#}").contains("spawn"), "{err:#}");
-        fs::remove_dir_all(&dir).ok();
         let killed = Step::command(["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()]);
         let ended = run_mutants(Path::new("."), &killed).expect("it ran");
         assert_eq!((ended.outcome, ended.code), (Outcome::Failed, None));

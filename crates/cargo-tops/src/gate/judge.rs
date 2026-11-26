@@ -23,8 +23,6 @@ pub(crate) struct Judgement {
     pub(crate) evaluated: String,
     /// The `count:` line.
     pub(crate) count: String,
-    /// Runs, shared layers excluded.
-    pub(crate) ran: usize,
     /// Commands that ran: a missing tool ran none, `bend` is one.
     pub(crate) commands: usize,
     pub(crate) vacuous: usize,
@@ -200,7 +198,6 @@ fn dry_judgement(
         failed,
         evaluated: format!("laws evaluated: 0/{total} (dry run: bend did not run)"),
         count,
-        ran: 0,
         commands: 0,
         vacuous: 0,
         measured: floors::Judged::default(),
@@ -240,10 +237,8 @@ fn finish(
     survivors: Option<Survivors>,
 ) -> Judgement {
     let (plan, done) = (inputs.plan, inputs.done);
-    // A layer that took another's run ran no command of its own.
-    let ran = done.runs.len() - done.shared.len();
-    // The `count:` line and the closing `fail:` line say the same number:
-    // commands that ran.
+    // The `count:` line, `ok:` line and closing `fail:` line say the same
+    // number: commands that ran.
     let commands = ran_commands(&done.runs, laws.ran, &done.shared);
     let vacuous = done
         .runs
@@ -265,7 +260,6 @@ fn finish(
         failed,
         evaluated: laws.evaluated,
         count,
-        ran,
         commands,
         vacuous,
         measured,
@@ -507,40 +501,30 @@ fn failure_words(run: &Run) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::Scratch;
     use super::{clear_cases, crate_prefix, laws_verdict, Judgement};
     use crate::floors;
     use std::fs;
-    use std::path::PathBuf;
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("cargo-tops-judge-{name}-{}", std::process::id()));
-        fs::remove_dir_all(&dir).ok();
-        fs::create_dir_all(&dir).expect("mkdir");
-        dir
-    }
 
     #[test]
     fn a_cases_file_from_an_earlier_gate_is_removed() {
-        let dir = scratch("cases-old");
-        let cases = dir.join("cases.json");
+        let scratch = Scratch::new("cases-old");
+        let cases = scratch.0.join("cases.json");
         fs::write(&cases, "{}").expect("write");
         assert!(clear_cases(&cases).is_ok());
         assert!(!cases.exists());
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn no_cases_file_is_nothing_to_clear() {
-        let dir = scratch("cases-none");
-        assert!(clear_cases(&dir.join("cases.json")).is_ok());
-        fs::remove_dir_all(&dir).ok();
+        let scratch = Scratch::new("cases-none");
+        assert!(clear_cases(&scratch.0.join("cases.json")).is_ok());
     }
 
     #[test]
     fn a_cases_path_that_cannot_be_removed_is_an_environment_fault() {
-        let dir = scratch("cases-stuck");
-        let cases = dir.join("cases.json");
+        let scratch = Scratch::new("cases-stuck");
+        let cases = scratch.0.join("cases.json");
         fs::create_dir_all(cases.join("inside")).expect("mkdir");
         let Err(fault) = clear_cases(&cases) else {
             panic!("a directory is not a report");
@@ -551,7 +535,6 @@ mod tests {
             "{:#}",
             fault.error
         );
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -563,9 +546,8 @@ mod tests {
         assert_eq!(crate_prefix(&workspace, "cargo-tops"), "crates/cargo-tops");
         // No such package, or no cargo project here: the gate directory.
         assert_eq!(crate_prefix(&workspace, "no-such-package"), "");
-        let empty = scratch("prefix-none");
-        assert_eq!(crate_prefix(&empty, "cargo-tops"), "");
-        fs::remove_dir_all(&empty).ok();
+        let empty = Scratch::new("prefix-none");
+        assert_eq!(crate_prefix(&empty.0, "cargo-tops"), "");
     }
 
     /// A judgement of a run in which the laws layer did not run.
@@ -574,7 +556,6 @@ mod tests {
             failed: Vec::new(),
             evaluated: String::new(),
             count: String::new(),
-            ran: 0,
             commands: 0,
             vacuous: 0,
             measured: floors::Judged::default(),
