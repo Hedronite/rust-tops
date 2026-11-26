@@ -13,7 +13,9 @@ rustPlatform.buildRustPackage {
 
   buildAndTestSubdir = "crates/cargo-tops";
 
-  doCheck = true;
+  # cargo-tops' tests run git, clippy and python3, and its integration tests the pinned
+  # cargo-nextest and cargo-llvm-cov. CI runs them outside the build sandbox.
+  doCheck = false;
 
   meta = {
     description = "init / check / gate for the Rust-TOPS protocol";

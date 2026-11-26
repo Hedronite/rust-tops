@@ -11,3 +11,6 @@ result-*
 .direnv
 *.profraw
 /mutants.out*
+
+# The Nix-TOPS report is written on every run; its baseline is tracked
+.nix-tops/report.json
