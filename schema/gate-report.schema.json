@@ -39,13 +39,31 @@
       "enum": ["pass", "fail", "config-invalid", "environment"]
     },
     "exit_code": {
-      "description": "0 pass; 1 the gate ran and failed (a dry run included; an expired exemption is a failure, not a config error); 2 the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable when a layer in range needs a pinned tool (every pinned tool a running layer needs reads the lock); a command-line usage error is 2 too and writes no report; 3 the environment (a required tool or cargo metadata is missing, a pinned tool prints another version than its pin in rust-tops.lock, or report.json cannot be written).",
+      "description": "The code the process exits with; under a live advisory, 0 for any run that started (PROTOCOL.md section 2.3). 0 pass; 1 the gate ran and failed (a dry run included; an expired exemption or an expired advisory is a failure, not a config error); 2 the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable when a layer in range needs a pinned tool (every pinned tool a running layer needs reads the lock); a command-line usage error is 2 too and writes no report; 3 the environment (a required tool or cargo metadata is missing, a pinned tool prints another version than its pin in rust-tops.lock, or report.json cannot be written).",
       "type": "integer",
       "enum": [0, 1, 2, 3]
     },
     "ok": {
-      "description": "True only when exit_code is 0.",
+      "description": "True only when exit_code is 0. Under a live advisory, a run with problems is false although exit_code is 0 (PROTOCOL.md section 2.3).",
       "type": "boolean"
+    },
+    "enforce": {
+      "description": "enforce from rust-tops.yaml (PROTOCOL.md section 2.3); absent when the instance omits it.",
+      "type": "string",
+      "enum": ["hard", "ratchet", "advisory"]
+    },
+    "enforced": {
+      "description": "False when the run's problems do not decide its exit code (a live advisory).",
+      "type": "boolean"
+    },
+    "advisory_expires": {
+      "description": "advisory.expires, under enforce: advisory.",
+      "type": "string"
+    },
+    "warnings": {
+      "description": "Warnings, one line each. They do not change the exit code.",
+      "type": "array",
+      "items": { "type": "string" }
     },
     "error": {
       "description": "Why the gate stopped before a verdict (exit codes 2 and 3 with no run).",

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Hedronite/rust-tops/v0.5.0/schema/baseline.schema.json",
+  "title": "Rust-TOPS Baseline v2 debt ledger",
+  "description": "rust-tops-baseline.json: what one crate has over the line today (PROTOCOL.md section 16.1). Keys are sorted, one entry per line, with no line numbers; cargo tops baseline --check holds that form, which this schema does not express.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "crate", "functions"],
+  "properties": {
+    "version": { "const": 2 },
+    "crate": {
+      "description": "crate.name of the instance.",
+      "type": "string",
+      "minLength": 1
+    },
+    "functions": {
+      "description": "<rel-file>::<function> to CRAP score. Only non-exempt production functions over the CRAP cap.",
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0 }
+    },
+    "coverage": {
+      "description": "Reserved; no gate reads it in 1.5.0.",
+      "type": "object"
+    },
+    "lints": {
+      "description": "Reserved; no gate reads it in 1.5.0.",
+      "type": "object"
+    },
+    "suppressions": {
+      "description": "Reserved; no gate reads it in 1.5.0.",
+      "type": "object"
+    },
+    "exemptions": {
+      "description": "Reserved; no gate reads it in 1.5.0.",
+      "type": "object"
+    },
+    "regressions": {
+      "description": "Audit records for debt that was allowed to grow.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "key", "from", "to", "reason", "owner", "date"],
+        "properties": {
+          "kind": {
+            "description": "The ledger object the key is in, such as functions.",
+            "type": "string",
+            "minLength": 1
+          },
+          "key": { "type": "string", "minLength": 1 },
+          "from": {
+            "description": "The old value; null for a new entry.",
+            "type": ["number", "null"],
+            "minimum": 0
+          },
+          "to": { "type": "number", "minimum": 0 },
+          "reason": { "type": "string", "minLength": 1 },
+          "owner": { "type": "string", "minLength": 1 },
+          "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+        }
+      }
+    }
+  }
+}
