@@ -75,10 +75,17 @@ fn stub(bin: &Path, name: &str, body: &str) {
 
 /// A library-core instance named `fixture` with only `static-lint` on: three
 /// commands, `fmt`, `clippy` and `deny`.
+fn unique_root(name: &str) -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "cargo-tops-report-{name}-{}-{seq}",
+        std::process::id()
+    ))
+}
+
 fn fixture(name: &str) -> Fixture {
-    let root =
-        std::env::temp_dir().join(format!("cargo-tops-report-{name}-{}", std::process::id()));
-    fs::remove_dir_all(&root).ok();
+    let root = unique_root(name);
     let fixture = Fixture {
         repo: root.join("repo"),
         bin: root.join("bin"),
@@ -869,4 +876,99 @@ fn an_unknown_key_is_a_warning_and_the_tool_it_was_meant_for_is_named() {
 
 fn cargo_log(fixture: &Fixture) -> String {
     fs::read_to_string(fixture.root.join("cargo.log")).unwrap_or_default()
+}
+
+fn number_after(line: &str, needle: &str) -> Option<usize> {
+    let tail = line.split(needle).nth(1)?;
+    tail.split_whitespace().next()?.parse().ok()
+}
+
+fn stub_bend_allow_all(home: &Path) {
+    let bend_bin = home.join(".bend/bin");
+    fs::create_dir_all(&bend_bin).expect("mkdir .bend/bin");
+    stub(
+        &bend_bin,
+        "bend",
+        "#!/bin/sh\nif [ \"$1\" = version ]; then echo \"bend 2.0.36\"; exit 0; fi\nn=$(grep -c '^law case_' \"$1\" || true)\nout=\"\"\ni=0\nwhile [ \"$i\" -lt \"$n\" ]; do\n  out=\"$out${out:+, }LAWS.Allow{}\"\n  i=$((i + 1))\ndone\nprintf '(%s)\\n' \"$out\"\n",
+    );
+}
+
+fn gate_with_home(fixture: &Fixture, home: &Path, args: &[&str]) -> (Output, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+        .arg("gate")
+        .arg("--path")
+        .arg(&fixture.repo)
+        .args(args)
+        .env("PATH", path(fixture))
+        .env("HOME", home)
+        .env_remove("CARGO_TOPS_BEND_PATH")
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_STUB_FAIL")
+        .output()
+        .expect("spawn cargo-tops gate");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out, text)
+}
+
+fn assert_ok_matches_count(fixture: &Fixture, home: &Path, want_vacuous: usize) {
+    let (out, text) = gate_with_home(fixture, home, &["--base", "HEAD"]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let count_line = text
+        .lines()
+        .find(|line| line.starts_with("count: "))
+        .expect("count line");
+    let ok_line = text
+        .lines()
+        .find(|line| line.starts_with("ok: "))
+        .expect("ok line");
+    let ran_commands = number_after(count_line, "count: ").expect("ran_commands");
+    let ok_passed = number_after(ok_line, "ok: ").expect("ok_passed");
+    let vacuous = number_after(ok_line, "passed, ").unwrap_or(0);
+    assert_eq!(vacuous, want_vacuous, "{ok_line}");
+    assert_eq!(
+        ok_passed + vacuous,
+        ran_commands,
+        "{count_line} vs {ok_line}"
+    );
+}
+
+#[test]
+fn ok_count_matches_ran_commands_when_laws_and_vacuous_mutation_run() {
+    let fixture = fixture("ok-count-laws");
+    let home = fixture.root.join("home");
+    fs::write(
+        fixture.repo.join("LAWS.bend"),
+        include_str!("../templates/LAWS.bend"),
+    )
+    .expect("write LAWS.bend");
+    fs::create_dir_all(fixture.repo.join("laws")).expect("mkdir laws");
+    fs::write(
+        fixture.repo.join("laws/bend.lock"),
+        include_str!("../templates/bend.lock"),
+    )
+    .expect("write bend.lock");
+    enable(&fixture, &["laws"]);
+    fs::write(fixture.repo.join("Cargo.lock"), "# lock\n").expect("write Cargo.lock");
+    for args in [
+        &["init", "-q"][..],
+        &["add", "-A"][..],
+        &["commit", "-q", "-m", "t"][..],
+    ] {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .args(args)
+            .current_dir(&fixture.repo)
+            .output()
+            .expect("spawn git");
+        assert!(out.status.success(), "git {args:?}");
+    }
+    stub(&fixture.bin, "cargo-mutants", "#!/bin/sh\nexit 0\n");
+    stub_bend_allow_all(&home);
+    assert_ok_matches_count(&fixture, &home, 0);
+    enable(&fixture, &["mutation"]);
+    assert_ok_matches_count(&fixture, &home, 1);
 }

@@ -5,8 +5,9 @@ for the conformance corpus (`conformance/tops_core.json`) that the Rust tests
 replay. Checks:
 
 ```text
-bend spec/tops_core.bend             # prints ALL PROOFS CHECK
-bend spec/tops_core.bend --verdict   # rechecks every proof with the Lean kernel; exit 0
+bend spec/tops_core.bend               # runs main (or checks when no main); rc 0
+bend spec/tops_core.bend --check-only  # prints ALL PROOFS CHECK
+bend spec/tops_core.bend --verdict     # rechecks every proof with the Lean kernel; exit 0
 ```
 
 Bend is the pinned 2.0.36 (`laws/bend.lock`, `scripts/fetch-bend.sh`). `--verdict`
@@ -19,10 +20,10 @@ Types are enums and `Nat` only. There is no `F32`.
 | Bend | Rust counterpart | Notes |
 |---|---|---|
 | `Outcome` | `steps::Outcome`, `crates/cargo-tops/src/steps.rs:108` | five variants, same names |
-| `Row` | the `&'static str` rows of `crates/cargo-tops/src/gate/judge.rs:284` and `:321` | `RowPass` is `"pass"`, `RowFail` `"fail"`, `RowToolMissing` `"tool-missing"`, `RowToolMismatch` `"tool-mismatch"`, `RowVacuous` `"vacuous"`, `RowNotRun` `"not-run"` |
+| `Row` | the `&'static str` rows of `crates/cargo-tops/src/gate/judge.rs:278` and `:315` | `RowPass` is `"pass"`, `RowFail` `"fail"`, `RowToolMissing` `"tool-missing"`, `RowToolMismatch` `"tool-mismatch"`, `RowVacuous` `"vacuous"`, `RowNotRun` `"not-run"` |
 | `Expiry` | `Exemption::expires` plus `steps::valid_expiry`, `steps.rs:713` | `Valid(day)` is a real day, `Invalid` is a string `valid_expiry` rejects |
-| `runs_verdict(rs)` | `runs_verdict`, `crates/cargo-tops/src/gate/judge.rs:284` | worst run by rank; the empty list is `RowPass`, as the Rust |
-| `layer_verdict(rs, missed)` | `layer_verdict`, `crates/cargo-tops/src/gate/judge.rs:321` | `missed` is `Judgement::missed(id)` (`judge.rs:47`); `None` judgement is `missed = False` |
+| `runs_verdict(rs)` | `runs_verdict`, `crates/cargo-tops/src/gate/judge.rs:278` | worst run by rank; the empty list is `RowPass`, as the Rust |
+| `layer_verdict(rs, missed)` | `layer_verdict`, `crates/cargo-tops/src/gate/judge.rs:315` | `missed` is `Judgement::missed(id)` (`judge.rs:45`); `None` judgement is `missed = False` |
 | `live(e, today)` | `Exemption::live`, `crates/cargo-tops/src/exemptions.rs:42` | strictly after `today`; `Invalid` never counts. A day `n` is the Rust string `exemptions::civil_date(n)` (`exemptions.rs:98`) |
 
 Helpers that carry the proofs and have no Rust counterpart: `to_row`, `rank`

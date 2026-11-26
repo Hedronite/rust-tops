@@ -12,7 +12,7 @@ type Outcome is Data:
   Vacuous{}
 
 # The row a verdict names (the strings runs_verdict and layer_verdict return).
-# Bend has one constructor namespace (and Base owns RowFail), so every Row
+# Bend has one constructor namespace (and Base owns Fail), so every Row
 # constructor carries a Row prefix: RowPass, RowFail, RowNotRun, and so on.
 type Row is Data:
   RowPass{}

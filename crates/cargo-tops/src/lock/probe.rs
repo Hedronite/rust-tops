@@ -3,6 +3,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,97 @@ pub(crate) const PROBE_LIMIT: Duration = Duration::from_secs(10);
 
 /// How often a running ask is looked at.
 const POLL: Duration = Duration::from_millis(5);
+
+#[cfg(unix)]
+mod signal_forward {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock, PoisonError};
+
+    use rustix::process::{kill_process_group, Pid, Signal};
+
+    static SIGNAL_HANDLER: OnceLock<()> = OnceLock::new();
+    pub(super) static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+    pub(super) static ACTIVE_PROBES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+    /// Registers a one-time `SIGINT`/`SIGTERM` forwarder so terminating
+    /// `cargo-tops` during a hung probe also kills the probe's process group.
+    ///
+    /// `PR_SET_PDEATHSIG` is intentionally deferred under `unsafe_code = "forbid"`
+    /// (RT-P6): `CommandExt::pre_exec` and raw `prctl` both require `unsafe`.
+    pub(super) fn ensure_handler() {
+        SIGNAL_HANDLER.get_or_init(|| {
+            let Ok(mut signals) = signal_hook::iterator::Signals::new([
+                signal_hook::consts::signal::SIGINT,
+                signal_hook::consts::signal::SIGTERM,
+            ]) else {
+                return;
+            };
+            std::thread::spawn(move || {
+                for sig in signals.forever() {
+                    INTERRUPTED.store(true, Ordering::SeqCst);
+                    kill_groups(&ACTIVE_PROBES);
+                    signal_hook::low_level::emulate_default_handler(sig).ok();
+                }
+            });
+        });
+    }
+
+    pub(super) fn kill_pgid(pid: u32) {
+        let leader = i32::try_from(pid).ok().and_then(Pid::from_raw);
+        if let Some(leader) = leader {
+            kill_process_group(leader, Signal::KILL).ok();
+        }
+    }
+
+    pub(super) fn kill_groups(probes: &Mutex<Vec<u32>>) {
+        let active = probes.lock().unwrap_or_else(PoisonError::into_inner);
+        for &pid in &*active {
+            kill_pgid(pid);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod signal_forward {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Mutex;
+    pub(super) static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+    pub(super) static ACTIVE_PROBES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    pub(super) fn ensure_handler() {}
+    pub(super) fn kill_pgid(_pid: u32) {}
+}
+
+/// Tracks a live probe's process group while `run_probe` waits on it.
+struct ProbeGuard<'a> {
+    probes: &'a std::sync::Mutex<Vec<u32>>,
+    pid: u32,
+}
+
+impl<'a> ProbeGuard<'a> {
+    fn register(
+        probes: &'a std::sync::Mutex<Vec<u32>>,
+        pid: u32,
+        interrupted: &AtomicBool,
+    ) -> Self {
+        probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(pid);
+        if interrupted.load(Ordering::SeqCst) {
+            signal_forward::kill_pgid(pid);
+        }
+        Self { probes, pid }
+    }
+}
+
+impl Drop for ProbeGuard<'_> {
+    fn drop(&mut self) {
+        self.probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|&id| id != self.pid);
+    }
+}
 
 /// A probe that runs each argv in `dir` with the [`PROBE_LIMIT`].
 pub(crate) fn probe_in(dir: &Path) -> impl FnMut(&[&str]) -> Result<String, String> + '_ {
@@ -23,6 +115,16 @@ pub(crate) fn probe_in(dir: &Path) -> impl FnMut(&[&str]) -> Result<String, Stri
 /// output included. The command runs in a group of its own, and a command that
 /// runs past the limit is killed with everything it started.
 pub(crate) fn run_probe(dir: &Path, argv: &[&str], limit: Duration) -> Result<String, String> {
+    signal_forward::ensure_handler();
+    run_probe_with(dir, argv, limit, &signal_forward::INTERRUPTED)
+}
+
+fn run_probe_with(
+    dir: &Path,
+    argv: &[&str],
+    limit: Duration,
+    interrupted: &AtomicBool,
+) -> Result<String, String> {
     let (program, args) = argv.split_first().ok_or("no command")?;
     let mut command = Command::new(program);
     command
@@ -34,6 +136,7 @@ pub(crate) fn run_probe(dir: &Path, argv: &[&str], limit: Duration) -> Result<St
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command.spawn().map_err(|_| "could not run".to_string())?;
+    let _guard = ProbeGuard::register(&signal_forward::ACTIVE_PROBES, child.id(), interrupted);
     let (sender, output) = mpsc::channel();
     if let Some(mut out) = child.stdout.take() {
         std::thread::spawn(move || {
@@ -45,17 +148,26 @@ pub(crate) fn run_probe(dir: &Path, argv: &[&str], limit: Duration) -> Result<St
         });
     }
     let deadline = Instant::now() + limit;
-    wait_within(&mut child, deadline, limit)?;
+    wait_within(&mut child, deadline, limit, interrupted)?;
     // The command has exited; what it left holding the pipe has until the
     // deadline to let go of it.
     output
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .map_err(|_| give_up(&mut child, limit))
+        .map_err(|_| stop_or_timeout(&mut child, limit, interrupted))
 }
 
-/// Waits for `child` to exit 0, or kills it when `deadline` has passed.
-fn wait_within(child: &mut Child, deadline: Instant, limit: Duration) -> Result<(), String> {
+/// Waits for `child` to exit 0, or kills it when `deadline` has passed or
+/// an interrupt signal arrived.
+fn wait_within(
+    child: &mut Child,
+    deadline: Instant,
+    limit: Duration,
+    interrupted: &AtomicBool,
+) -> Result<(), String> {
     loop {
+        if interrupted.load(Ordering::SeqCst) {
+            return Err(wait_for_signal_exit(child));
+        }
         let status = child
             .try_wait()
             .map_err(|_| "could not wait for it".to_string())?;
@@ -65,6 +177,22 @@ fn wait_within(child: &mut Child, deadline: Instant, limit: Duration) -> Result<
             None => std::thread::sleep(POLL),
         }
     }
+}
+
+fn stop_or_timeout(child: &mut Child, limit: Duration, interrupted: &AtomicBool) -> String {
+    if interrupted.load(Ordering::SeqCst) {
+        wait_for_signal_exit(child)
+    } else {
+        give_up(child, limit)
+    }
+}
+
+/// Gives the signal thread time to terminate `cargo-tops` with the forwarded
+/// signal before returning an error, preventing a race to `exit(3)`.
+fn wait_for_signal_exit(child: &mut Child) -> String {
+    child.wait().ok();
+    std::thread::sleep(Duration::from_millis(200));
+    "was stopped by a signal".to_string()
 }
 
 fn finished(status: ExitStatus) -> Result<(), String> {
@@ -86,23 +214,39 @@ fn give_up(child: &mut Child, limit: Duration) -> String {
 
 /// Ends the process group `child` leads, so a hung tool does not leave its own
 /// children behind.
-#[cfg(unix)]
 fn kill_group(child: &Child) {
-    use rustix::process::{kill_process_group, Pid, Signal};
-    let leader = i32::try_from(child.id()).ok().and_then(Pid::from_raw);
-    if let Some(leader) = leader {
-        kill_process_group(leader, Signal::KILL).ok();
-    }
+    signal_forward::kill_pgid(child.id());
 }
-
-#[cfg(not(unix))]
-fn kill_group(_child: &Child) {}
 
 fn exit_words(status: ExitStatus) -> String {
     status.code().map_or_else(
         || "was stopped by a signal".to_string(),
         |code| format!("exited {code}"),
     )
+}
+
+#[cfg(test)]
+pub(super) struct Scratch(pub(super) std::path::PathBuf);
+
+#[cfg(test)]
+impl Scratch {
+    pub(super) fn new(name: &str) -> Self {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "cargo-tops-probe-{name}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        Self(dir)
+    }
+}
+
+#[cfg(test)]
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
+    }
 }
 
 #[cfg(test)]
@@ -168,28 +312,6 @@ mod tests {
         );
     }
 
-    /// A scratch directory of its own, removed when it goes out of scope.
-    struct Scratch(std::path::PathBuf);
-
-    impl Scratch {
-        fn new(name: &str) -> Self {
-            static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let dir = std::env::temp_dir().join(format!(
-                "cargo-tops-probe-{name}-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&dir).expect("mkdir");
-            Self(dir)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            std::fs::remove_dir_all(&self.0).ok();
-        }
-    }
-
     /// Whether the process `pid` is still there, waiting up to two seconds for
     /// a killed one to be reaped.
     fn gone(pid: &str) -> bool {
@@ -218,11 +340,7 @@ mod tests {
         );
         assert_eq!(out, Err("timed out after 500ms".to_string()));
         let pid = std::fs::read_to_string(scratch.0.join("child.pid")).expect("pid file");
-        assert!(
-            gone(pid.trim()),
-            "the child {} outlived the probe",
-            pid.trim()
-        );
+        assert!(gone(pid.trim()), "child outlived probe");
     }
 
     #[test]
@@ -236,17 +354,9 @@ mod tests {
             Duration::from_millis(500),
         );
         assert_eq!(out, Err("timed out after 500ms".to_string()));
-        assert!(
-            began.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            began.elapsed()
-        );
+        assert!(began.elapsed() < Duration::from_secs(10));
         let pid = std::fs::read_to_string(scratch.0.join("child.pid")).expect("pid file");
-        assert!(
-            gone(pid.trim()),
-            "the child {} outlived the probe",
-            pid.trim()
-        );
+        assert!(gone(pid.trim()), "child outlived probe");
     }
 
     #[test]
@@ -255,5 +365,95 @@ mod tests {
         let out = run_probe(&here(), &["sh", "-c", "echo line"], Duration::from_secs(30));
         assert_eq!(out.as_deref(), Ok("line\n"));
         assert!(began.elapsed() < Duration::from_secs(10));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_probes_guard_clears_and_kills_live_groups() {
+        let probes = std::sync::Mutex::new(Vec::new());
+        let flag = AtomicBool::new(false);
+        let sentinel_pid = u32::MAX;
+        {
+            let _guard = ProbeGuard::register(&probes, sentinel_pid, &flag);
+            assert!(probes.lock().expect("lock").contains(&sentinel_pid));
+        }
+        assert!(probes.lock().expect("lock").is_empty());
+
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 60"]);
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut child = cmd.spawn().expect("spawn");
+        {
+            let _guard = ProbeGuard::register(&probes, child.id(), &flag);
+            signal_forward::kill_groups(&probes);
+        }
+        assert!(!child.wait().expect("wait").success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_flag_stops_wait_and_timeout_helpers() {
+        let probes = std::sync::Mutex::new(Vec::new());
+        let flag = AtomicBool::new(false);
+        let interrupted = AtomicBool::new(true);
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 60"]);
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut child = cmd.spawn().expect("spawn");
+        let _guard = ProbeGuard::register(&probes, child.id(), &interrupted);
+        assert!(!child.wait().expect("wait").success());
+
+        let out = run_probe_with(
+            &here(),
+            &["sh", "-c", "sleep 30"],
+            Duration::from_secs(5),
+            &interrupted,
+        );
+        assert_eq!(out, Err("was stopped by a signal".to_string()));
+
+        let mut quick = Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("quick");
+        assert_eq!(
+            stop_or_timeout(&mut quick, Duration::from_millis(50), &interrupted),
+            "was stopped by a signal"
+        );
+        let mut slow_cmd = Command::new("sh");
+        slow_cmd.args(["-c", "sleep 30"]);
+        std::os::unix::process::CommandExt::process_group(&mut slow_cmd, 0);
+        let mut slow = slow_cmd.spawn().expect("slow");
+        assert_eq!(
+            stop_or_timeout(&mut slow, Duration::from_millis(50), &flag),
+            "timed out after 50ms"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_detached_setsid_grandchild_holding_stdout_is_bounded_by_deadline() {
+        let scratch = Scratch::new("setsid");
+        let pid_file = scratch.0.join("detached.pid");
+        let grandchild_py = format!(
+            "import os, pathlib, time; os.setsid(); pathlib.Path({:?}).write_text(str(os.getpid())); print('detached', flush=True); time.sleep(60)",
+            pid_file.to_string_lossy()
+        );
+        let parent_py = format!(
+            "import subprocess, sys; subprocess.Popen([sys.executable, '-c', {:?}])",
+            grandchild_py
+        );
+        let began = Instant::now();
+        let out = run_probe(
+            &scratch.0,
+            &["python3", "-c", &parent_py],
+            Duration::from_millis(400),
+        );
+        let elapsed = began.elapsed();
+        let pid = std::fs::read_to_string(&pid_file).expect("detached pid");
+        let trimmed = pid.trim();
+        Command::new("kill").args(["-9", trimmed]).status().ok();
+        assert!(gone(trimmed), "detached process failed to exit");
+        assert_eq!(out, Err("timed out after 400ms".to_string()));
+        assert!(elapsed < Duration::from_secs(5), "took {elapsed:?}");
     }
 }
