@@ -17,6 +17,18 @@
     "/protocol/adopted": {
       "class": "declarative"
     },
+    "/enforce": {
+      "class": "declarative"
+    },
+    "/advisory/expires": {
+      "class": "declarative"
+    },
+    "/advisory/reason": {
+      "class": "declarative"
+    },
+    "/baseline": {
+      "class": "declarative"
+    },
     "/crate/name": {
       "class": "judged",
       "reader": "crates/cargo-tops/src/main.rs",
