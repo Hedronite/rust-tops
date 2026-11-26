@@ -21,8 +21,8 @@ mod signal_forward {
     use rustix::process::{kill_process_group, Pid, Signal};
 
     static SIGNAL_HANDLER: OnceLock<()> = OnceLock::new();
-    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
-    static ACTIVE_PROBES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    pub(super) static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+    pub(super) static ACTIVE_PROBES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
     /// Registers a one-time `SIGINT`/`SIGTERM` forwarder so terminating
     /// `cargo-tops` during a hung probe also kills the probe's process group.
@@ -60,71 +60,47 @@ mod signal_forward {
             kill_pgid(pid);
         }
     }
-
-    pub(super) fn interrupted_flag() -> &'static AtomicBool {
-        &INTERRUPTED
-    }
-
-    pub(super) fn active_probes() -> &'static Mutex<Vec<u32>> {
-        &ACTIVE_PROBES
-    }
-
-    /// Tracks a live probe's process group while `run_probe` waits on it.
-    pub(super) struct ProbeGuard<'a> {
-        probes: &'a Mutex<Vec<u32>>,
-        pid: u32,
-    }
-
-    impl<'a> ProbeGuard<'a> {
-        pub(super) fn register(
-            probes: &'a Mutex<Vec<u32>>,
-            pid: u32,
-            interrupted: &AtomicBool,
-        ) -> Self {
-            probes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(pid);
-            if interrupted.load(Ordering::SeqCst) {
-                kill_pgid(pid);
-            }
-            Self { probes, pid }
-        }
-    }
-
-    impl Drop for ProbeGuard<'_> {
-        fn drop(&mut self) {
-            self.probes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .retain(|&id| id != self.pid);
-        }
-    }
 }
 
 #[cfg(not(unix))]
 mod signal_forward {
     use std::sync::atomic::AtomicBool;
     use std::sync::Mutex;
-    static NEVER: AtomicBool = AtomicBool::new(false);
-    static EMPTY: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    pub(super) static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+    pub(super) static ACTIVE_PROBES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
     pub(super) fn ensure_handler() {}
-    pub(super) fn interrupted_flag() -> &'static AtomicBool {
-        &NEVER
-    }
-    pub(super) fn active_probes() -> &'static Mutex<Vec<u32>> {
-        &EMPTY
-    }
     pub(super) fn kill_pgid(_pid: u32) {}
-    pub(super) struct ProbeGuard;
-    impl ProbeGuard {
-        pub(super) fn register(
-            _probes: &'static Mutex<Vec<u32>>,
-            _pid: u32,
-            _interrupted: &AtomicBool,
-        ) -> Self {
-            Self
+}
+
+/// Tracks a live probe's process group while `run_probe` waits on it.
+struct ProbeGuard<'a> {
+    probes: &'a std::sync::Mutex<Vec<u32>>,
+    pid: u32,
+}
+
+impl<'a> ProbeGuard<'a> {
+    fn register(
+        probes: &'a std::sync::Mutex<Vec<u32>>,
+        pid: u32,
+        interrupted: &AtomicBool,
+    ) -> Self {
+        probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(pid);
+        if interrupted.load(Ordering::SeqCst) {
+            signal_forward::kill_pgid(pid);
         }
+        Self { probes, pid }
+    }
+}
+
+impl Drop for ProbeGuard<'_> {
+    fn drop(&mut self) {
+        self.probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|&id| id != self.pid);
     }
 }
 
@@ -140,7 +116,7 @@ pub(crate) fn probe_in(dir: &Path) -> impl FnMut(&[&str]) -> Result<String, Stri
 /// runs past the limit is killed with everything it started.
 pub(crate) fn run_probe(dir: &Path, argv: &[&str], limit: Duration) -> Result<String, String> {
     signal_forward::ensure_handler();
-    run_probe_with(dir, argv, limit, signal_forward::interrupted_flag())
+    run_probe_with(dir, argv, limit, &signal_forward::INTERRUPTED)
 }
 
 fn run_probe_with(
@@ -160,11 +136,7 @@ fn run_probe_with(
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command.spawn().map_err(|_| "could not run".to_string())?;
-    let _guard = signal_forward::ProbeGuard::register(
-        signal_forward::active_probes(),
-        child.id(),
-        interrupted,
-    );
+    let _guard = ProbeGuard::register(&signal_forward::ACTIVE_PROBES, child.id(), interrupted);
     let (sender, output) = mpsc::channel();
     if let Some(mut out) = child.stdout.take() {
         std::thread::spawn(move || {
@@ -402,7 +374,7 @@ mod tests {
         let flag = AtomicBool::new(false);
         let sentinel_pid = u32::MAX;
         {
-            let _guard = signal_forward::ProbeGuard::register(&probes, sentinel_pid, &flag);
+            let _guard = ProbeGuard::register(&probes, sentinel_pid, &flag);
             assert!(probes.lock().expect("lock").contains(&sentinel_pid));
         }
         assert!(probes.lock().expect("lock").is_empty());
@@ -412,7 +384,7 @@ mod tests {
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let mut child = cmd.spawn().expect("spawn");
         {
-            let _guard = signal_forward::ProbeGuard::register(&probes, child.id(), &flag);
+            let _guard = ProbeGuard::register(&probes, child.id(), &flag);
             signal_forward::kill_groups(&probes);
         }
         assert!(!child.wait().expect("wait").success());
@@ -428,7 +400,7 @@ mod tests {
         cmd.args(["-c", "sleep 60"]);
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let mut child = cmd.spawn().expect("spawn");
-        let _guard = signal_forward::ProbeGuard::register(&probes, child.id(), &interrupted);
+        let _guard = ProbeGuard::register(&probes, child.id(), &interrupted);
         assert!(!child.wait().expect("wait").success());
 
         let out = run_probe_with(

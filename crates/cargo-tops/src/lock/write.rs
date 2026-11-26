@@ -96,7 +96,7 @@ fn replace_file_with_counter(path: &Path, contents: &str, counter: &AtomicUsize)
 
 fn create_unique_temp(target: &Path, counter: &AtomicUsize) -> Result<(PathBuf, File)> {
     let file_name = target.file_name().context("a file name")?;
-    loop {
+    for _ in 0..64 {
         let seq = counter.fetch_add(1, Ordering::Relaxed);
         let mut name = file_name.to_os_string();
         name.push(format!(".tmp-{}-{seq}", std::process::id()));
@@ -107,6 +107,7 @@ fn create_unique_temp(target: &Path, counter: &AtomicUsize) -> Result<(PathBuf, 
             Err(err) => return Err(anyhow::Error::new(err).context("create the temporary file")),
         }
     }
+    bail!("could not create unique temporary file")
 }
 
 fn write_temp(
@@ -395,6 +396,20 @@ mod tests {
             "untouched\n"
         );
         assert!(counter.load(Ordering::Relaxed) >= 3);
+
+        // Non-AlreadyExists errors (such as PermissionDenied on a read-only parent
+        // directory) must fail immediately rather than retrying.
+        use std::os::unix::fs::PermissionsExt;
+        let ro_dir = scratch.0.join("rodir");
+        std::fs::create_dir(&ro_dir).expect("mkdir rodir");
+        let ro_target = ro_dir.join("rust-tops.lock");
+        std::fs::write(&ro_target, "old\n").expect("write ro_target");
+        std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+        let ro_counter = AtomicUsize::new(0);
+        let err = replace_file_with_counter(&ro_target, "new\n", &ro_counter);
+        std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o755)).ok();
+        assert!(err.is_err(), "expected error in read-only parent dir");
+        assert_eq!(ro_counter.load(Ordering::Relaxed), 1);
     }
 
     #[cfg(unix)]

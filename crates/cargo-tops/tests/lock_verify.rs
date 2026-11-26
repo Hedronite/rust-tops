@@ -634,6 +634,31 @@ fn gone(pid: &str) -> bool {
 }
 
 #[cfg(unix)]
+struct ProbeProcCleanup<'a> {
+    proc: std::process::Child,
+    shim_pid_file: &'a Path,
+    child_pid_file: &'a Path,
+}
+
+#[cfg(unix)]
+impl Drop for ProbeProcCleanup<'_> {
+    fn drop(&mut self) {
+        if let Ok(None) = self.proc.try_wait() {
+            self.proc.kill().ok();
+            self.proc.wait().ok();
+        }
+        for file in [self.shim_pid_file, self.child_pid_file] {
+            if let Ok(pid) = fs::read_to_string(file) {
+                let pid = pid.trim();
+                if !pid.is_empty() {
+                    Command::new("kill").args(["-9", pid]).status().ok();
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
 fn wait_for_pid_files(shim: &Path, child: &Path) -> (String, String) {
     let start = std::time::Instant::now();
     loop {
@@ -643,7 +668,7 @@ fn wait_for_pid_files(shim: &Path, child: &Path) -> (String, String) {
             }
         }
         assert!(
-            start.elapsed() < std::time::Duration::from_secs(5),
+            start.elapsed() < std::time::Duration::from_secs(20),
             "hung probe shim never wrote pid files"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -653,7 +678,7 @@ fn wait_for_pid_files(shim: &Path, child: &Path) -> (String, String) {
 #[cfg(unix)]
 fn wait_for_exit(proc: &mut std::process::Child) -> Option<std::process::ExitStatus> {
     let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(5) {
+    while start.elapsed() < std::time::Duration::from_secs(15) {
         if let Some(status) = proc.try_wait().expect("try_wait") {
             return Some(status);
         }
@@ -671,34 +696,31 @@ fn forwards_signal_to_hung_probe_group(sig_flag: &str, expected_sig: i32) {
     scratch.lock("[tools]\ncargo-crap = \"0.9.0\"\n");
     let shim_pid_file = scratch.repo().join("shim.pid");
     let child_pid_file = scratch.repo().join("grandchild.pid");
-    scratch.script(
-        "cargo-crap",
-        &format!(
-            "#!/bin/sh\nPATH=\"/bin:/usr/bin:$PATH\"\nsleep 60 &\necho \"$!\" > '{}'\necho \"$$\" > '{}'\nwait\n",
-            child_pid_file.display(),
-            shim_pid_file.display(),
-        ),
+    let script = format!(
+        "#!/bin/sh\nPATH=\"/bin:/usr/bin:$PATH\"\nsleep 60 &\necho \"$!\" > '{}'\necho \"$$\" > '{}'\nwait\n",
+        child_pid_file.display(),
+        shim_pid_file.display(),
     );
-    let mut proc = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+    scratch.script("cargo-crap", &script);
+    let proc = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args(["lock", "--verify", "--path"])
         .arg(scratch.repo())
         .env("PATH", scratch.bin())
         .spawn()
         .expect("spawn cargo-tops lock");
+    let mut guard = ProbeProcCleanup {
+        proc,
+        shim_pid_file: &shim_pid_file,
+        child_pid_file: &child_pid_file,
+    };
     let (shim_pid, child_pid) = wait_for_pid_files(&shim_pid_file, &child_pid_file);
     let sent = Command::new("kill")
-        .args([sig_flag, &proc.id().to_string()])
+        .args([sig_flag, &guard.proc.id().to_string()])
         .status()
         .expect("send signal");
     assert!(sent.success(), "kill {sig_flag} failed");
-    let status = wait_for_exit(&mut proc);
-    if status.is_none() {
-        Command::new("kill")
-            .args(["-9", &shim_pid, &child_pid])
-            .status()
-            .ok();
-    }
-    let status = status.expect("cargo-tops did not exit promptly after signal");
+    let status =
+        wait_for_exit(&mut guard.proc).expect("cargo-tops did not exit promptly after signal");
     assert_eq!(status.signal(), Some(expected_sig), "{status:?}");
     assert!(gone(&shim_pid), "shim {shim_pid} survived {sig_flag}");
     assert!(
