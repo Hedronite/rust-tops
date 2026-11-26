@@ -6,12 +6,44 @@ Versioning follows [SemVer 2.0.0](https://semver.org/) **per artifact**:
 
 | Plane | What | Where |
 | --- | --- | --- |
-| Protocol | rust-tops contract | `PROTOCOL.md` header (`1.4.0`) and `schema/` |
+| Protocol | rust-tops contract | `PROTOCOL.md` header (`1.5.0`) and `schema/` |
 | Package | `cargo-tops` and git tag | `v0.5.0`, Cargo `0.5.0` |
 
-Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0. Protocol 1.3.0 and 1.4.0 first ship with package 0.5.0.
+Do not mix planes. Protocol 1.0.0 shipped under tags `v0.1.0` through `v0.1.4`. Protocol 1.1.0 first ships with package 0.2.0. Protocol 1.2.0 first ships with package 0.4.0. Protocol 1.3.0 and 1.4.0 first ship with package 0.5.0. Protocol 1.5.0 is not in a release yet.
 
 ## [Unreleased]
+
+Protocol **1.5.0**: enforcement modes and the Baseline v2 debt ledger. The package version is unchanged.
+
+### Added
+
+- Spec and schemas ([#62](https://github.com/Hedronite/rust-tops/pull/62)): `PROTOCOL.md` defines `enforce` (`hard`, `ratchet`, `advisory`) and the debt ledger (§2.3, §16.1, §16.2). The instance schema adds the optional `enforce`, `advisory` and `baseline`; the gate report adds the optional `enforce`, `enforced`, `advisory_expires` and `warnings`; `schema/baseline.schema.json` is new.
+- Engine and command ([#65](https://github.com/Hedronite/rust-tops/pull/65)): the gate applies the three modes. `cargo tops baseline [--init | --check] [--base REF]` creates, lowers and checks `rust-tops-baseline.json`. Unknown `[tools]` keys in `rust-tops.lock` are listed in `report.json` `warnings`.
+- Enforcement map and docs: `/enforce`, `/advisory/expires`, `/advisory/reason` and `/baseline` are classed as judged, 29 of 86 schema keys (33.7%). The README, `RUST-TOPS.md` and the spec describe 1.5.0.
+
+### Changed
+
+- ([#65](https://github.com/Hedronite/rust-tops/pull/65)) `cargo tops init` writes protocol 1.5.0 and `enforce: ratchet`, and the templates and init goldens follow. This repository moved from `crap-baseline.json` to `enforce: ratchet` with `rust-tops-baseline.json`.
+- `cargo tops crap-baseline` and `gates.crap.baseline` (Baseline v1) are deprecated. The command prints a warning that names `cargo tops baseline`.
+
+### Fixed
+
+- ([#63](https://github.com/Hedronite/rust-tops/pull/63)) `SIGINT` and `SIGTERM` sent during a tool probe are forwarded to the probe's process group, with no `unsafe` code.
+- ([#63](https://github.com/Hedronite/rust-tops/pull/63)) A probe whose child leaves the process group with `setsid` still ends at the deadline; a test holds that bound.
+- ([#63](https://github.com/Hedronite/rust-tops/pull/63)) `cargo tops lock --write` refuses a read-only (`0444`) or hard-linked lock with exit 2 and leaves it unchanged. It writes through a new, uniquely named temporary file.
+- ([#63](https://github.com/Hedronite/rust-tops/pull/63)) Unit tests use their own scratch directories, and the gate's `ok:` and `count:` summary lines agree.
+
+### Upgrade
+
+An instance that omits `enforce` keeps working with its v1 baseline. To move to the debt ledger:
+
+1. Set `protocol.version: "1.5.0"` and `enforce: ratchet`, and remove `gates.crap.baseline`.
+2. Run `cargo tops gate`. It fails because there is no ledger.
+3. Run `cargo tops baseline --init`. It records the functions over the cap. It needs that run's tests to have passed, and in this build it also refuses while a coverage floor is missed, so meet the floors (or lower or exempt them as §4 and §19 allow) first.
+4. Run `cargo tops gate` again, commit `rust-tops-baseline.json`, and delete the old `crap-baseline.json`.
+5. In pull requests, run `cargo tops baseline --check --base origin/main` on a branch that is up to date, with the target branch fetched.
+
+These keys and the `baseline` command need a `cargo-tops` built from this tree; 0.5.0 rejects them.
 
 ## [0.5.0] - 2026-11-25
 
