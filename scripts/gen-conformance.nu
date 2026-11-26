@@ -41,7 +41,7 @@ def main [] {
 
   let ran = (^bend ($root | path join conformance gen.bend) | complete)
   if $ran.exit_code != 0 {
-    error make { msg: $"gen-conformance: bend failed (exit ($ran.exit_code)): ($ran.stderr)" }
+    error make { msg: $"gen-conformance: bend failed with exit code ($ran.exit_code): ($ran.stderr)" }
   }
   let version = (^bend version | str trim | split row " " | last)
 
