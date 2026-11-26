@@ -82,7 +82,7 @@ fn outcome_kind(judged: &Judgement) -> Kind {
 }
 
 fn mask_advisory(cfg: &TopsConfig, opts: Options, kind: Kind) -> bool {
-    kind == Kind::Failed && opts.mode == Mode::Run && cfg.live_advisory(&exemptions::today())
+    kind != Kind::Env && opts.mode == Mode::Run && cfg.live_advisory(&exemptions::today())
 }
 
 fn advisory_banner(
@@ -682,17 +682,15 @@ mod tests {
 
     #[test]
     fn advisory_mask_and_banner_only_trigger_on_written_run_findings() {
-        let mut cfg: crate::config::TopsConfig = serde_saphyr::from_str(
-            r#"protocol: { id: rust-tops, version: "1.5.0" }
+        let yaml = r#"protocol: { id: rust-tops, version: "1.5.0" }
 enforce: advisory
 advisory: { expires: "2999-01-01", reason: "adopting on legacy crate" }
 crate: { name: demo, class: library-core }
 goals: { tests: "x", errors: "x", invariants: "x", performance: "x" }
 layers: []
 gates: { coverage: {}, crap: {}, mutation: { unexplained_survivors_max: 0 } }
-density: {}"#,
-        )
-        .expect("cfg");
+density: {}"#;
+        let mut cfg: crate::config::TopsConfig = serde_saphyr::from_str(yaml).expect("cfg");
         let run = super::super::Options {
             max_tier: 1,
             mode: super::super::Mode::Run,
@@ -701,22 +699,18 @@ density: {}"#,
             max_tier: 1,
             mode: super::super::Mode::DryRun,
         };
-        assert!(super::mask_advisory(&cfg, run, super::Kind::Failed));
-        assert!(!super::mask_advisory(&cfg, run, super::Kind::Pass));
+        for kind in [super::Kind::Failed, super::Kind::Pass] {
+            assert!(super::mask_advisory(&cfg, run, kind));
+            assert_eq!(
+                super::advisory_banner(&cfg, run, kind, None).as_deref(),
+                Some("NOT ENFORCED (advisory, expires 2999-01-01)")
+            );
+        }
         assert!(!super::mask_advisory(&cfg, run, super::Kind::Env));
         assert!(!super::mask_advisory(&cfg, dry, super::Kind::Failed));
-        assert_eq!(
-            super::advisory_banner(&cfg, run, super::Kind::Failed, None).as_deref(),
-            Some("NOT ENFORCED (advisory, expires 2999-01-01)")
-        );
-        assert!(super::advisory_banner(&cfg, run, super::Kind::Pass, None).is_none());
-        assert!(super::advisory_banner(
-            &cfg,
-            run,
-            super::Kind::Failed,
-            Some(std::path::Path::new("r")),
-        )
-        .is_none());
+        assert!(super::advisory_banner(&cfg, run, super::Kind::Env, None).is_none());
+        let unwritten = Some(std::path::Path::new("r"));
+        assert!(super::advisory_banner(&cfg, run, super::Kind::Failed, unwritten).is_none());
         cfg.advisory = None;
         assert!(!super::mask_advisory(&cfg, run, super::Kind::Failed));
     }

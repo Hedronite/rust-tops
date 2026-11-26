@@ -460,3 +460,24 @@ fn live_advisory_never_masks_environment_exit_three() {
     assert_eq!(mrep.get("exit_code"), Some(&json!(3)));
     assert_eq!(mrep.get("enforced"), Some(&json!(true)));
 }
+
+#[test]
+fn clean_live_advisory_passes_with_unenforced_banner() {
+    let f = fixture("adv-live-pass");
+    write_reports(&f, 100, &[("./src/lib.rs", "ok", 1.0)]);
+    set_advisory(&f, "2999-01-01", "adopting on legacy crate");
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("NOT ENFORCED (advisory, expires 2999-01-01)"),
+        "{text}"
+    );
+    let rep = read_report(&f);
+    assert_eq!(rep.get("exit_code"), Some(&json!(0)));
+    assert_eq!(rep.get("ok"), Some(&json!(true)));
+    assert_eq!(rep.get("kind"), Some(&json!("pass")));
+    assert_eq!(rep.get("enforce"), Some(&json!("advisory")));
+    assert_eq!(rep.get("enforced"), Some(&json!(false)));
+    assert_eq!(rep.get("advisory_expires"), Some(&json!("2999-01-01")));
+    assert_eq!(rep.get("problems"), Some(&json!([])));
+}
