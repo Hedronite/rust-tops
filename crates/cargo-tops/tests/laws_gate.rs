@@ -277,7 +277,18 @@ fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
             layer["enabled"] = serde_json::Value::Bool(required || keep.contains(&id.as_str()));
         }
     });
+    if keep.contains(&"crap") {
+        seed_empty_baseline(&fixture);
+    }
     fixture
+}
+
+fn seed_empty_baseline(fixture: &Fixture) {
+    fs::write(
+        fixture.repo.join("rust-tops-baseline.json"),
+        "{\n  \"version\": 2,\n  \"crate\": \"fixture\",\n  \"functions\": {}\n}\n",
+    )
+    .expect("write empty v2 baseline");
 }
 
 /// Rewrites the fixture's `rust-tops.yaml` through `edit`, as data. It is
@@ -745,6 +756,22 @@ fn expect_fresh_init_outcomes(class: &str, fixture: &Fixture, text: &str) {
 /// A fresh init repo for `class`, `git init` plus one commit and no remote,
 /// passes `gate` as `init` wrote it. `laws` is off, so the gate neither
 /// fetches nor calls Bend: `curl` fails and `bend` is on no `PATH` entry.
+fn baseline_init(fixture: &Fixture, path: &std::ffi::OsStr) {
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+        .args(["baseline", "--init", "--path"])
+        .arg(&fixture.repo)
+        .env("PATH", path)
+        .env("HOME", &fixture.home)
+        .output()
+        .expect("spawn cargo-tops baseline --init");
+    assert!(
+        out.status.success(),
+        "baseline --init failed: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 fn expect_fresh_init_passes(class: &str) {
     let fixture = init_fixture(&format!("fresh-{class}"), class);
     assert_eq!(
@@ -754,7 +781,11 @@ fn expect_fresh_init_passes(class: &str) {
     );
     adopt(&fixture, Origin::None);
     stub(&fixture.bin, "curl", "#!/bin/sh\nexit 22\n");
-    let (out, text) = gate(&fixture, path_without_bend(&fixture.bin));
+    let p = path_without_bend(&fixture.bin);
+    let _ = gate(&fixture, p.clone());
+    baseline_init(&fixture, &p);
+    fs::remove_file(fixture.root.join("cargo.log")).ok();
+    let (out, text) = gate(&fixture, p);
     assert_eq!(out.status.code(), Some(0), "{class}: {text}");
     expect_fresh_init_outcomes(class, &fixture, &text);
     assert!(
@@ -796,7 +827,11 @@ fn expect_fresh_init_with_laws_passes(
     if stubbed {
         stub_bend(&fixture);
     }
-    let (out, text) = gate(&fixture, path(&fixture.bin));
+    let p = path(&fixture.bin);
+    let _ = gate(&fixture, p.clone());
+    baseline_init(&fixture, &p);
+    fs::remove_file(fixture.root.join("cargo.log")).ok();
+    let (out, text) = gate(&fixture, p);
     assert_eq!(out.status.code(), Some(0), "{class}: {text}");
     expect_fresh_init_outcomes(class, &fixture, &text);
     let cases = cases_json(&fixture);
@@ -866,7 +901,7 @@ fn init_writes_the_laws_layer_off_the_bend_kit_only_with_laws_and_the_toolchain_
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_798_16 = doc["protocol"]["version"].clone();
-    assert_eq!(tops_idx_798_16, "1.4.0");
+    assert_eq!(tops_idx_798_16, "1.5.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
@@ -993,6 +1028,7 @@ fn a_dry_run_runs_nothing_and_never_passes() {
             cargo_log(&fixture)
         );
 
+        seed_empty_baseline(&fixture);
         // The same repo, run for real: every enabled layer ran a command.
         let (out, text) = gate(&fixture, path_with_only_stubs(&fixture.bin));
         assert_eq!(out.status.code(), Some(0), "{class}: {text}");
@@ -1730,11 +1766,7 @@ fn one_gate_runs_cargo_metadata_once() {
     )
     .expect("write Cargo.toml");
     for args in [&[][..], &["--dry-run"]] {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let _ = fs::remove_file(fixture.root.join("cargo.log"));
+        fs::remove_file(fixture.root.join("cargo.log")).ok();
         let (_, text) = gate_with(&fixture, path_without_bend(&fixture.bin), None, args);
         assert!(text.contains("\n==> [laws] bend "), "{args:?}: {text}");
         assert_eq!(
@@ -2033,7 +2065,10 @@ fn a_missing_cargo_kani_fails_in_range_and_not_at_tier_1() {
     let fresh = init_fixture("no-kani-fresh", "library-core");
     adopt(&fresh, Origin::None);
     fs::remove_file(fresh.bin.join("cargo-kani")).expect("remove stub");
-    let (out, text) = gate(&fresh, path_with_only_stubs(&fresh.bin));
+    let p = path_with_only_stubs(&fresh.bin);
+    let _ = gate(&fresh, p.clone());
+    baseline_init(&fresh, &p);
+    let (out, text) = gate(&fresh, p);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains(ABOVE_TIER_1), "{text}");
     assert!(!text.contains("not on PATH"), "{text}");

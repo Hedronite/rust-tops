@@ -36,8 +36,9 @@ mod pins;
 
 const LIST: &str = "copies.toml";
 const TEMPLATES: &str = "crates/cargo-tops/templates/";
-/// The one schema source outside `templates/`. The template is its copy.
+/// The schema sources outside `templates/`. The templates keep byte copies.
 const SCHEMA: &str = "schema/rust-tops.schema.json";
+const BASELINE_SCHEMA: &str = "schema/baseline.schema.json";
 /// The BeautifulRust MIT text. The crate package ships a byte copy.
 const BEAUTIFULRUST_MIT: &str = "LICENSES/BeautifulRust-MIT.txt";
 /// `schema/` is a source. The kit workflow and the init goldens are not
@@ -273,11 +274,12 @@ fn validate(pairs: &[Pair]) -> Result<()> {
         inside(&pair.source)?;
         inside(&pair.dest)?;
         if pair.source != SCHEMA
+            && pair.source != BASELINE_SCHEMA
             && pair.source != BEAUTIFULRUST_MIT
             && !pair.source.starts_with(TEMPLATES)
         {
             bail!(
-                "source {}: a source is under {TEMPLATES}, is {SCHEMA}, or is {BEAUTIFULRUST_MIT}",
+                "source {}: a source is under {TEMPLATES}, is {SCHEMA}, is {BASELINE_SCHEMA}, or is {BEAUTIFULRUST_MIT}",
                 pair.source
             );
         }

@@ -85,7 +85,7 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_86_16 = value["protocol"]["version"].clone();
-    assert_eq!(tops_idx_86_16, "1.4.0");
+    assert_eq!(tops_idx_86_16, "1.5.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
@@ -108,6 +108,9 @@ fn without_protocol_1_1(mut value: serde_json::Value) -> serde_json::Value {
         "template must carry one disabled tier-0 laws layer"
     );
     layers.retain(|layer| layer["id"] != "laws");
+    if let Some(map) = value.as_object_mut() {
+        assert_eq!(map.remove("enforce"), Some(serde_json::json!("ratchet")));
+    }
     value
 }
 
@@ -184,7 +187,7 @@ fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
         reason = "already in this crate when the strict table was turned on"
     )]
     let tops_idx_158_16 = value["protocol"]["version"].clone();
-    assert_eq!(tops_idx_158_16, "1.4.0");
+    assert_eq!(tops_idx_158_16, "1.5.0");
     #[expect(
         clippy::indexing_slicing,
         reason = "already in this crate when the strict table was turned on"
@@ -242,6 +245,13 @@ fn without_kit_drop_in(mut value: serde_json::Value) -> serde_json::Value {
         "path": "src/generated/**",
         "reason": "generated protobuf; public decode roundtrip is the oracle",
     }]);
+    if let Some(map) = value.as_object_mut() {
+        assert_eq!(map.remove("enforce"), Some(serde_json::json!("ratchet")));
+        assert_eq!(
+            map.remove("baseline"),
+            Some(serde_json::json!("rust-tops-baseline.json"))
+        );
+    }
     value
 }
 

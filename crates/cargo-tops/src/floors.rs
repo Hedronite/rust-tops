@@ -1,11 +1,10 @@
-//! The coverage floors and the CRAP ratchet, judged on the reports this
-//! gate's coverage and crap layers wrote (§4, §7.3, §16).
+//! The coverage floors and the CRAP threshold/ratchet, judged on the reports
+//! this gate's coverage and crap layers wrote (§2.3, §4, §7.3, §16).
 //!
 //! `gate` calls [`judge`] after every layer has run. A layer that did not
 //! pass wrote nothing to judge and has already failed the gate, so only a
 //! passed coverage run and a passed crap run are read. Every miss is one
-//! problem line, and any problem fails the gate. `cargo tops crap-baseline`
-//! calls [`record_baseline`].
+//! problem line, and any problem fails the gate.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use std::fs;
@@ -13,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::config::{CoverageGate, TopsConfig};
+use crate::baseline;
+use crate::config::{CoverageGate, Enforce, TopsConfig};
 use crate::coverage_floor;
 use crate::crap_ratchet::{self, Score};
 use crate::exemptions::{self, Exemption};
@@ -22,7 +22,7 @@ use crate::laws;
 use crate::scope::{crate_root, Scope};
 use crate::steps;
 
-/// The default baseline, in the Cargo target directory (§16).
+/// The default legacy v1 baseline, in the Cargo target directory (§16).
 pub(crate) const BASELINE: &str = "crap-baseline.json";
 
 /// The coverage numbers a gate judged: the floors and what the report held.
@@ -40,24 +40,24 @@ pub(crate) struct CoverageNumbers {
 impl CoverageNumbers {
     pub(crate) fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
+            "files": self.files,
             "line_pct": self.line_pct,
             "region_pct": self.region_pct,
             "line_floor": self.line_floor,
             "region_floor": self.region_floor,
             "per_file_line_floor": self.per_file_line_floor,
-            "files": self.files,
         })
     }
 }
 
-/// The CRAP numbers a gate judged.
+/// The CRAP numbers a gate judged: the threshold and what the report held.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CrapNumbers {
     pub(crate) threshold: f64,
-    /// The highest production score; `None` with no functions.
     pub(crate) max: Option<f64>,
+    /// Production functions of the crate in the report.
     pub(crate) functions: usize,
-    /// Functions over the threshold or the ratchet, exemptions aside.
+    /// Functions that failed the threshold or the ratchet.
     pub(crate) over: usize,
     pub(crate) baseline: bool,
 }
@@ -66,16 +66,17 @@ impl CrapNumbers {
     pub(crate) fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "threshold": self.threshold,
-            "max": self.max,
             "functions": self.functions,
+            "max": self.max,
             "over": self.over,
             "baseline": self.baseline,
         })
     }
 }
 
-/// What [`judge`] found: every problem, and the numbers behind them.
-#[derive(Debug, Default)]
+/// Everything [`judge`] found: the problems and the numbers that failed or
+/// passed them.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Judged {
     pub(crate) problems: Vec<String>,
     pub(crate) coverage: Option<CoverageNumbers>,
@@ -174,19 +175,14 @@ fn judge_crap(
     today: &str,
 ) -> (Vec<String>, Option<CrapNumbers>) {
     let gate = &cfg.gates.crap;
-    let Some(threshold) = gate.threshold_agent.or(gate.threshold_production) else {
+    let Some(threshold) = gate.cap() else {
         println!(
             "\n==> [crap] no threshold_agent or threshold_production: not judged here \
              (a workspace root keeps its packages' floors)"
         );
         return (Vec::new(), None);
     };
-    let baseline = baseline_path(dir, cfg, report);
-    println!(
-        "\n==> [crap] threshold {threshold} on new functions in {}; ratchet against {}",
-        scope.root().display(),
-        baseline.display()
-    );
+    announce_crap_header(dir, cfg, scope, report, threshold);
     let (live, mut problems) = split(cfg, "crap", today);
     let crap = report.join(steps::CRAP);
     let scores = read(&crap)
@@ -196,15 +192,20 @@ fn judge_crap(
         threshold,
         ..CrapNumbers::default()
     };
-    match scores.and_then(|current| Ok((current, read_baseline(&baseline, scope)?))) {
-        Ok((current, before)) => {
-            announce(before.as_deref());
-            let over = crap_ratchet::judge(&current, before.as_deref(), threshold, &live);
+    match scores {
+        Ok(current) => {
             numbers.max = current.iter().map(|score| score.crap).reduce(f64::max);
             numbers.functions = current.len();
-            numbers.over = over.len();
-            numbers.baseline = before.is_some();
-            problems.extend(over);
+            match load_mode_baseline(dir, cfg, scope, report) {
+                Ok(before) => {
+                    announce(cfg.enforce, before.as_deref());
+                    let over = crap_ratchet::judge(&current, before.as_deref(), threshold, &live);
+                    numbers.over = over.len();
+                    numbers.baseline = before.is_some();
+                    problems.extend(over);
+                }
+                Err(err) => problems.push(format!("crap: {err}")),
+            }
         }
         Err(err) => problems.push(format!("crap: {err}")),
     }
@@ -212,9 +213,72 @@ fn judge_crap(
     (problems, Some(numbers))
 }
 
-/// Without a baseline every function is judged as new; say how to make one.
-fn announce(baseline: Option<&[Score]>) {
-    if baseline.is_none() {
+fn announce_crap_header(
+    dir: &Path,
+    cfg: &TopsConfig,
+    scope: &Scope,
+    report: &Path,
+    threshold: f64,
+) {
+    match cfg.enforce {
+        Some(Enforce::Hard) => println!(
+            "\n==> [crap] threshold {threshold} in {} (enforce: hard; baseline disabled)",
+            scope.root().display()
+        ),
+        Some(Enforce::Ratchet | Enforce::Advisory) => println!(
+            "\n==> [crap] threshold {threshold} on new functions in {}; ratchet against {}",
+            scope.root().display(),
+            baseline::path(dir, cfg).display()
+        ),
+        None => println!(
+            "\n==> [crap] threshold {threshold} on new functions in {}; ratchet against {}",
+            scope.root().display(),
+            baseline_path(dir, cfg, report).display()
+        ),
+    }
+}
+
+fn load_mode_baseline(
+    dir: &Path,
+    cfg: &TopsConfig,
+    scope: &Scope,
+    report: &Path,
+) -> Result<Option<Vec<Score>>, String> {
+    match cfg.enforce {
+        None => read_baseline(&baseline_path(dir, cfg, report), scope),
+        Some(Enforce::Hard) => Ok(None),
+        Some(Enforce::Ratchet) => read_v2_for_mode(dir, cfg, MissingV2::Fail),
+        Some(Enforce::Advisory) => read_v2_for_mode(dir, cfg, MissingV2::AllowNone),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MissingV2 {
+    Fail,
+    AllowNone,
+}
+
+fn read_v2_for_mode(
+    dir: &Path,
+    cfg: &TopsConfig,
+    on_missing: MissingV2,
+) -> Result<Option<Vec<Score>>, String> {
+    let v2 = baseline::path(dir, cfg);
+    if v2.exists() {
+        return baseline::read_v2_scores(&v2, cfg).map(Some);
+    }
+    match on_missing {
+        MissingV2::AllowNone => Ok(None),
+        MissingV2::Fail => Err(format!(
+            "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
+            v2.display()
+        )),
+    }
+}
+
+/// Without a baseline under legacy 1.4.0 mode, say how to make one.
+fn announce(enforce: Option<Enforce>, baseline: Option<&[Score]>) {
+    if enforce.is_none() && baseline.is_none() {
         println!(
             "    no baseline: every function is judged as new. After a gate run, \
              `cargo tops crap-baseline` records one (PROTOCOL.md §16)"
@@ -231,8 +295,8 @@ pub(crate) fn baseline_path(dir: &Path, cfg: &TopsConfig, report: &Path) -> Path
     )
 }
 
-/// The baseline's production scores. A missing file is `None`; one that
-/// cannot be read or is not a report is an error, never "no baseline".
+/// The legacy v1 baseline's production scores. A missing file is `None`; one
+/// that cannot be read or is not a report is an error, never "no baseline".
 fn read_baseline(path: &Path, scope: &Scope) -> Result<Option<Vec<Score>>, String> {
     match fs::read_to_string(path) {
         Ok(raw) => crap_ratchet::production_scores(&raw, scope)
@@ -268,8 +332,8 @@ fn tally(problems: &[String]) {
     }
 }
 
-/// `cargo tops crap-baseline`: the last gate's CRAP report, sorted, written
-/// to the instance's baseline path.
+/// `cargo tops crap-baseline` (legacy v1 compatibility alias): the last gate's
+/// CRAP report, sorted, written to the legacy baseline path.
 pub(crate) fn record_baseline(dir: &Path, cfg: &TopsConfig) -> Result<()> {
     laws::begin_gate();
     let report = std::path::absolute(laws::artifact_dir(dir))
