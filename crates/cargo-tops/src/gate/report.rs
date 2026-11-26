@@ -144,6 +144,19 @@ fn print_dry_run(done: &Executed<'_>, judged: &Judgement) {
     print_problems(judged);
 }
 
+/// Formats the `ok:` summary line so `passed + vacuous == ran_commands`.
+pub(crate) fn ok_line(judged: &Judgement) -> String {
+    if judged.vacuous == 0 {
+        format!("ok: {} command(s) passed", judged.commands)
+    } else {
+        format!(
+            "ok: {} command(s) passed, {} vacuous (counted for no law)",
+            judged.commands.saturating_sub(judged.vacuous),
+            judged.vacuous
+        )
+    }
+}
+
 /// No problem: `ok`, unless the report that says so could not be written.
 fn print_pass(judged: &Judgement, unwritten: Option<&Path>) {
     if let Some(path) = unwritten {
@@ -151,14 +164,8 @@ fn print_pass(judged: &Judgement, unwritten: Option<&Path>) {
             "fail: {} could not be written; the gate has no verdict on record",
             path.display()
         );
-    } else if judged.vacuous == 0 {
-        println!("ok: {} command(s) passed", judged.ran);
     } else {
-        println!(
-            "ok: {} command(s) passed, {} vacuous (counted for no law)",
-            judged.ran - judged.vacuous,
-            judged.vacuous
-        );
+        println!("{}", ok_line(judged));
     }
 }
 
@@ -540,19 +547,45 @@ fn law_rows(parts: &Parts<'_>) -> (Vec<Value>, usize, Option<usize>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear, put_judged, REPORT};
+    use super::super::judge::Judgement;
+    use super::super::tests::Scratch;
+    use super::{clear, ok_line, put_judged, REPORT};
+    use crate::floors;
     use serde_json::{json, Map};
     use std::fs;
 
+    fn judged_with(commands: usize, vacuous: usize) -> Judgement {
+        Judgement {
+            failed: Vec::new(),
+            evaluated: String::new(),
+            count: String::new(),
+            commands,
+            vacuous,
+            measured: floors::Judged::default(),
+            laws_seconds: 0.0,
+            bend_ran: true,
+            laws_failed: false,
+            environment: false,
+            law_total: 0,
+            survivors: None,
+        }
+    }
+
+    #[test]
+    fn ok_line_agrees_with_ran_commands_when_laws_ran() {
+        assert_eq!(ok_line(&judged_with(9, 0)), "ok: 9 command(s) passed");
+        assert_eq!(
+            ok_line(&judged_with(9, 1)),
+            "ok: 8 command(s) passed, 1 vacuous (counted for no law)"
+        );
+    }
+
     #[test]
     fn a_report_an_earlier_gate_left_is_cleared() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-clear-{}", std::process::id()));
-        fs::remove_dir_all(&dir).ok();
-        fs::create_dir_all(&dir).expect("mkdir");
-        fs::write(dir.join(REPORT), "{}").expect("write");
-        clear(&dir);
-        assert!(!dir.join(REPORT).exists());
-        fs::remove_dir_all(&dir).ok();
+        let scratch = Scratch::new("clear");
+        fs::write(scratch.0.join(REPORT), "{}").expect("write");
+        clear(&scratch.0);
+        assert!(!scratch.0.join(REPORT).exists());
     }
 
     #[test]

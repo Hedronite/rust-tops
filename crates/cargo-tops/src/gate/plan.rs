@@ -514,14 +514,12 @@ mod tests {
 
     #[test]
     fn the_base_is_looked_up_only_with_a_mutation_layer_in_range() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-base-for-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).expect("mkdir");
+        let scratch = super::super::tests::Scratch::new("base-for");
         let git = |args: &[&str]| {
             let out = Command::new("git")
                 .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
                 .args(args)
-                .current_dir(&dir)
+                .current_dir(&scratch.0)
                 .output()
                 .expect("spawn git");
             assert!(out.status.success(), "git {args:?}");
@@ -534,14 +532,22 @@ mod tests {
             source: BaseSource::Flag,
             name: "HEAD".to_string(),
         };
-        assert_eq!(base_for(&[&mutation], &dir, Some("HEAD"), None), found);
         assert_eq!(
-            base_for(&[&unit, &mutation], &dir, Some("HEAD"), None),
+            base_for(&[&mutation], &scratch.0, Some("HEAD"), None),
             found
         );
-        assert_eq!(base_for(&[&unit], &dir, Some("HEAD"), None), Base::unused());
-        assert_eq!(base_for(&[], &dir, Some("HEAD"), None), Base::unused());
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(
+            base_for(&[&unit, &mutation], &scratch.0, Some("HEAD"), None),
+            found
+        );
+        assert_eq!(
+            base_for(&[&unit], &scratch.0, Some("HEAD"), None),
+            Base::unused()
+        );
+        assert_eq!(
+            base_for(&[], &scratch.0, Some("HEAD"), None),
+            Base::unused()
+        );
     }
 
     #[test]
