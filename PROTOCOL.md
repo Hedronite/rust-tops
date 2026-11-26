@@ -164,11 +164,14 @@ advisory:
 
 - `expires` is a real day, `YYYY-MM-DD`, in UTC. The advisory expires at 00:00 UTC on that date, as an exemption does (§19).
 - `reason` has at least three words.
-- When `advisory`, `expires` or `reason` is missing or invalid, or the advisory has expired, `cargo tops check` fails with exit 2 and `cargo tops gate` fails with exit 1.
+- A missing or malformed `advisory`, `expires` or `reason` is a config error: `cargo tops check` exits 2 and `cargo tops gate` exits 2. Malformed means an `expires` that is not in that format or not a real calendar day, or a `reason` of fewer than three words.
+- An advisory has **expired** when its date is valid and today, in UTC, is on or after `expires`. It is treated as an expired exemption is (§19): `cargo tops check` warns and exits 0, and `cargo tops gate` fails with exit 1. An expired advisory is not 2: it is 1.
 - While the advisory is live, `cargo tops gate` exits 0 once execution starts, whatever its layers and laws find. Exit codes 2 and 3 for errors found before execution starts still apply, and so does `--dry-run`.
 - The run prints `NOT ENFORCED (advisory, expires <date>)`.
 - `report.json` is not masked. `problems`, `ok` and `kind` say what the run found, so a run with problems has `ok: false` and `kind: "fail"` beside `exit_code: 0`. It carries `enforce: "advisory"`, `enforced: false` and `advisory_expires`. A CI that must hold part of the gate under `advisory` reads the report.
 - `cargo tops baseline` refuses to write.
+
+An `advisory` block in an instance whose `enforce` is not `advisory`, or is absent, is ignored by the gate. `check` may warn about it. The block must still have the shape the schema gives it.
 
 ---
 
@@ -238,7 +241,7 @@ Set `crate.class` in the instance file. Defaults below are the starting gate set
 
 Each message names the file, the key, the class value and the one-line fix.
 
-Since 1.5.0, `enforce` (§2.3) does not change what `check` requires of a class. Under `advisory`, `check` also fails an instance whose advisory is missing, invalid or expired.
+Since 1.5.0, `enforce` (§2.3) does not change what `check` requires of a class. Under `advisory`, `check` also exits 2 on a missing or malformed advisory, and warns about an expired one with exit 0 (§2.3).
 
 Numbers are *minima*. A 40-line pure codec with a spec should sit at 100% region coverage because anything less is laziness, not philosophy.
 
@@ -1035,7 +1038,11 @@ The ledger lists only what is over the line today. It is one tracked JSON file p
 
 **`cargo tops baseline`** refreshes the ledger, and writes **only after a passing gate**: the last run's `report.json` has `ok: true`. It only lowers a value or removes an entry (the function is now at or under the cap, is exempt, or is gone). A function more than 0.01 above its entry, or over the cap with no entry, is refused with exit 1 and the file is not written. It keeps the reserved objects and `regressions` as they are. It refuses under `advisory`.
 
-**`cargo tops baseline --check [--base REF]`** writes nothing. It checks that the tracked file validates and is in the form of §16.1 (version 2, no line numbers, sorted keys, one entry per line), then compares it, through git, with the copy at `HEAD`, or at `REF`. An entry whose value is greater than in that copy, or that the copy does not have, fails with exit 1 unless a `regressions` record matches it: the same `kind`, `key` and new value in `to`. Every offending key is named. When the compared commit has no ledger at that path, the file is a first ledger: there is nothing to compare, and the command says so.
+**`cargo tops baseline --check [--base REF]`** writes nothing. It checks that the tracked file validates and is in the form of §16.1 (version 2, no line numbers, sorted keys, one entry per line), then compares it, through git, with the ledger of the compared commit, which is `HEAD`, or `REF`. A `functions` entry whose score is at or under the instance's CRAP cap (§2.3) is rejected with exit 1: the ledger holds over-cap functions only.
+
+**Which ledger is compared.** `--check` reads the compared commit's own `rust-tops.yaml` and takes the path from it: its `baseline` key if set, else `rust-tops-baseline.json`. A commit with no `rust-tops.yaml` has the default path; one whose `rust-tops.yaml` cannot be parsed fails the check. So a change that moves `baseline` to a new path has the new file compared with the compared commit's ledger at the old path. The file is a first ledger only when the compared commit has no ledger at its own resolved path: there is then nothing to compare, and the command says so.
+
+**What is refused.** An entry whose value is greater than in the compared ledger, or that it does not have, fails with exit 1 unless a `regressions` record matches it on all four of: `kind` (`functions`); `key`; `from`, equal to the compared commit's value, or `null` when it had no entry; and `to`, equal to the new value. Every offending key is named.
 
 A rise is therefore recorded by hand, in the entry and in a `regressions` record, and is reviewed like any other change to a gate.
 
