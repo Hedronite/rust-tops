@@ -123,7 +123,7 @@ enum ProjectCommand {
     },
     /// Run enabled Tier 0–1 tools in protocol order, then the Bend laws layer
     #[command(after_help = "Writes <target>/rust-tops/report.json on every run.\n\
-Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
+Exit codes:\n  0  pass, or a live advisory with findings (writes report with ok: false, enforced: false)\n  1  the gate ran and failed (a dry run included)\n  \
 2  the config is invalid, or the request cannot be gated: rust-tops.yaml missing, unreadable \
 or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable \
 when a layer in range needs a pinned tool (every pinned tool a running layer needs reads \

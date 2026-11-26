@@ -589,3 +589,35 @@ fn check_accepts_first_ledger_when_base_has_no_ledger_or_yaml() {
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("first ledger"), "{text}");
 }
+
+#[test]
+fn refresh_refuses_when_crap_layer_did_not_pass() {
+    let f = fixture("refresh-no-crap", Layout::Single);
+    write_reports(&f, 100, &[("./src/a.rs", "alpha", 12.0)]);
+    let _ = tops(&f, &["gate"]);
+    assert_eq!(
+        tops(&f, &["baseline", "--init"]).0.status.code(),
+        Some(0),
+        "init"
+    );
+
+    edit_yaml(&f, |doc| {
+        if let Some(layers) = doc.pointer_mut("/layers").and_then(Value::as_array_mut) {
+            for layer in layers {
+                if layer.get("id").and_then(Value::as_str) == Some("crap") {
+                    if let Some(map) = layer.as_object_mut() {
+                        map.insert("enabled".into(), json!(false));
+                    }
+                }
+            }
+        }
+    });
+    assert_eq!(
+        tops(&f, &["gate"]).0.status.code(),
+        Some(0),
+        "pass without crap"
+    );
+    let (out, text) = tops(&f, &["baseline"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("crap layer"), "{text}");
+}

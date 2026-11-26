@@ -71,6 +71,34 @@ pub(crate) fn announce_skipped(plan: &GatePlan<'_>) {
     }
 }
 
+fn outcome_kind(judged: &Judgement) -> Kind {
+    if judged.failed.is_empty() {
+        Kind::Pass
+    } else if judged.environment {
+        Kind::Env
+    } else {
+        Kind::Failed
+    }
+}
+
+fn mask_advisory(cfg: &TopsConfig, opts: Options, kind: Kind) -> bool {
+    kind == Kind::Failed && opts.mode == Mode::Run && cfg.live_advisory(&exemptions::today())
+}
+
+fn advisory_banner(
+    cfg: &TopsConfig,
+    opts: Options,
+    kind: Kind,
+    unwritten: Option<&Path>,
+) -> Option<String> {
+    if unwritten.is_some() || !mask_advisory(cfg, opts, kind) {
+        return None;
+    }
+    cfg.advisory
+        .as_ref()
+        .map(|adv| format!("NOT ENFORCED (advisory, expires {})", adv.expires))
+}
+
 /// Print the summary, write the report and return the exit code.
 pub(crate) fn finish(
     dir: &Path,
@@ -80,14 +108,8 @@ pub(crate) fn finish(
     done: &Executed<'_>,
     judged: &Judgement,
 ) -> ExitCode {
-    let kind = if judged.failed.is_empty() {
-        Kind::Pass
-    } else if judged.environment {
-        Kind::Env
-    } else {
-        Kind::Failed
-    };
-    let live_adv = opts.mode == Mode::Run && cfg.live_advisory(&exemptions::today());
+    let kind = outcome_kind(judged);
+    let masked = mask_advisory(cfg, opts, kind);
     // The report is written before the summary, so the summary's last line
     // is true: a report that could not be written ends it with `fail:`.
     let (code, unwritten) = write_report(&Parts {
@@ -95,7 +117,7 @@ pub(crate) fn finish(
         cfg: Some(cfg),
         opts,
         kind,
-        enforced: !live_adv,
+        enforced: !masked,
         error: None,
         plan: Some(plan),
         done: Some(done),
@@ -103,10 +125,8 @@ pub(crate) fn finish(
         report_dir: plan.report.clone(),
     });
     print_summary(opts, done, judged, unwritten.as_deref());
-    if live_adv {
-        if let Some(adv) = &cfg.advisory {
-            println!("NOT ENFORCED (advisory, expires {})", adv.expires);
-        }
+    if let Some(line) = advisory_banner(cfg, opts, kind, unwritten.as_deref()) {
+        println!("{line}");
     }
     code
 }
@@ -268,7 +288,7 @@ fn write_report(parts: &Parts<'_>) -> (ExitCode, Option<PathBuf>) {
     let mut final_code = exit_code;
     if let Err(err) = wrote {
         eprintln!("error: write {}: {err}", path.display());
-        if parts.enforced && matches!(kind, Kind::Pass | Kind::Failed) {
+        if matches!(kind, Kind::Pass | Kind::Failed) {
             kind = Kind::Env;
             final_code = kind.code();
         }
@@ -635,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn unwritable_report_stays_zero_when_unenforced() {
+    fn unwritable_report_exits_three_even_when_unenforced() {
         let scratch = Scratch::new("unwritable-adv");
         let blocker = scratch.0.join("not-a-dir");
         fs::write(&blocker, "x").expect("write blocker");
@@ -657,6 +677,47 @@ mod tests {
         };
         let (code, unwritten) = super::write_report(&parts);
         assert!(unwritten.is_some());
-        assert_eq!(code, std::process::ExitCode::SUCCESS);
+        assert_eq!(code, std::process::ExitCode::from(3));
+    }
+
+    #[test]
+    fn advisory_mask_and_banner_only_trigger_on_written_run_findings() {
+        let mut cfg: crate::config::TopsConfig = serde_saphyr::from_str(
+            r#"protocol: { id: rust-tops, version: "1.5.0" }
+enforce: advisory
+advisory: { expires: "2999-01-01", reason: "adopting on legacy crate" }
+crate: { name: demo, class: library-core }
+goals: { tests: "x", errors: "x", invariants: "x", performance: "x" }
+layers: []
+gates: { coverage: {}, crap: {}, mutation: { unexplained_survivors_max: 0 } }
+density: {}"#,
+        )
+        .expect("cfg");
+        let run = super::super::Options {
+            max_tier: 1,
+            mode: super::super::Mode::Run,
+        };
+        let dry = super::super::Options {
+            max_tier: 1,
+            mode: super::super::Mode::DryRun,
+        };
+        assert!(super::mask_advisory(&cfg, run, super::Kind::Failed));
+        assert!(!super::mask_advisory(&cfg, run, super::Kind::Pass));
+        assert!(!super::mask_advisory(&cfg, run, super::Kind::Env));
+        assert!(!super::mask_advisory(&cfg, dry, super::Kind::Failed));
+        assert_eq!(
+            super::advisory_banner(&cfg, run, super::Kind::Failed, None).as_deref(),
+            Some("NOT ENFORCED (advisory, expires 2999-01-01)")
+        );
+        assert!(super::advisory_banner(&cfg, run, super::Kind::Pass, None).is_none());
+        assert!(super::advisory_banner(
+            &cfg,
+            run,
+            super::Kind::Failed,
+            Some(std::path::Path::new("r")),
+        )
+        .is_none());
+        cfg.advisory = None;
+        assert!(!super::mask_advisory(&cfg, run, super::Kind::Failed));
     }
 }

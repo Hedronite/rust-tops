@@ -175,7 +175,7 @@ fn judge_crap(
     today: &str,
 ) -> (Vec<String>, Option<CrapNumbers>) {
     let gate = &cfg.gates.crap;
-    let Some(threshold) = gate.threshold_agent.or(gate.threshold_production) else {
+    let Some(threshold) = gate.cap() else {
         println!(
             "\n==> [crap] no threshold_agent or threshold_production: not judged here \
              (a workspace root keeps its packages' floors)"

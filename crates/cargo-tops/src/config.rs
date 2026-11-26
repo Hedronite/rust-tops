@@ -187,6 +187,13 @@ pub(crate) struct CrapGate {
     pub baseline: Option<String>,
 }
 
+impl CrapGate {
+    /// Active CRAP score cap (`threshold_agent` takes precedence over `threshold_production`).
+    pub(crate) fn cap(&self) -> Option<f64> {
+        self.threshold_agent.or(self.threshold_production)
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct MutationGate {
     pub unexplained_survivors_max: i64,
@@ -242,6 +249,8 @@ mod tests {
         assert_eq!(set.test_filter("acceptance"), "acc_");
         let empty = gates(&json!({"property": {"test_filter": ""}}));
         assert_eq!(empty.test_filter("property"), "property");
+        let absent = gates(&json!({"property": {"framework": "proptest"}}));
+        assert_eq!(absent.test_filter("property"), "property");
     }
 
     #[test]

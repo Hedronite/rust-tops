@@ -274,13 +274,6 @@ fn extract_braced(raw: &str, open: usize) -> Option<&str> {
     None
 }
 
-fn crap_cap(cfg: &TopsConfig) -> Option<f64> {
-    cfg.gates
-        .crap
-        .threshold_agent
-        .or(cfg.gates.crap.threshold_production)
-}
-
 fn aggregate_scores(crap_raw: &str, dir: &Path, cfg: &TopsConfig) -> Result<BTreeMap<String, f64>> {
     let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
     let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
@@ -420,7 +413,10 @@ fn run_init(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {
         eprintln!("error: {msg}");
         return Ok(ExitCode::from(1));
     }
-    let functions = over_cap_only(read_last_crap_scores(dir, cfg, &report_dir)?, crap_cap(cfg));
+    let functions = over_cap_only(
+        read_last_crap_scores(dir, cfg, &report_dir)?,
+        cfg.gates.crap.cap(),
+    );
     let count = functions.len();
     let v2 = BaselineV2 {
         version: 2,
@@ -441,6 +437,18 @@ fn gate_passed(report: &Value) -> bool {
     report.get("ok").and_then(Value::as_bool) == Some(true)
         && report.get("exit_code").and_then(Value::as_i64) == Some(0)
         && report.get("dry_run").and_then(Value::as_bool) != Some(true)
+}
+
+fn crap_layer_passed(report: &Value) -> bool {
+    report
+        .get("layers")
+        .and_then(Value::as_array)
+        .is_some_and(|layers| {
+            layers.iter().any(|layer| {
+                layer.get("id").and_then(Value::as_str) == Some("crap")
+                    && layer.get("verdict").and_then(Value::as_str) == Some("pass")
+            })
+        })
 }
 
 enum RefreshInput {
@@ -467,6 +475,12 @@ fn load_refresh_inputs(dir: &Path, cfg: &TopsConfig, out: &Path) -> Result<Refre
         );
         return Ok(RefreshInput::Stop(ExitCode::from(1)));
     }
+    if !crap_layer_passed(&report) {
+        eprintln!(
+            "error: last gate did not pass the crap layer; baseline refresh writes only after a passing crap layer"
+        );
+        return Ok(RefreshInput::Stop(ExitCode::from(1)));
+    }
     let raw_old = fs::read_to_string(out).with_context(|| format!("read {}", out.display()))?;
     let existing = parse_and_validate(&raw_old, cfg)
         .map_err(|err| anyhow!("baseline {}: {err}", out.display()))?;
@@ -480,7 +494,7 @@ fn run_refresh(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {
         RefreshInput::Ready(existing, current) => (*existing, current),
         RefreshInput::Stop(code) => return Ok(code),
     };
-    let cap = crap_cap(cfg);
+    let cap = cfg.gates.crap.cap();
     let rises = refresh_rises(&existing.functions, &current, cap);
     if !rises.is_empty() {
         for msg in rises {
@@ -549,7 +563,7 @@ fn validate_local_v2(cur_path: &Path, cfg: &TopsConfig) -> Result<Option<Baselin
             return Ok(None);
         }
     };
-    let cap_errors = check_cap_entries(&cur.functions, crap_cap(cfg));
+    let cap_errors = check_cap_entries(&cur.functions, cfg.gates.crap.cap());
     if cap_errors.is_empty() {
         return Ok(Some(cur));
     }
@@ -699,6 +713,8 @@ fn git_exists(dir: &Path, commit: &str, rel: &str) -> bool {
     Command::new("git")
         .args(["cat-file", "-e", &format!("{commit}:{rel}")])
         .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
 }
@@ -960,6 +976,15 @@ mod tests {
         assert!(parse_and_validate(nested_fake, &cfg_for("demo")).is_ok());
         assert!(super::gate_passed(
             &json!({"ok": true, "exit_code": 0, "dry_run": false})
+        ));
+        assert!(super::crap_layer_passed(
+            &json!({"layers": [{"id": "crap", "verdict": "pass"}]})
+        ));
+        assert!(!super::crap_layer_passed(
+            &json!({"layers": [{"id": "crap", "verdict": "fail"}]})
+        ));
+        assert!(!super::crap_layer_passed(
+            &json!({"layers": [{"id": "unit", "verdict": "pass"}]})
         ));
         for bad in [
             json!({"ok": false, "exit_code": 0, "dry_run": false}),

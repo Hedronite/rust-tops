@@ -185,11 +185,8 @@ fn write_v2(f: &Fixture, entries: &[(&str, f64)]) {
 }
 
 fn run(f: &Fixture, args: &[&str]) -> (Output, String) {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(
-        std::iter::once(f.bin.clone()).chain(std::env::split_paths(&inherited)),
-    )
-    .expect("PATH");
+    let path = std::env::join_paths([f.bin.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+        .expect("PATH");
     let out = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args(args)
         .arg("--path")
@@ -431,4 +428,35 @@ fn omitted_enforce_preserves_legacy_v1_and_check_warns_when_both_set() {
         Some(1),
         "ratchet ignores v1"
     );
+}
+
+#[test]
+fn live_advisory_never_masks_environment_exit_three() {
+    let mismatch = fixture("adv-pin");
+    write_reports(&mismatch, 100, &[("./src/lib.rs", "ok", 1.0)]);
+    set_advisory(&mismatch, "2999-01-01", "adopting on legacy crate");
+    let lock = fs::read_to_string(mismatch.repo.join("rust-tops.lock")).expect("read lock");
+    fs::write(
+        mismatch.repo.join("rust-tops.lock"),
+        lock.replacen("0.9.0", "0.0.1", 1),
+    )
+    .expect("write lock");
+    let (out, text) = run(&mismatch, &["gate"]);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(!text.contains("NOT ENFORCED"), "{text}");
+    let rep = read_report(&mismatch);
+    assert_eq!(rep.get("kind"), Some(&json!("environment")));
+    assert_eq!(rep.get("exit_code"), Some(&json!(3)));
+    assert_eq!(rep.get("enforced"), Some(&json!(true)));
+
+    let missing = fixture("adv-missing");
+    write_reports(&missing, 100, &[("./src/lib.rs", "ok", 1.0)]);
+    set_advisory(&missing, "2999-01-01", "adopting on legacy crate");
+    fs::remove_file(missing.bin.join("cargo-deny")).expect("rm cargo-deny");
+    let (mout, mtext) = run(&missing, &["gate"]);
+    assert_eq!(mout.status.code(), Some(3), "{mtext}");
+    let mrep = read_report(&missing);
+    assert_eq!(mrep.get("kind"), Some(&json!("environment")));
+    assert_eq!(mrep.get("exit_code"), Some(&json!(3)));
+    assert_eq!(mrep.get("enforced"), Some(&json!(true)));
 }
