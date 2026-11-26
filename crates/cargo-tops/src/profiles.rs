@@ -52,9 +52,22 @@ const RECORD_MARKS: [(&str, &str, &str); 10] = [
 /// filled from that instance and this cargo-tops version.
 pub(crate) fn adoption_record(yaml: &str) -> String {
     let doc = crate::facts::parse_yaml(yaml).unwrap_or_default();
+    let baseline = doc
+        .pointer("/baseline")
+        .and_then(serde_json::Value::as_str)
+        .map(|s| format!("`{s}`"))
+        .or_else(|| {
+            doc.pointer("/enforce")
+                .map(|_| "`rust-tops-baseline.json`".to_string())
+        });
     RECORD_MARKS
         .iter()
         .fold(RUST_TOPS_MD.to_string(), |text, (mark, pointer, absent)| {
+            if *mark == "{{baseline}}" {
+                if let Some(val) = &baseline {
+                    return text.replace(mark, val);
+                }
+            }
             let value = doc.pointer(pointer).filter(|_| !pointer.is_empty());
             text.replace(mark, &record_value(value, absent))
         })
@@ -302,10 +315,13 @@ mod tests {
         let core = super::adoption_record(&super::profile_yaml("library-core", "demo").unwrap());
         assert!(!core.contains("{{"), "{core}");
         for want in [
-            "| Protocol version | `1.4.0` |",
+            "| Protocol version | `1.5.0` |",
             "| `demo` | `library-core` | `rust-tops.yaml` | 95 | 90 | 90 | 6 | 4 |",
-            concat!("cargo install cargo-tops --version ", env!("CARGO_PKG_VERSION")),
-            "Baseline: `crap-baseline.json` in the Cargo target directory (the default; not tracked)",
+            concat!(
+                "cargo install cargo-tops --version ",
+                env!("CARGO_PKG_VERSION")
+            ),
+            "Baseline: `rust-tops-baseline.json`",
         ] {
             assert!(core.contains(want), "{want}\n{core}");
         }

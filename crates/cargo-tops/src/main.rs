@@ -20,6 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod baseline;
 mod config;
 mod coverage_floor;
 mod crap_ratchet;
@@ -127,7 +128,7 @@ Exit codes:\n  0  pass\n  1  the gate ran and failed (a dry run included)\n  \
 or failing check, no enabled layer at or below --max-tier, or rust-tops.lock unreadable \
 when a layer in range needs a pinned tool (every pinned tool a running layer needs reads \
 the lock); a command-line usage error is 2 too and writes no report. An expired \
-exemption is not 2: it is 1\n  \
+exemption or an expired advisory is not 2: it is 1\n  \
 3  the environment: a required tool or cargo metadata is missing, a pinned tool prints \
 another version than its pin in rust-tops.lock, or report.json cannot be written\n\
 Where more than one applies, 2 wins over 3, and 3 over 1.")]
@@ -149,15 +150,47 @@ Where more than one applies, 2 wins over 3, and 3 over 1.")]
     /// Check or rewrite the tool pins in rust-tops.lock against the tools on PATH
     #[command(
         after_help = "Exit codes:\n  0  every pin matches (verify) or the lock is written\n  \
-2  rust-tops.lock is unreadable, or the config does not load for --max-tier, or a usage error\n  \
+2  rust-tops.lock is unreadable, --write refuses a read-only or hard-linked lock, the config does not load for --max-tier, or a usage error\n  \
 3  a pinned tool is missing or prints another version than its pin"
     )]
     Lock(LockArgs),
-    /// Record the last gate's CRAP report as the baseline the crap ratchet reads
+    /// Initialize, refresh, or check the Baseline v2 debt ledger (rust-tops-baseline.json)
+    #[command(
+        after_help = "Exit codes:\n  0  baseline written or checked\n  1  refused under advisory, score rose, unexcused regression, or invalid ledger\n  2  config invalid, missing gate report, or usage error"
+    )]
+    Baseline(BaselineArgs),
+    /// Compatibility alias for legacy v1 CRAP baselines (use `cargo tops baseline`)
     CrapBaseline {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
+}
+
+#[derive(clap::Args)]
+struct BaselineArgs {
+    /// Write the first Baseline v2 ledger from the last gate run
+    #[arg(long, conflicts_with = "check")]
+    init: bool,
+    /// Validate and compare the ledger against git (HEAD or --base REF)
+    #[arg(long, conflicts_with = "init")]
+    check: bool,
+    /// Git ref to compare against (default HEAD; requires --check)
+    #[arg(long, value_name = "REF", requires = "check")]
+    base: Option<String>,
+    #[arg(long, default_value = ".")]
+    path: PathBuf,
+}
+
+impl BaselineArgs {
+    fn mode(&self) -> baseline::Mode {
+        if self.init {
+            baseline::Mode::Init
+        } else if self.check {
+            baseline::Mode::Check
+        } else {
+            baseline::Mode::Refresh
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -171,7 +204,7 @@ enum Commands {
 }
 
 /// The protocol version this build implements.
-const PROTOCOL_VERSION: &str = "1.4.0";
+const PROTOCOL_VERSION: &str = "1.5.0";
 
 /// What `cargo tops version` prints: package, protocol, then the `[tools]`
 /// pins of the lock text, or one line saying why there are none.
@@ -258,7 +291,11 @@ fn run_project(command: ProjectCommand) -> Result<ExitCode> {
             base.as_deref(),
         )),
         ProjectCommand::Lock(args) => lock::command(&args.path, &args.action()),
+        ProjectCommand::Baseline(args) => baseline_cmd(&args),
         ProjectCommand::CrapBaseline { path } => {
+            eprintln!(
+                "warning: `cargo tops crap-baseline` is deprecated; use `cargo tops baseline` (PROTOCOL.md §16.2)"
+            );
             let cfg = load_config(&path)?;
             floors::record_baseline(&path, &cfg)?;
             Ok(ExitCode::SUCCESS)
@@ -270,6 +307,11 @@ fn run_project(command: ProjectCommand) -> Result<ExitCode> {
 /// and in `lock`: a pin that is not a string, a `tools` that is not a table, a
 /// pin that is not dotted digits, no `[tools]` table, or a file that cannot be
 /// read is an error naming the key or the file. No lock file is no pins.
+fn baseline_cmd(args: &BaselineArgs) -> Result<ExitCode> {
+    let cfg = load_config(&args.path)?;
+    baseline::command(&args.path, &cfg, args.mode(), args.base.as_deref())
+}
+
 fn check_lock(path: &Path) -> Result<()> {
     lock::lock_file_pins(path).map(|_| ())
 }
@@ -282,6 +324,9 @@ fn check_command(path: &Path) -> Result<ExitCode> {
     check_lock(path)?;
     for problem in gate::judge::expired_problems(&cfg) {
         println!("warning: {problem}");
+    }
+    for warning in cfg.check_warnings(&exemptions::today()) {
+        println!("warning: {warning}");
     }
     println!(
         "ok: {} ({}) matches rust-tops {}",
@@ -362,6 +407,7 @@ fn check(cfg: &TopsConfig) -> Result<()> {
     {
         return Err(anyhow!("gates.crap.threshold_agent must be >= 1"));
     }
+    cfg.check_advisory().map_err(|msg| anyhow!(msg))?;
     Ok(())
 }
 
@@ -1034,13 +1080,13 @@ mod tests {
         let pkg = env!("CARGO_PKG_VERSION");
         assert_eq!(
             version_text(None),
-            format!("cargo-tops {pkg}\nprotocol 1.4.0\ntool pins: none (no ./rust-tops.lock)\n")
+            format!("cargo-tops {pkg}\nprotocol 1.5.0\ntool pins: none (no ./rust-tops.lock)\n")
         );
         let lock = "[tools]\nrustc = \"1.99.1\"\n[notes]\nx = \"y\"\n";
         assert_eq!(
             version_text(Some(lock)),
             format!(
-                "cargo-tops {pkg}\nprotocol 1.4.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
+                "cargo-tops {pkg}\nprotocol 1.5.0\ntool pins (./rust-tops.lock):\n  rustc = 1.99.1\n"
             )
         );
         assert!(version_text(Some("[tools\n")).contains("is not valid TOML"));

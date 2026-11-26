@@ -1,12 +1,14 @@
-# Example instance of Rust-TOPS 1.4.0
+# Example instance of Rust-TOPS 1.5.0
 # Copy to the crate root as rust-tops.yaml and edit class / hot_paths / exemptions.
 # Validate against ../schema/rust-tops.schema.json
 
 protocol:
   id: rust-tops
-  version: "1.4.0"
+  version: "1.5.0"
   spec_uri: "./PROTOCOL.md"
   adopted: "2026-09-24"
+
+enforce: ratchet
 
 crate:
   name: example-codec

@@ -13,7 +13,8 @@ use super::execute::Executed;
 use super::judge::{self, Judgement};
 use super::plan::{GatePlan, What};
 use super::{Fault, Mode, Options};
-use crate::config::TopsConfig;
+use crate::config::{Enforce, TopsConfig};
+use crate::exemptions;
 use crate::floors::{CoverageNumbers, CrapNumbers};
 use crate::steps::{self, Base};
 use crate::{laws, PROTOCOL_VERSION};
@@ -86,6 +87,7 @@ pub(crate) fn finish(
     } else {
         Kind::Failed
     };
+    let live_adv = opts.mode == Mode::Run && cfg.live_advisory(&exemptions::today());
     // The report is written before the summary, so the summary's last line
     // is true: a report that could not be written ends it with `fail:`.
     let (code, unwritten) = write_report(&Parts {
@@ -93,6 +95,7 @@ pub(crate) fn finish(
         cfg: Some(cfg),
         opts,
         kind,
+        enforced: !live_adv,
         error: None,
         plan: Some(plan),
         done: Some(done),
@@ -100,6 +103,11 @@ pub(crate) fn finish(
         report_dir: plan.report.clone(),
     });
     print_summary(opts, done, judged, unwritten.as_deref());
+    if live_adv {
+        if let Some(adv) = &cfg.advisory {
+            println!("NOT ENFORCED (advisory, expires {})", adv.expires);
+        }
+    }
     code
 }
 
@@ -189,6 +197,7 @@ pub(crate) fn fault(
         } else {
             Kind::Env
         },
+        enforced: true,
         error: Some(format!("{:#}", fault.error)),
         plan,
         done: None,
@@ -208,6 +217,7 @@ pub(crate) fn config_invalid(dir: &Path, error: &anyhow::Error, opts: Options) -
         cfg: None,
         opts,
         kind: Kind::Config,
+        enforced: true,
         error: Some(format!("{error:#}")),
         plan: None,
         done: None,
@@ -229,6 +239,7 @@ struct Parts<'a> {
     cfg: Option<&'a TopsConfig>,
     opts: Options,
     kind: Kind,
+    enforced: bool,
     error: Option<String>,
     plan: Option<&'a GatePlan<'a>>,
     done: Option<&'a Executed<'a>>,
@@ -246,21 +257,24 @@ fn emit(parts: &Parts<'_>) -> ExitCode {
 /// returned so the summary can say so.
 fn write_report(parts: &Parts<'_>) -> (ExitCode, Option<PathBuf>) {
     let mut kind = parts.kind;
+    let exit_code = if parts.enforced { kind.code() } else { 0 };
     let path = parts.report_dir.join(REPORT);
     let wrote = fs::create_dir_all(&parts.report_dir).and_then(|()| {
-        let text =
-            serde_json::to_string_pretty(&document(parts, kind)).map_err(std::io::Error::other)?;
+        let text = serde_json::to_string_pretty(&document(parts, kind, exit_code))
+            .map_err(std::io::Error::other)?;
         fs::write(&path, format!("{text}\n"))
     });
     let mut unwritten = None;
+    let mut final_code = exit_code;
     if let Err(err) = wrote {
         eprintln!("error: write {}: {err}", path.display());
-        if matches!(kind, Kind::Pass | Kind::Failed) {
+        if parts.enforced && matches!(kind, Kind::Pass | Kind::Failed) {
             kind = Kind::Env;
+            final_code = kind.code();
         }
         unwritten = Some(path);
     }
-    (ExitCode::from(kind.code()), unwritten)
+    (ExitCode::from(final_code), unwritten)
 }
 
 fn git_sha(dir: &Path) -> Option<String> {
@@ -287,7 +301,7 @@ fn crate_name(parts: &Parts<'_>) -> String {
     )
 }
 
-fn document(parts: &Parts<'_>, kind: Kind) -> Value {
+fn document(parts: &Parts<'_>, kind: Kind, exit_code: u8) -> Value {
     let (layers, disabled) = layer_rows(parts);
     let (laws, checked, total) = law_rows(parts);
     let problems: Vec<String> = parts.judged.map_or_else(
@@ -306,8 +320,9 @@ fn document(parts: &Parts<'_>, kind: Kind) -> Value {
     doc.insert("max_tier".into(), json!(parts.opts.max_tier));
     doc.insert("dry_run".into(), json!(parts.opts.mode == Mode::DryRun));
     doc.insert("kind".into(), json!(kind.name()));
-    doc.insert("exit_code".into(), json!(kind.code()));
+    doc.insert("exit_code".into(), json!(exit_code));
     doc.insert("ok".into(), json!(kind == Kind::Pass));
+    insert_mode_and_warnings(&mut doc, parts);
     if let Some(error) = &parts.error {
         doc.insert("error".into(), json!(error));
     }
@@ -324,6 +339,25 @@ fn document(parts: &Parts<'_>, kind: Kind) -> Value {
     }
     doc.insert("laws".into(), json!(laws));
     Value::Object(doc)
+}
+
+fn insert_mode_and_warnings(doc: &mut Map<String, Value>, parts: &Parts<'_>) {
+    if let Some(enforce) = parts.cfg.and_then(|cfg| cfg.enforce) {
+        doc.insert("enforce".into(), json!(enforce.as_str()));
+        doc.insert("enforced".into(), json!(parts.enforced));
+        if enforce == Enforce::Advisory {
+            if let Some(adv) = parts.cfg.and_then(|cfg| cfg.advisory.as_ref()) {
+                doc.insert("advisory_expires".into(), json!(adv.expires));
+            }
+        }
+    }
+    if let Some(warnings) = parts
+        .plan
+        .map(|p| &p.pin_warnings)
+        .filter(|w| !w.is_empty())
+    {
+        doc.insert("warnings".into(), json!(warnings));
+    }
 }
 
 fn row(
@@ -598,5 +632,31 @@ mod tests {
             row.get("judged"),
             Some(&json!({ "base": { "ref": "x" }, "caught": 3 }))
         );
+    }
+
+    #[test]
+    fn unwritable_report_stays_zero_when_unenforced() {
+        let scratch = Scratch::new("unwritable-adv");
+        let blocker = scratch.0.join("not-a-dir");
+        fs::write(&blocker, "x").expect("write blocker");
+        let opts = super::super::Options {
+            max_tier: 1,
+            mode: super::super::Mode::Run,
+        };
+        let parts = super::Parts {
+            dir: &scratch.0,
+            cfg: None,
+            opts,
+            kind: super::Kind::Failed,
+            enforced: false,
+            error: None,
+            plan: None,
+            done: None,
+            judged: None,
+            report_dir: blocker,
+        };
+        let (code, unwritten) = super::write_report(&parts);
+        assert!(unwritten.is_some());
+        assert_eq!(code, std::process::ExitCode::SUCCESS);
     }
 }

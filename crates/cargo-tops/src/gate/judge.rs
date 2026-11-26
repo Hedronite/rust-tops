@@ -109,6 +109,9 @@ pub(crate) fn judge(
     let measured = floors::judge(dir, cfg, &done.runs, &plan.report);
     failed.extend(measured.problems.iter().cloned());
     add_expired(cfg, &mut failed);
+    if let Some(problem) = cfg.expired_advisory(&exemptions::today()) {
+        failed.push(problem);
+    }
     let laws = judge_laws(&inputs, prepared, total, &mut failed)?;
     Ok(finish(&inputs, failed, measured, laws, total, survivors))
 }
@@ -194,6 +197,9 @@ fn dry_judgement(
     let mut failed = done.not_run.clone();
     failed.push(count.clone());
     add_expired(cfg, &mut failed);
+    if let Some(problem) = cfg.expired_advisory(&exemptions::today()) {
+        failed.push(problem);
+    }
     Judgement {
         failed,
         evaluated: format!("laws evaluated: 0/{total} (dry run: bend did not run)"),

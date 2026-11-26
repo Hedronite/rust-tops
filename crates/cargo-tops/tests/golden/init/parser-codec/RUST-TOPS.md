@@ -9,7 +9,7 @@ This repository adopts the Rust-TOPS protocol from
 
 | Item | Value |
 | --- | --- |
-| Protocol version | `1.4.0` |
+| Protocol version | `1.5.0` |
 | Spec | <https://github.com/Hedronite/rust-tops/blob/v0.5.0/PROTOCOL.md> |
 | cargo-tops | 0.5.0 (`cargo install cargo-tops --version 0.5.0 --locked`) |
 
@@ -34,7 +34,7 @@ CRAP rises (PROTOCOL.md §2.1, §7.5, §16).
 
 ## CRAP baseline
 
-Baseline: `crap-baseline.json` in the Cargo target directory (the default; not tracked)
+Baseline: `rust-tops-baseline.json`
 
 The crap layer compares each production function with this file. Without it,
 every function is judged as new. To refresh it, run the gate, then

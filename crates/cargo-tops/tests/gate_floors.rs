@@ -116,9 +116,29 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         reports: root.join("reports"),
         root,
     };
-    for dir in [&fixture.bin, &fixture.reports] {
-        fs::create_dir_all(dir).expect("mkdir");
-    }
+    init_core_fixture(&fixture);
+    // `cargo metadata` is asked about a project with a manifest.
+    fs::write(
+        fixture.repo.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write Cargo.toml");
+    stub_tools(&fixture.bin);
+    edit(&fixture, |doc| {
+        set(doc, "", "enforce", None);
+        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
+        for layer in layers.expect("layers") {
+            let id = layer.get("id").and_then(Value::as_str);
+            let enabled = id.is_some_and(|id| on.contains(&id) || required(id));
+            set(layer, "", "enabled", Some(Value::Bool(enabled)));
+        }
+    });
+    fixture
+}
+
+fn init_core_fixture(fixture: &Fixture) {
+    fs::create_dir_all(&fixture.bin).expect("mkdir bin");
+    fs::create_dir_all(&fixture.reports).expect("mkdir reports");
     let init = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
         .args([
             "init",
@@ -132,22 +152,6 @@ fn fixture_with(name: &str, on: &[&str]) -> Fixture {
         .output()
         .expect("spawn init");
     assert!(init.status.success(), "init failed");
-    // `cargo metadata` is asked about a project with a manifest.
-    fs::write(
-        fixture.repo.join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write Cargo.toml");
-    stub_tools(&fixture.bin);
-    edit(&fixture, |doc| {
-        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
-        for layer in layers.expect("layers") {
-            let id = layer.get("id").and_then(Value::as_str);
-            let enabled = id.is_some_and(|id| on.contains(&id) || required(id));
-            set(layer, "", "enabled", Some(Value::Bool(enabled)));
-        }
-    });
-    fixture
 }
 
 /// Sets (or, for `None`, removes) `key` in the object at `pointer`.
