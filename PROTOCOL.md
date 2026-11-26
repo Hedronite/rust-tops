@@ -1,7 +1,7 @@
 # Rust Testing and Optimization Protocol Suite (Rust-TOPS)
 
 **Protocol ID:** `rust-tops`  
-**Version:** 1.4.0  
+**Version:** 1.5.0  
 **Status:** Adopted specification  
 **Machine schema:** [`schema/rust-tops.schema.json`](schema/rust-tops.schema.json)  
 **Example instance:** [`config/rust-tops.example.yaml`](config/rust-tops.example.yaml)  
@@ -19,7 +19,7 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 
 > **1.4.0:** makes the gate pass a layer only on evidence from the run: the mutation base comes from `--base`, `gates.base_ref` or `origin/HEAD`, and a missing base fails under CI (§8.3); a credited `property` or `acceptance` layer needs a matching passed test (§6.5.1); an expired exemption fails the gate for every layer, and survivors are judged per function (§19); a pinned tool at another version fails its layer with exit 3, and `cargo tops lock` checks and writes the pins (§14.5). The schema adds `gates.base_ref`, `gates.property.test_filter` and `gates.acceptance`. No default threshold and no part of the CRAP formula changed.
 
-> **1.5.0 (in progress):** adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger (§16.1, §16.2). The schema adds `enforce`, `advisory` and `baseline`. The **Version** above, and `protocol.version`, move to 1.5.0 when `cargo tops` implements these rules; until then the sections marked *since 1.5.0* describe no released behaviour. No default threshold and no part of the CRAP formula changed.
+> **1.5.0:** adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger with `cargo tops baseline` (§16.1, §16.2). The schema adds `enforce`, `advisory` and `baseline`. No default threshold and no part of the CRAP formula changed.
 
 ## 0. Purpose
 
@@ -140,7 +140,7 @@ The top-level key `enforce` says how floors and caps are applied. `cargo tops in
 |---|---|
 | `hard` | Every floor and gate binds directly. No baseline excuses a production function over the CRAP cap; only a live, dated exemption (§19) does. |
 | `ratchet` | The `hard` rules, except where the debt ledger (§16.1) holds an entry for a function that is over the cap. |
-| `advisory` | Nothing once the run starts, until the advisory expires. The report keeps every problem. |
+| `advisory` | No finding, while the advisory is live. Config errors and environment faults still fail. The report keeps every problem. |
 
 The **cap** is `gates.crap.threshold_agent`, or `threshold_production` when the instance has no agent threshold. An instance with neither is not judged for CRAP (§2.1), in any mode. `enforce` changes no threshold and no class floor: `cargo tops check` holds an instance to its class in every mode (§4). An instance that sets `enforce` does not read `gates.crap.baseline`.
 
@@ -166,9 +166,10 @@ advisory:
 - `reason` has at least three words.
 - A missing or malformed `advisory`, `expires` or `reason` is a config error: `cargo tops check` exits 2 and `cargo tops gate` exits 2. Malformed means an `expires` that is not in that format or not a real calendar day, or a `reason` of fewer than three words.
 - An advisory has **expired** when its date is valid and today, in UTC, is on or after `expires`. It is treated as an expired exemption is (§19): `cargo tops check` warns and exits 0, and `cargo tops gate` fails with exit 1. An expired advisory is not 2: it is 1.
-- While the advisory is live, `cargo tops gate` exits 0 once execution starts, whatever its layers and laws find. Exit codes 2 and 3 for errors found before execution starts still apply, and so does `--dry-run`.
-- The run prints `NOT ENFORCED (advisory, expires <date>)`.
-- `report.json` is not masked. `problems`, `ok` and `kind` say what the run found, so a run with problems has `ok: false` and `kind: "fail"` beside `exit_code: 0`. It carries `enforce: "advisory"`, `enforced: false` and `advisory_expires`. A CI that must hold part of the gate under `advisory` reads the report.
+- While the advisory is live, one exit code changes: a run that would exit 1 on what its layers, CRAP rules or laws found exits 0.
+- Exit 2 (a config or schema error) and exit 3 (an environment fault: a missing tool, a tool at another version than its pin, a `report.json` that cannot be written) are never turned into 0. `--dry-run` is not changed either.
+- Every live-advisory run that is not an environment fault, passing or failing, carries `enforced: false` and prints `NOT ENFORCED (advisory, expires <date>)`. A dry run, an environment fault and an unwritable report print no such line.
+- `report.json` is not masked. `problems`, `ok` and `kind` say what the run found, so a run with problems has `ok: false` and `kind: "fail"` beside `exit_code: 0`. It carries `enforce: "advisory"`, `advisory_expires`, and `enforced` as above. A CI that must hold part of the gate under `advisory` reads the report.
 - `cargo tops baseline` refuses to write.
 
 An `advisory` block in an instance whose `enforce` is not `advisory`, or is absent, is ignored by the gate. `check` may warn about it. The block must still have the shape the schema gives it.
@@ -883,7 +884,7 @@ This is the entire process cage. Do not add more stages unless a layer in §3 is
 
 ### 14.3 `AGENTS.md`
 
-`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.4.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
+`cargo tops init` writes `AGENTS.md`. That file is the maintained harness for protocol 1.5.0. The agent runs `cargo tops check`, then `cargo tops gate`. A Bend `Refuse` fails the run. `not-evaluated` is never a pass. Read `rust-tops/cases.json` under the Cargo target directory (`$CARGO_TARGET_DIR` when it is set, otherwise `cargo metadata`'s `target_directory`). Do not edit `LAWS.bend`, `laws/bend.lock`, or `scripts/fetch-bend.sh` to get a green gate. Do not pass `--fail-under-lines` unless the class floor says so and the LCOV is already nonempty.
 
 ### 14.4 The adoption record `RUST-TOPS.md` (since 1.2.0)
 
@@ -921,7 +922,7 @@ The template is [`config/drop-in/RUST-TOPS.md`](config/drop-in/RUST-TOPS.md). `c
 | `kani-verifier` | `cargo kani --version` | `Kani Rust Verifier ` |
 | `nushell` | `nu --version` | (the version alone) |
 
-Keys that name a library or a runner (`proptest`, `criterion`, `callgrind-runner`) are not tools on `PATH`: they print `skipped`. Any other key is not a tool this protocol knows (a misspelt one, say): `lock --verify` (at any `--max-tier`) and `lock --write` print `unknown`, and the gate prints a warning naming the key, and none of them checks it. When a layer that runs needs a tool that has no pin while such keys exist, the gate's warning names both. The exit code is not changed.
+Keys that name a library or a runner (`proptest`, `criterion`, `callgrind-runner`) are not tools on `PATH`: they print `skipped`. Any other key is not a tool this protocol knows (a misspelt one, say): `lock --verify` (at any `--max-tier`) and `lock --write` print `unknown`, and the gate prints a warning naming the key (since 1.5.0 also listed in `report.json` `warnings`), and none of them checks it. When a layer that runs needs a tool that has no pin while such keys exist, the gate's warning names both. The exit code is not changed.
 
 **Matching.** A first word after the tool's name that is digits and dots is the version (a trailing dot goes). A pin matches when its dot-separated parts are the first parts of the version found: `0.12` matches `0.12.0` and `0.12.3`, and does not match `0.120.0`; `0.12.3` does not match `0.12`. A pre-release or a build (`0.9.0-rc.1`, `1.99.1-nightly`, `0.9.0+abc`) matches no pin, and the whole word is named as found. A line that does not have the shape above is a mismatch and is named as found; empty output reads `no version line`. A command that cannot be run, does not exit 0, or runs past the limit is a missing tool, and the line names the command and how it failed (`exited 101`, `timed out`).
 
@@ -935,7 +936,7 @@ Keys that name a library or a runner (`proptest`, `criterion`, `callgrind-runner
 
 **`cargo tops lock --verify [--max-tier N] [--path P]`.** Asks every tool in the lock, or, with `--max-tier`, only the tools that the enabled layers at or below `N` need (this includes `cargo-fuzz` from tier 3 and `kani-verifier` from tier 4, which the gate does not ask), and prints one line per tool: `ok`, `mismatch`, `missing`, `skipped` or `unknown`. A lock with an empty `[tools]` prints `nothing pinned in [tools]`. Exit 0 when none is a mismatch or missing, 2 when the lock is not there, cannot be read, has no `[tools]` table or holds a pin that cannot be read (or the config cannot be loaded for `--max-tier`), 3 otherwise. It never writes a file.
 
-**`cargo tops lock --write [--path P]`.** Replaces the value of each pinned tool whose pin does not match what the tool prints now, with that release version; a partial pin that already matches is left alone, and a tool that cannot be run or prints a pre-release keeps its value. Only a plain `key = "value"` line under `[tools]` is rewritten, and comments, order, spacing and other tables are kept. Any other form of a key to be written (a quoted or dotted key, an inline table, a literal or multi-line string, a header written `[ tools ]`) is exit 2 naming the key, and the lock is not changed. The edited lock is read back before it is written, and it is written through a file of its own in the same directory that is renamed into place. It prints `wrote` only for a value it changed.
+**`cargo tops lock --write [--path P]`.** Replaces the value of each pinned tool whose pin does not match what the tool prints now, with that release version; a partial pin that already matches is left alone, and a tool that cannot be run or prints a pre-release keeps its value. Only a plain `key = "value"` line under `[tools]` is rewritten, and comments, order, spacing and other tables are kept. Any other form of a key to be written (a quoted or dotted key, an inline table, a literal or multi-line string, a header written `[ tools ]`) is exit 2 naming the key, and the lock is not changed. A lock that is read-only (no write permission bit, such as mode `0444`) or hard-linked (`nlink > 1`) is refused with exit 2 before any tool is asked, and is not changed. The edited lock is read back before it is written, and it is written through a new temporary file of its own in the same directory, opened only if no file has that name, which is then renamed into place. It prints `wrote` only for a value it changed.
 
 The reference workflow runs `cargo tops lock --verify` after the tools are installed and before the gate (section 17).
 
@@ -1025,7 +1026,7 @@ The ledger lists only what is over the line today. It is one tracked JSON file p
 - A `functions` key is `<rel-file>::<function>`: the file's path relative to the crate root, with `/` separators, then the function's name as the CRAP report writes it. The value is its CRAP score when it was recorded.
 - **No line numbers**, in keys or values. A function that moves within its file keeps its entry. One that is renamed, or moves to another file, is new.
 - Where several production functions of one file have the same name in the report, they share one entry, which records the highest score.
-- Keys are sorted lexicographically, one entry per line, so that parallel branches that change different functions merge without conflict.
+- Keys are sorted lexicographically, one entry per line. So parallel branches that change non-adjacent entries, or add entries in different gaps, merge cleanly under plain git. Changes to adjacent lines can still raise an ordinary git context conflict.
 - It holds **only** non-exempt production functions over the cap (§2.3). A function at or under the cap, or covered by a live `crap` exemption, has no entry. With nothing over the cap, `functions` is `{}`.
 - `coverage`, `lints`, `suppressions` and `exemptions` are optional objects reserved for later ratchets. No gate reads them in 1.5.0.
 - `regressions` is an optional array of audit records for debt that was allowed to grow. Each has `kind` (the ledger object, such as `functions`), `key`, `from` (the old value, `null` for a new entry), `to`, `reason`, `owner` and `date` (`YYYY-MM-DD`).
@@ -1036,13 +1037,15 @@ The ledger lists only what is over the line today. It is one tracked JSON file p
 
 **`cargo tops baseline --init`** records the first ledger from the last gate run. It needs that run's tests to have passed and its CRAP report to be non-empty. It records what was measured, so functions over the cap do not stop it. It refuses when the ledger already exists, and under `advisory`.
 
-**`cargo tops baseline`** refreshes the ledger, and writes **only after a passing gate**: the last run's `report.json` has `ok: true`. It only lowers a value or removes an entry (the function is now at or under the cap, is exempt, or is gone). A function more than 0.01 above its entry, or over the cap with no entry, is refused with exit 1 and the file is not written. It keeps the reserved objects and `regressions` as they are. It refuses under `advisory`.
+**`cargo tops baseline`** refreshes the ledger, and writes **only after a passing gate**: the last run's `report.json` has `ok: true` and `exit_code: 0`, it is not a dry run, and its `crap` layer passed. It only lowers a value or removes an entry (the function is now at or under the cap, is exempt, or is gone). A function more than 0.01 above its entry, or over the cap with no entry, is refused with exit 1 and the file is not written. It keeps the reserved objects and `regressions` as they are. It refuses under `advisory`.
 
 **`cargo tops baseline --check [--base REF]`** writes nothing. It checks that the tracked file validates and is in the form of §16.1 (version 2, no line numbers, sorted keys, one entry per line), then compares it, through git, with the ledger of the compared commit, which is `HEAD`, or `REF`. A `functions` entry whose score is at or under the instance's CRAP cap (§2.3) is rejected with exit 1: the ledger holds over-cap functions only.
 
 **Which ledger is compared.** `--check` reads the compared commit's own `rust-tops.yaml` and takes the path from it: its `baseline` key if set, else `rust-tops-baseline.json`. A commit with no `rust-tops.yaml` has the default path; one whose `rust-tops.yaml` cannot be parsed fails the check. So a change that moves `baseline` to a new path has the new file compared with the compared commit's ledger at the old path. The file is a first ledger only when the compared commit has no ledger at its own resolved path: there is then nothing to compare, and the command says so.
 
 **What is refused.** An entry whose value is greater than in the compared ledger, or that it does not have, fails with exit 1 unless a `regressions` record matches it on all four of: `kind` (`functions`); `key`; `from`, equal to the compared commit's value, or `null` when it had no entry; and `to`, equal to the new value. Every offending key is named.
+
+Without `--base` the comparison is with `HEAD`, which shows only uncommitted changes. For a pull request, pass the target branch: `cargo tops baseline --check --base origin/main`. The comparison is with that commit itself, not with the merge base, so bring the branch up to date first.
 
 A rise is therefore recorded by hand, in the entry and in a `regressions` record, and is reviewed like any other change to a gate.
 
@@ -1208,7 +1211,7 @@ cargo bench --bench hot          # local criterion
 
 ## 23. Versioning
 
-This spec is `1.4.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
+This spec is `1.5.0`. Additive layers bump minor. Changing a default threshold or the CRAP formula bump major. Instances pin `protocol.version`.
 
 1.1.0 added the `laws` layer (§3.1). A 1.0.0 instance that does not list `laws` still validates.
 
@@ -1218,7 +1221,7 @@ This spec is `1.4.0`. Additive layers bump minor. Changing a default threshold o
 
 1.4.0 makes the gate honest about what a pass rests on. The mutation base resolves from `--base`, then `gates.base_ref`, then `origin/HEAD`, and none found fails under CI (§8.3). A credited `property` or `acceptance` layer passes only when the credited run's nextest report holds a matching passed test, found by the new `test_filter` keys (§6.5.1). Every expired exemption fails the gate, and survivors are judged per function (§19). A pinned tool at another version is an environment failure with exit 3, and `cargo tops lock --verify` and `--write` check and record the pins (§14.5). Every change to the schema is additive, so a 1.3.0 instance still validates. A 1.3.0 gate that went green without a base, without a matching test, or past an expiry can now fail until it is fixed. No default threshold and no part of the formula changed.
 
-1.5.0 (in progress; this spec moves to it when `cargo tops` implements it) adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger with `cargo tops baseline` (§16.1, §16.2). The schema adds the optional `enforce`, `advisory` and `baseline`, so 1.2.0 to 1.4.0 instances still validate, and one that omits `enforce` behaves as before. The gate report adds the optional `enforce`, `enforced`, `advisory_expires` and `warnings`. Baseline v1 is deprecated. No default threshold and no part of the formula changed.
+1.5.0 adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger with `cargo tops baseline` (§16.1, §16.2). `cargo tops init` writes `enforce: ratchet`, so a new instance needs a ledger before its gate passes. The schema adds the optional `enforce`, `advisory` and `baseline`, and the new `schema/baseline.schema.json` describes the ledger; 1.2.0 to 1.4.0 instances still validate, and one that omits `enforce` is judged for CRAP as before. The gate report adds the optional `enforce`, `enforced`, `advisory_expires` and `warnings`, where unknown lock keys are listed. `cargo tops lock --write` refuses a read-only or hard-linked lock (§14.5). Baseline v1 is deprecated. No default threshold and no part of the formula changed.
 
 ---
 
