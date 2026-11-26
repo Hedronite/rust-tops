@@ -616,3 +616,144 @@ fn an_unknown_key_is_named_at_every_tier_and_by_write() {
     );
     assert_eq!(scratch.read_lock(), lock);
 }
+
+#[cfg(unix)]
+fn gone(pid: &str) -> bool {
+    for _ in 0..40 {
+        let alive = Command::new("kill")
+            .args(["-0", pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !alive {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    false
+}
+
+#[cfg(unix)]
+fn wait_for_pid_files(shim: &Path, child: &Path) -> (String, String) {
+    let start = std::time::Instant::now();
+    loop {
+        if let (Ok(s), Ok(c)) = (fs::read_to_string(shim), fs::read_to_string(child)) {
+            if s.contains('\n') && c.contains('\n') {
+                return (s.trim().to_string(), c.trim().to_string());
+            }
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "hung probe shim never wrote pid files"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_exit(proc: &mut std::process::Child) -> Option<std::process::ExitStatus> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(5) {
+        if let Some(status) = proc.try_wait().expect("try_wait") {
+            return Some(status);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    proc.kill().ok();
+    None
+}
+
+#[cfg(unix)]
+fn forwards_signal_to_hung_probe_group(sig_flag: &str, expected_sig: i32) {
+    use std::os::unix::process::ExitStatusExt;
+
+    let scratch = Scratch::new("signal-forward");
+    scratch.lock("[tools]\ncargo-crap = \"0.9.0\"\n");
+    let shim_pid_file = scratch.repo().join("shim.pid");
+    let child_pid_file = scratch.repo().join("grandchild.pid");
+    scratch.script(
+        "cargo-crap",
+        &format!(
+            "#!/bin/sh\nPATH=\"/bin:/usr/bin:$PATH\"\nsleep 60 &\necho \"$!\" > '{}'\necho \"$$\" > '{}'\nwait\n",
+            child_pid_file.display(),
+            shim_pid_file.display(),
+        ),
+    );
+    let mut proc = Command::new(env!("CARGO_BIN_EXE_cargo-tops"))
+        .args(["lock", "--verify", "--path"])
+        .arg(scratch.repo())
+        .env("PATH", scratch.bin())
+        .spawn()
+        .expect("spawn cargo-tops lock");
+    let (shim_pid, child_pid) = wait_for_pid_files(&shim_pid_file, &child_pid_file);
+    let sent = Command::new("kill")
+        .args([sig_flag, &proc.id().to_string()])
+        .status()
+        .expect("send signal");
+    assert!(sent.success(), "kill {sig_flag} failed");
+    let status = wait_for_exit(&mut proc);
+    if status.is_none() {
+        Command::new("kill")
+            .args(["-9", &shim_pid, &child_pid])
+            .status()
+            .ok();
+    }
+    let status = status.expect("cargo-tops did not exit promptly after signal");
+    assert_eq!(status.signal(), Some(expected_sig), "{status:?}");
+    assert!(gone(&shim_pid), "shim {shim_pid} survived {sig_flag}");
+    assert!(
+        gone(&child_pid),
+        "grandchild {child_pid} survived {sig_flag}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sigint_during_hung_probe_kills_child_process_group() {
+    forwards_signal_to_hung_probe_group("-INT", 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn sigterm_during_hung_probe_kills_child_process_group() {
+    forwards_signal_to_hung_probe_group("-TERM", 15);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_refuses_readonly_lock_file_and_leaves_it_untouched() {
+    let scratch = Scratch::new("write-readonly");
+    let lock = "[tools]\ncargo-crap = \"0.9.0\"\n";
+    scratch.lock(lock);
+    scratch.tool("cargo-crap", "cargo-crap 0.9.5");
+    let lock_path = scratch.repo().join("rust-tops.lock");
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o444)).expect("chmod 0444");
+
+    let out = scratch.run(&["--write"]);
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644)).ok();
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
+    let said = text(&out);
+    assert!(said.contains(&lock_path.display().to_string()), "{said}");
+    assert!(said.contains("read-only"), "{said}");
+    assert_eq!(scratch.read_lock(), lock);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_refuses_hardlinked_lock_file_and_leaves_links_untouched() {
+    let scratch = Scratch::new("write-hardlink");
+    let lock = "[tools]\ncargo-crap = \"0.9.0\"\n";
+    scratch.lock(lock);
+    scratch.tool("cargo-crap", "cargo-crap 0.9.5");
+    let lock_path = scratch.repo().join("rust-tops.lock");
+    let hard_path = scratch.repo().join("rust-tops.lock.hard");
+    fs::hard_link(&lock_path, &hard_path).expect("hard_link");
+
+    let out = scratch.run(&["--write"]);
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
+    let said = text(&out);
+    assert!(said.contains(&lock_path.display().to_string()), "{said}");
+    assert!(said.contains("hard link"), "{said}");
+    assert_eq!(scratch.read_lock(), lock);
+    assert_eq!(fs::read_to_string(&hard_path).expect("read hard"), lock);
+}

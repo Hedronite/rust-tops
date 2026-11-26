@@ -7,14 +7,18 @@
 //! string) is refused, and the lock is left as it was. The edited text is read
 //! back before it is written.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write as _;
-use std::path::Path;
+use std::fs::{File, Metadata, OpenOptions};
+use std::io::{ErrorKind, Write as _};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{bail, Context, Result};
 
 use super::probe::probe_in;
 use super::{found_versions, pin_matches, read_lock, row, unmatched_keys, Line};
+
+static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// `cargo tops lock --write` on the lock at `path`, read as `text`.
 pub(crate) fn write_command(
@@ -23,6 +27,8 @@ pub(crate) fn write_command(
     text: &str,
     pins: &BTreeMap<String, String>,
 ) -> Result<ExitCode> {
+    let target = std::fs::canonicalize(path).with_context(|| format!("find {}", path.display()))?;
+    ensure_writable(path, &target)?;
     let found = found_versions(pins, &mut probe_in(dir));
     let changes = changes(pins, &found);
     let written = write_values(text, &changes)?;
@@ -40,29 +46,79 @@ pub(crate) fn write_command(
     Ok(ExitCode::SUCCESS)
 }
 
+/// Refuses read-only targets (`mode & 0o222 == 0`) and hard-linked targets
+/// (`nlink > 1`) before creating any temporary file or renaming over the lock.
+fn ensure_writable(path: &Path, target: &Path) -> Result<Metadata> {
+    let meta = std::fs::metadata(target).with_context(|| format!("read {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mode = meta.permissions().mode();
+        if mode & 0o222 == 0 {
+            bail!(
+                "{} is read-only (mode {:o}); refusing to overwrite",
+                path.display(),
+                mode & 0o777
+            );
+        }
+        let nlink = meta.nlink();
+        if nlink > 1 {
+            bail!(
+                "{} has {nlink} hard links; refusing to overwrite",
+                path.display()
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    if meta.permissions().readonly() {
+        bail!("{} is read-only; refusing to overwrite", path.display());
+    }
+    Ok(meta)
+}
+
 /// Writes `contents` to `path` through a file of its own in the same directory,
 /// which is renamed over it, so a crash leaves the old lock or the new one. A
 /// link is followed, so it stays a link, and the permissions are kept.
 pub(crate) fn replace_file(path: &Path, contents: &str) -> Result<()> {
+    replace_file_with_counter(path, contents, &TEMP_COUNTER)
+}
+
+fn replace_file_with_counter(path: &Path, contents: &str, counter: &AtomicUsize) -> Result<()> {
     let target = std::fs::canonicalize(path).context("find the file")?;
-    let mut name = target.file_name().context("a file name")?.to_os_string();
-    name.push(format!(".tmp-{}", std::process::id()));
-    let temp = target.with_file_name(name);
-    let written = write_temp(&target, &temp, contents);
+    let meta = ensure_writable(path, &target)?;
+    let (temp, mut file) = create_unique_temp(&target, counter)?;
+    let written = write_temp(&target, &temp, &mut file, &meta, contents);
     if written.is_err() {
         std::fs::remove_file(&temp).ok();
     }
     written
 }
 
-fn write_temp(target: &Path, temp: &Path, contents: &str) -> Result<()> {
-    let mut file = std::fs::File::create(temp).context("create the temporary file")?;
+fn create_unique_temp(target: &Path, counter: &AtomicUsize) -> Result<(PathBuf, File)> {
+    let file_name = target.file_name().context("a file name")?;
+    loop {
+        let seq = counter.fetch_add(1, Ordering::Relaxed);
+        let mut name = file_name.to_os_string();
+        name.push(format!(".tmp-{}-{seq}", std::process::id()));
+        let temp = target.with_file_name(name);
+        match OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(anyhow::Error::new(err).context("create the temporary file")),
+        }
+    }
+}
+
+fn write_temp(
+    target: &Path,
+    temp: &Path,
+    file: &mut File,
+    meta: &Metadata,
+    contents: &str,
+) -> Result<()> {
     file.write_all(contents.as_bytes()).context("write it")?;
     file.sync_all().context("sync it")?;
-    let permissions = std::fs::metadata(target)
-        .context("read the permissions")?
-        .permissions();
-    std::fs::set_permissions(temp, permissions).context("keep the permissions")?;
+    std::fs::set_permissions(temp, meta.permissions()).context("keep the permissions")?;
     std::fs::rename(temp, target).context("rename it into place")
 }
 
@@ -183,6 +239,7 @@ fn check_read_back(written: &str, changes: &BTreeMap<String, String>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lock::probe::Scratch;
 
     fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -282,10 +339,9 @@ mod tests {
 
     #[test]
     fn a_file_is_replaced_through_a_sibling_and_a_link_stays_a_link() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-replace-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        let real = dir.join("real.lock");
-        let link = dir.join("link.lock");
+        let scratch = Scratch::new("replace");
+        let real = scratch.0.join("real.lock");
+        let link = scratch.0.join("link.lock");
         std::fs::write(&real, "old\n").expect("write");
         #[cfg(unix)]
         {
@@ -301,7 +357,7 @@ mod tests {
             let mode = std::fs::metadata(&real).expect("meta").permissions().mode();
             assert_eq!(mode & 0o777, 0o640);
         }
-        let names: Vec<String> = std::fs::read_dir(&dir)
+        let names: Vec<String> = std::fs::read_dir(&scratch.0)
             .expect("dir")
             .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
             .collect();
@@ -309,7 +365,63 @@ mod tests {
             names.iter().all(|name| !name.contains(".tmp-")),
             "{names:?}"
         );
-        assert!(replace_file(&dir.join("missing.lock"), "x").is_err());
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(replace_file(&scratch.0.join("missing.lock"), "x").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_file_skips_preexisting_temp_files_and_symlinks_with_create_new() {
+        use std::os::unix::fs::symlink;
+        let scratch = Scratch::new("create-new");
+        let target = scratch.0.join("rust-tops.lock");
+        std::fs::write(&target, "old\n").expect("write");
+        let pid = std::process::id();
+        let collide_file = scratch.0.join(format!("rust-tops.lock.tmp-{pid}-0"));
+        let collide_link = scratch.0.join(format!("rust-tops.lock.tmp-{pid}-1"));
+        let sentinel = scratch.0.join("sentinel");
+        std::fs::write(&collide_file, "keep-temp\n").expect("write collide file");
+        std::fs::write(&sentinel, "untouched\n").expect("write sentinel");
+        symlink(&sentinel, &collide_link).expect("symlink collide");
+
+        let counter = AtomicUsize::new(0);
+        replace_file_with_counter(&target, "new\n", &counter).expect("replace");
+        assert_eq!(std::fs::read_to_string(&target).expect("read"), "new\n");
+        assert_eq!(
+            std::fs::read_to_string(&collide_file).expect("read collide"),
+            "keep-temp\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&sentinel).expect("read sentinel"),
+            "untouched\n"
+        );
+        assert!(counter.load(Ordering::Relaxed) >= 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_file_refuses_readonly_and_hardlinked_targets() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("refuse");
+        let ro = scratch.0.join("ro.lock");
+        std::fs::write(&ro, "old\n").expect("write ro");
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+        let err = replace_file(&ro, "new\n").expect_err("refuse readonly");
+        assert!(err.to_string().contains(&ro.display().to_string()), "{err}");
+        assert!(err.to_string().contains("read-only"), "{err}");
+        assert_eq!(std::fs::read_to_string(&ro).expect("read ro"), "old\n");
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o644)).expect("restore");
+
+        let hl_a = scratch.0.join("a.lock");
+        let hl_b = scratch.0.join("b.lock");
+        std::fs::write(&hl_a, "old\n").expect("write hl");
+        std::fs::hard_link(&hl_a, &hl_b).expect("hard_link");
+        let err = replace_file(&hl_a, "new\n").expect_err("refuse hard link");
+        assert!(
+            err.to_string().contains(&hl_a.display().to_string()),
+            "{err}"
+        );
+        assert!(err.to_string().contains("hard link"), "{err}");
+        assert_eq!(std::fs::read_to_string(&hl_a).expect("read a"), "old\n");
+        assert_eq!(std::fs::read_to_string(&hl_b).expect("read b"), "old\n");
     }
 }

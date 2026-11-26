@@ -136,7 +136,30 @@ mod tests {
     use crate::steps::{self, Base, Kind, Step};
     use crate::{config, credit};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Unique per-test scratch directory cleaned up on Drop.
+    pub(super) struct Scratch(pub(super) PathBuf);
+
+    impl Scratch {
+        pub(super) fn new(name: &str) -> Self {
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "cargo-tops-gate-{name}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&dir).expect("mkdir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).ok();
+        }
+    }
 
     fn layer(id: &str) -> config::Layer {
         serde_saphyr::from_str(&format!(
@@ -498,25 +521,19 @@ mod tests {
 
     #[test]
     fn a_failed_diff_is_failed_even_over_a_stale_diff() {
-        let dir = std::env::temp_dir().join(format!("cargo-tops-diff-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("mkdir");
-        let stale = dir.join("stale.diff");
+        let scratch = Scratch::new("diff");
+        let stale = scratch.0.join("stale.diff");
         fs::write(&stale, "+changed\n").expect("write");
-        let empty = dir.join("empty.diff");
+        let empty = scratch.0.join("empty.diff");
         fs::write(&empty, "").expect("write");
         assert_eq!(steps::judge_diff(false, &stale), Outcome::Failed);
         assert_eq!(steps::judge_diff(false, &empty), Outcome::Failed);
         assert_eq!(steps::judge_diff(true, &empty), Outcome::Vacuous);
         assert_eq!(steps::judge_diff(true, &stale), Outcome::Passed);
         assert_eq!(
-            steps::judge_diff(true, &dir.join("absent")),
+            steps::judge_diff(true, &scratch.0.join("absent")),
             Outcome::Failed
         );
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "already in this crate when the strict table was turned on"
-        )]
-        let _ = fs::remove_dir_all(&dir);
         assert!(!Outcome::Vacuous.fails_the_gate());
         assert!(!Outcome::Vacuous.counts_for_a_law());
     }
