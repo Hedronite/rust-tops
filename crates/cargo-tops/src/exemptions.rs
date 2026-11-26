@@ -208,4 +208,82 @@ mod tests {
              renew it with a reason or remove it (PROTOCOL.md §19)"
         );
     }
+
+    #[derive(serde::Deserialize)]
+    struct LiveCorpus {
+        cases: Vec<LiveCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LiveCase {
+        #[serde(rename = "fn")]
+        func: String,
+        input: LiveInput,
+        expect: serde_json::Value,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LiveInput {
+        #[serde(default)]
+        day: Option<u64>,
+        #[serde(default)]
+        today: u64,
+    }
+
+    fn check_live_case(case: &LiveCase, base_day: u64, invalid: &str) -> (usize, usize, usize) {
+        match case.func.as_str() {
+            "live" => {
+                let expires = case
+                    .input
+                    .day
+                    .map_or_else(|| invalid.to_string(), |d| civil_date(base_day + d));
+                let today_str = civil_date(base_day + case.input.today);
+                let expect = case.expect.as_bool().expect("live expect bool");
+                assert_eq!(
+                    exemption("src/a.rs", None, &expires).live(&today_str),
+                    expect,
+                    "live day={:?} today={}",
+                    case.input.day,
+                    case.input.today
+                );
+                (0, 0, 1)
+            }
+            "runs_verdict" => (1, 0, 0),
+            "layer_verdict" => (0, 1, 0),
+            other => {
+                assert_eq!(other, "", "unexpected fn in corpus: {other}");
+                (0, 0, 0)
+            }
+        }
+    }
+
+    #[test]
+    fn corpus_matches_exemption_live() {
+        const BASE_DAY: u64 = 20_000;
+        const INVALID_EXPIRY: &str = "not-a-day";
+        assert!(
+            !super::steps::valid_expiry(INVALID_EXPIRY),
+            "invalid sentinel must fail valid_expiry"
+        );
+        let raw = include_str!("../../../conformance/tops_core.json");
+        let corpus: LiveCorpus = serde_json::from_str(raw).expect("parse tops_core.json");
+        assert_eq!(
+            corpus.cases.len(),
+            3_335,
+            "expected 3,335 total corpus cases"
+        );
+        let (mut runs_count, mut layer_count, mut live_count) = (0usize, 0usize, 0usize);
+        for case in &corpus.cases {
+            let (r, l, v) = check_live_case(case, BASE_DAY, INVALID_EXPIRY);
+            runs_count += r;
+            layer_count += l;
+            live_count += v;
+        }
+        assert_eq!(live_count, 992, "expected 992 live cases");
+        assert_eq!(
+            runs_count + layer_count + live_count,
+            3_335,
+            "unaccounted corpus cases"
+        );
+    }
 }
