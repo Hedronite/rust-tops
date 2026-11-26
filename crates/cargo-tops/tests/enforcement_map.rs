@@ -118,8 +118,9 @@ fn the_shipped_map_matches_the_shipped_schema() {
 
 #[test]
 fn the_map_covers_every_leaf_the_schema_has() {
-    // 79 leaves at 73f86c6, plus `base_ref` and the two `test_filter` keys.
-    assert_eq!(schema_leaves(&schema()).len(), 82);
+    // 79 leaves at 73f86c6, plus `base_ref`, the two `test_filter` keys,
+    // `enforce`, the two `advisory` keys and `baseline`.
+    assert_eq!(schema_leaves(&schema()).len(), 86);
 }
 
 #[test]

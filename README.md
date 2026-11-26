@@ -156,9 +156,12 @@ A key is **judged** when a different value can change what `cargo tops check` or
 <!-- enforcement:start -->
 | Section | Keys | Judged | Declarative |
 | --- | ---: | ---: | ---: |
+| `advisory` | 2 | 0 | 2 |
 | `agent` | 5 | 0 | 5 |
+| `baseline` | 1 | 0 | 1 |
 | `crate` | 6 | 2 | 4 |
 | `density` | 5 | 0 | 5 |
+| `enforce` | 1 | 0 | 1 |
 | `exemptions` | 6 | 4 | 2 |
 | `gates` | 1 | 1 | 0 |
 | `gates.acceptance` | 1 | 1 | 0 |
@@ -175,9 +178,9 @@ A key is **judged** when a different value can change what `cargo tops check` or
 | `layers` | 6 | 3 | 3 |
 | `performance` | 2 | 0 | 2 |
 | `protocol` | 4 | 2 | 2 |
-| **All** | **82** | **25** | **57** |
+| **All** | **86** | **25** | **61** |
 
-25 of 82 schema keys are judged (30.4%).
+25 of 86 schema keys are judged (29.0%).
 <!-- enforcement:end -->
 ## How it works
 
