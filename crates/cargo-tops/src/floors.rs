@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::baseline;
-use crate::config::{CoverageGate, Enforce, TopsConfig};
-use crate::coverage_floor;
+use crate::baseline::{self, BaselineV2};
+use crate::config::{Enforce, TopsConfig};
+use crate::coverage_floor::{self, CoverageLedger};
 use crate::crap_ratchet::{self, Score};
 use crate::exemptions::{self, Exemption};
 use crate::facts::{Outcome, Run};
@@ -100,15 +100,29 @@ pub(crate) fn judge(dir: &Path, cfg: &TopsConfig, runs: &[Run], report: &Path) -
     let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
     let today = exemptions::today();
     let mut judged = Judged::default();
+    let ledger = load_v2(dir, cfg);
+    if let Some(err) = &ledger.error {
+        let prefix = if cfg.gates.crap.cap().is_some() {
+            "crap"
+        } else {
+            "coverage"
+        };
+        judged.problems.push(format!("{prefix}: {err}"));
+        if prefix == "crap" {
+            judged.crap_problems = 1;
+        } else {
+            judged.coverage_problems = 1;
+        }
+    }
     if coverage {
-        let (found, numbers) = judge_coverage(cfg, &scope, report, &today);
-        judged.coverage_problems = found.len();
+        let (found, numbers) = judge_coverage(cfg, &scope, report, &today, &ledger);
+        judged.coverage_problems += found.len();
         judged.problems.extend(found);
         judged.coverage = Some(numbers);
     }
     if crap {
-        let (found, numbers) = judge_crap(dir, cfg, &scope, report, &today);
-        judged.crap_problems = found.len();
+        let (found, numbers) = judge_crap(dir, cfg, &scope, report, &today, &ledger);
+        judged.crap_problems += found.len();
         judged.problems.extend(found);
         judged.crap = numbers;
     }
@@ -120,6 +134,7 @@ fn judge_coverage(
     scope: &Scope,
     report: &Path,
     today: &str,
+    ledger: &LedgerLoad,
 ) -> (Vec<String>, CoverageNumbers) {
     let gate = &cfg.gates.coverage;
     let mut numbers = CoverageNumbers {
@@ -135,7 +150,7 @@ fn judge_coverage(
         floor(gate.region_min_pct),
         floor(gate.per_file_line_min_pct)
     );
-    if !floors_set(gate) {
+    if !coverage_floor::floors_set(gate) {
         println!("    no floor is set, so there is nothing to judge");
         return (Vec::new(), numbers);
     }
@@ -145,7 +160,14 @@ fn judge_coverage(
         Ok(files) => {
             (numbers.line_pct, numbers.region_pct) = coverage_floor::percents(&files);
             numbers.files = files.len();
-            problems.extend(coverage_floor::judge(&files, gate, &live));
+            if ledger.error.is_none() {
+                problems.extend(coverage_floor::judge(
+                    &files,
+                    gate,
+                    &live,
+                    coverage_ratchet(cfg, &ledger.mode),
+                ));
+            }
         }
         Err(err) => problems.push(format!("coverage: {}: {err}", summary.display())),
     }
@@ -153,14 +175,13 @@ fn judge_coverage(
     (problems, numbers)
 }
 
-fn floors_set(gate: &CoverageGate) -> bool {
-    [
-        gate.line_min_pct,
-        gate.region_min_pct,
-        gate.per_file_line_min_pct,
-    ]
-    .iter()
-    .any(Option::is_some)
+fn coverage_ratchet<'a>(cfg: &TopsConfig, v2: &'a ModeV2) -> Option<&'a CoverageLedger> {
+    match (cfg.enforce, v2) {
+        (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(Some(ledger))) => {
+            Some(ledger.coverage.as_ref().unwrap_or(&coverage_floor::EMPTY))
+        }
+        _ => None,
+    }
 }
 
 fn floor(pct: Option<f64>) -> String {
@@ -173,6 +194,7 @@ fn judge_crap(
     scope: &Scope,
     report: &Path,
     today: &str,
+    ledger: &LedgerLoad,
 ) -> (Vec<String>, Option<CrapNumbers>) {
     let gate = &cfg.gates.crap;
     let Some(threshold) = gate.cap() else {
@@ -196,15 +218,18 @@ fn judge_crap(
         Ok(current) => {
             numbers.max = current.iter().map(|score| score.crap).reduce(f64::max);
             numbers.functions = current.len();
-            match load_mode_baseline(dir, cfg, scope, report) {
-                Ok(before) => {
-                    announce(cfg.enforce, before.as_deref());
-                    let over = crap_ratchet::judge(&current, before.as_deref(), threshold, &live);
-                    numbers.over = over.len();
-                    numbers.baseline = before.is_some();
-                    problems.extend(over);
+            if ledger.error.is_none() {
+                match crap_baseline(dir, cfg, scope, report, &ledger.mode) {
+                    Ok(before) => {
+                        announce(cfg.enforce, before.as_deref());
+                        let over =
+                            crap_ratchet::judge(&current, before.as_deref(), threshold, &live);
+                        numbers.over = over.len();
+                        numbers.baseline = before.is_some();
+                        problems.extend(over);
+                    }
+                    Err(err) => problems.push(format!("crap: {err}")),
                 }
-                Err(err) => problems.push(format!("crap: {err}")),
             }
         }
         Err(err) => problems.push(format!("crap: {err}")),
@@ -238,41 +263,73 @@ fn announce_crap_header(
     }
 }
 
-fn load_mode_baseline(
+enum ModeV2 {
+    Off,
+    On(Option<Box<BaselineV2>>),
+}
+
+struct LedgerLoad {
+    mode: ModeV2,
+    error: Option<String>,
+}
+
+fn load_v2(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
+    match cfg.enforce {
+        Some(Enforce::Hard) | None => LedgerLoad {
+            mode: ModeV2::Off,
+            error: None,
+        },
+        Some(Enforce::Ratchet | Enforce::Advisory) => read_v2_mode(dir, cfg),
+    }
+}
+
+fn read_v2_mode(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
+    let path = baseline::path(dir, cfg);
+    if path.exists() {
+        return match baseline::read_v2(&path, cfg) {
+            Ok(v2) => LedgerLoad {
+                mode: ModeV2::On(Some(Box::new(v2))),
+                error: None,
+            },
+            Err(err) => LedgerLoad {
+                mode: ModeV2::Off,
+                error: Some(err),
+            },
+        };
+    }
+    if cfg.enforce == Some(Enforce::Ratchet) && needs_v2(cfg) {
+        return LedgerLoad {
+            mode: ModeV2::Off,
+            error: Some(format!(
+                "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
+                path.display()
+            )),
+        };
+    }
+    LedgerLoad {
+        mode: ModeV2::On(None),
+        error: None,
+    }
+}
+
+fn needs_v2(cfg: &TopsConfig) -> bool {
+    cfg.gates.crap.cap().is_some() || coverage_floor::floors_set(&cfg.gates.coverage)
+}
+
+fn crap_baseline(
     dir: &Path,
     cfg: &TopsConfig,
     scope: &Scope,
     report: &Path,
+    mode: &ModeV2,
 ) -> Result<Option<Vec<Score>>, String> {
-    match cfg.enforce {
-        None => read_baseline(&baseline_path(dir, cfg, report), scope),
-        Some(Enforce::Hard) => Ok(None),
-        Some(Enforce::Ratchet) => read_v2_for_mode(dir, cfg, MissingV2::Fail),
-        Some(Enforce::Advisory) => read_v2_for_mode(dir, cfg, MissingV2::AllowNone),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum MissingV2 {
-    Fail,
-    AllowNone,
-}
-
-fn read_v2_for_mode(
-    dir: &Path,
-    cfg: &TopsConfig,
-    on_missing: MissingV2,
-) -> Result<Option<Vec<Score>>, String> {
-    let v2 = baseline::path(dir, cfg);
-    if v2.exists() {
-        return baseline::read_v2_scores(&v2, cfg).map(Some);
-    }
-    match on_missing {
-        MissingV2::AllowNone => Ok(None),
-        MissingV2::Fail => Err(format!(
-            "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
-            v2.display()
-        )),
+    match (cfg.enforce, mode) {
+        (None, _) => read_baseline(&baseline_path(dir, cfg, report), scope),
+        (Some(Enforce::Hard), _) | (_, ModeV2::Off) => Ok(None),
+        (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(Some(v2))) => {
+            Ok(Some(baseline::scores_from(v2.as_ref())))
+        }
+        (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(None)) => Ok(None),
     }
 }
 

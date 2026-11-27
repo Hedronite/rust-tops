@@ -808,3 +808,40 @@ fn the_crap_layer_alone_runs_the_pin_check_and_only_with_a_lock() {
     assert_eq!(code, Some(0), "{text}");
     assert_ne!(at(row(&written(&fixture), "crap"), "/argv/0"), &pin);
 }
+
+#[test]
+fn ratchet_coverage_listed_file_passes_and_unlisted_fails_the_floor() {
+    let fixture = fixture("cov-ratchet");
+    edit(&fixture, |doc| {
+        set(doc, "", "enforce", Some(json!("ratchet")));
+    });
+    summary(
+        &fixture,
+        &[
+            ("src/lib.rs", 70, 100, 100, 100),
+            ("src/a.rs", 70, 100, 100, 100),
+        ],
+    );
+    crap(&fixture, &[("./src/lib.rs", "ok", 1.0)]);
+    let ledger = json!({
+        "version": 2,
+        "crate": "fixture",
+        "functions": {},
+        "coverage": {
+            "crate_line": 70.0,
+            "files": { "src/lib.rs": 70.0 }
+        }
+    });
+    fs::write(
+        fixture.repo.join("rust-tops-baseline.json"),
+        format!("{}\n", serde_json::to_string_pretty(&ledger).expect("json")),
+    )
+    .expect("write v2");
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("src/a.rs") && text.contains("per_file_line_min_pct"),
+        "{text}"
+    );
+    assert!(!text.contains("src/lib.rs line coverage"), "{text}");
+}

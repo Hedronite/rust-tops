@@ -996,3 +996,39 @@ fn report_carries_enforce_and_unknown_lock_warnings() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn report_records_coverage_ratchet_problems() {
+    let fixture = fixture("cov-ratchet-report");
+    enable(&fixture, &["coverage", "crap"]);
+    stub(&fixture.bin, "cargo-llvm-cov", "#!/bin/sh\nexit 0\n");
+    stub(&fixture.bin, "cargo-crap", "#!/bin/sh\nexit 0\n");
+    fs::create_dir_all(fixture.repo.join("target/rust-tops")).expect("mkdir");
+    let cov = json!({"type": "llvm.coverage.json.export", "data": [{"files": [
+        {"filename": "src/lib.rs", "summary": {"lines": {"covered": 80, "count": 100}, "regions": {"covered": 80, "count": 100}}}
+    ]}]});
+    fs::write(
+        fixture.repo.join("target/rust-tops/coverage.json"),
+        cov.to_string(),
+    )
+    .expect("write coverage");
+    fs::write(
+        fixture.repo.join("target/rust-tops/crap.json"),
+        json!({"version": "0.9.0", "entries": [
+            {"file": "./src/lib.rs", "function": "ok", "line": 1, "crap": 1.0}
+        ]})
+        .to_string(),
+    )
+    .expect("write crap");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    let doc = report(&fixture);
+    assert!(
+        at(&doc, "/problems")
+            .as_array()
+            .is_some_and(|p| p.iter().any(|n| n
+                .as_str()
+                .is_some_and(|s| s.contains("cargo tops baseline --init")))),
+        "{doc}"
+    );
+}

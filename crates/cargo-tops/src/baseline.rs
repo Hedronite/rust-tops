@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::{Enforce, TopsConfig};
+use crate::coverage_floor::{self, CoverageLedger};
 use crate::crap_ratchet::{self, Score, EPSILON};
 use crate::exemptions;
 use crate::laws;
@@ -49,7 +50,7 @@ pub(crate) struct BaselineV2 {
     pub crate_name: String,
     pub functions: BTreeMap<String, f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coverage: Option<BTreeMap<String, Value>>,
+    pub coverage: Option<CoverageLedger>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lints: Option<BTreeMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -80,16 +81,18 @@ pub(crate) fn command(
     }
 }
 
-/// Loads, validates, and returns CRAP `Score` rows from a v2 ledger.
-pub(crate) fn read_v2_scores(ledger: &Path, cfg: &TopsConfig) -> Result<Vec<Score>, String> {
+/// Loads and validates a v2 ledger.
+pub(crate) fn read_v2(ledger: &Path, cfg: &TopsConfig) -> Result<BaselineV2, String> {
     let raw = fs::read_to_string(ledger)
         .map_err(|err| format!("baseline {}: {err}", ledger.display()))?;
-    let v2 = parse_and_validate(&raw, cfg)
-        .map_err(|err| format!("baseline {}: {err}", ledger.display()))?;
-    Ok(v2
-        .functions
-        .into_iter()
-        .filter_map(|(key, crap)| {
+    parse_and_validate(&raw, cfg).map_err(|err| format!("baseline {}: {err}", ledger.display()))
+}
+
+/// CRAP scores recorded in `v2.functions`.
+pub(crate) fn scores_from(v2: &BaselineV2) -> Vec<Score> {
+    v2.functions
+        .iter()
+        .filter_map(|(key, &crap)| {
             let (file, function) = key.split_once("::")?;
             Some(Score {
                 file: file.to_string(),
@@ -97,7 +100,7 @@ pub(crate) fn read_v2_scores(ledger: &Path, cfg: &TopsConfig) -> Result<Vec<Scor
                 crap,
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Parses JSON, validates against `baseline.schema.json`, checks crate match,
@@ -127,7 +130,26 @@ pub(crate) fn parse_and_validate(raw: &str, cfg: &TopsConfig) -> Result<Baseline
         }
     }
     check_functions_layout(raw, &v2.functions)?;
+    if let Some(coverage) = &v2.coverage {
+        check_coverage_form(raw, coverage)?;
+    }
     Ok(v2)
+}
+
+fn check_coverage_form(raw: &str, coverage: &CoverageLedger) -> Result<(), String> {
+    if let Some(files) = &coverage.files {
+        for key in files.keys() {
+            if has_file_line_number(key) {
+                return Err(format!("coverage.files key {key:?} contains a line number"));
+            }
+        }
+        check_object_layout(raw, "files", files, Some("coverage"))?;
+    }
+    Ok(())
+}
+
+fn has_file_line_number(key: &str) -> bool {
+    key.contains("#L") || has_colon_digits(key)
 }
 
 fn has_line_number(key: &str) -> bool {
@@ -153,10 +175,21 @@ fn has_colon_digits(text: &str) -> bool {
 /// Checks that `functions` entries in `raw` appear one per line and in
 /// strictly sorted key order.
 fn check_functions_layout(raw: &str, expected: &BTreeMap<String, f64>) -> Result<(), String> {
-    let body = find_functions_body(raw)
-        .ok_or_else(|| "could not locate top-level functions object".to_string())?;
-    if !expected.is_empty() && (!body.contains('\n')) {
-        return Err("non-empty functions must place one entry per line".into());
+    check_object_layout(raw, "functions", expected, None)
+}
+
+fn check_object_layout(
+    raw: &str,
+    field: &str,
+    expected: &BTreeMap<String, f64>,
+    under: Option<&str>,
+) -> Result<(), String> {
+    let body = object_body(raw, field, under).ok_or_else(|| match under {
+        Some(parent) => format!("could not locate {parent}.{field} object"),
+        None => format!("could not locate top-level {field} object"),
+    })?;
+    if !expected.is_empty() && !body.contains('\n') {
+        return Err(format!("non-empty {field} must place one entry per line"));
     }
     let mut seen: Vec<String> = Vec::new();
     for line in body.lines() {
@@ -164,27 +197,36 @@ fn check_functions_layout(raw: &str, expected: &BTreeMap<String, f64>) -> Result
         if trimmed.is_empty() {
             continue;
         }
-        let key = parse_entry_line(trimmed)?;
+        let key = parse_named_entry_line(field, trimmed)?;
         seen.push(key);
     }
     let want: Vec<String> = expected.keys().cloned().collect();
     if seen != want {
-        return Err("functions keys must be sorted lexicographically, one entry per line".into());
+        return Err(format!(
+            "{field} keys must be sorted lexicographically, one entry per line"
+        ));
     }
     Ok(())
 }
 
-fn parse_entry_line(trimmed: &str) -> Result<String, String> {
+fn object_body<'a>(raw: &'a str, field: &str, under: Option<&str>) -> Option<&'a str> {
+    match under {
+        Some(parent) => find_object_at_depth(find_top_object(raw, parent)?, field, 0),
+        None => find_top_object(raw, field),
+    }
+}
+
+fn parse_named_entry_line(field: &str, trimmed: &str) -> Result<String, String> {
     let Some((raw_key, raw_val)) = split_key_value(trimmed) else {
         return Err(format!(
-            "functions entry must be one `\"key\": number` per line: {trimmed}"
+            "{field} entry must be one `\"key\": number` per line: {trimmed}"
         ));
     };
     let key: String = serde_json::from_str(raw_key)
-        .map_err(|err| format!("invalid functions key {raw_key}: {err}"))?;
+        .map_err(|err| format!("invalid {field} key {raw_key}: {err}"))?;
     let _: f64 = serde_json::from_str(raw_val.trim()).map_err(|_| {
         format!(
-            "functions entry must have one value per line (found extra content on line: {trimmed})"
+            "{field} entry must have one value per line (found extra content on line: {trimmed})"
         )
     })?;
     Ok(key)
@@ -240,12 +282,21 @@ fn split_key_value(line: &str) -> Option<(&str, &str)> {
     None
 }
 
+#[cfg(test)]
 fn find_functions_body(raw: &str) -> Option<&str> {
+    find_top_object(raw, "functions")
+}
+
+fn find_top_object<'a>(raw: &'a str, name: &str) -> Option<&'a str> {
+    find_object_at_depth(raw, name, 1)
+}
+
+fn find_object_at_depth<'a>(raw: &'a str, name: &str, key_depth: usize) -> Option<&'a str> {
     let mut scan = StrScan::default();
     for (idx, ch) in raw.char_indices() {
         let was_depth = scan.depth;
-        if scan.step(ch) && ch == '"' && was_depth == 1 {
-            if let Some(body) = match_functions_at(raw, idx) {
+        if scan.step(ch) && ch == '"' && was_depth == key_depth {
+            if let Some(body) = match_object_at(raw, idx, name) {
                 return Some(body);
             }
         }
@@ -253,8 +304,9 @@ fn find_functions_body(raw: &str) -> Option<&str> {
     None
 }
 
-fn match_functions_at(raw: &str, idx: usize) -> Option<&str> {
-    let tail = raw.get(idx..)?.strip_prefix("\"functions\"")?.trim_start();
+fn match_object_at<'a>(raw: &'a str, idx: usize, name: &str) -> Option<&'a str> {
+    let quoted = format!("\"{name}\"");
+    let tail = raw.get(idx..)?.strip_prefix(quoted.as_str())?.trim_start();
     let rest = tail.strip_prefix(':')?.trim_start();
     let open = raw.len() - rest.len();
     extract_braced(raw, open)
@@ -354,19 +406,22 @@ fn check_init_layer(row: &Value) -> Result<(), String> {
     let id = row.get("id").and_then(Value::as_str).unwrap_or("");
     let verdict = row.get("verdict").and_then(Value::as_str).unwrap_or("");
     match id {
-        "unit" | "doc" | "integration" | "coverage" | "property"
+        "unit" | "doc" | "integration" | "property"
             if ["fail", "not-run", "tool-missing", "tool-mismatch"].contains(&verdict) =>
         {
             Err(format!("layer {id} did not pass ({verdict}) in last gate"))
         }
-        "crap" if invalid_init_crap(verdict, row) => Err(format!(
+        "crap" if invalid_init_measured(verdict, row) => Err(format!(
             "crap layer did not produce a valid report ({verdict})"
+        )),
+        "coverage" if invalid_init_measured(verdict, row) => Err(format!(
+            "coverage layer did not produce a valid report ({verdict})"
         )),
         _ => Ok(()),
     }
 }
 
-fn invalid_init_crap(verdict: &str, row: &Value) -> bool {
+fn invalid_init_measured(verdict: &str, row: &Value) -> bool {
     verdict != "pass" && (verdict != "fail" || row.get("judged").is_none())
 }
 
@@ -386,6 +441,57 @@ fn read_last_crap_scores(
         return Err(anyhow!("{} is empty", source.display()));
     }
     aggregate_scores(&raw, dir, cfg)
+}
+
+fn read_last_coverage_debt(
+    dir: &Path,
+    cfg: &TopsConfig,
+    report_dir: &Path,
+) -> Result<Option<CoverageLedger>> {
+    if !coverage_floor::floors_set(&cfg.gates.coverage) {
+        return Ok(None);
+    }
+    let (files, live) = last_coverage_files(dir, cfg, report_dir)?;
+    if files.is_empty() {
+        return Err(anyhow!(
+            "{} has no production files; run `cargo tops gate` with the coverage layer first",
+            report_dir.join(steps::SUMMARY).display()
+        ));
+    }
+    Ok(coverage_floor::debt_snapshot(
+        &files,
+        &cfg.gates.coverage,
+        &live,
+    ))
+}
+
+fn last_coverage_files(
+    dir: &Path,
+    cfg: &TopsConfig,
+    report_dir: &Path,
+) -> Result<(
+    Vec<coverage_floor::FileCoverage>,
+    Vec<exemptions::Exemption>,
+)> {
+    let source = report_dir.join(steps::SUMMARY);
+    let raw = fs::read_to_string(&source).with_context(|| {
+        format!(
+            "read {}; run `cargo tops gate` with the coverage layer first",
+            source.display()
+        )
+    })?;
+    if raw.trim().is_empty() {
+        return Err(anyhow!("{} is empty", source.display()));
+    }
+    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
+    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
+    let files = coverage_floor::production_files(&raw, &scope).map_err(|err| anyhow!(err))?;
+    let today = exemptions::today();
+    let live: Vec<_> = exemptions::for_layer(cfg.exemptions.as_ref(), "coverage")
+        .into_iter()
+        .filter(|record| record.live(&today))
+        .collect();
+    Ok((files, live))
 }
 
 fn artifact_report(dir: &Path) -> Result<(PathBuf, Value)> {
@@ -417,12 +523,13 @@ fn run_init(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {
         read_last_crap_scores(dir, cfg, &report_dir)?,
         cfg.gates.crap.cap(),
     );
+    let coverage = read_last_coverage_debt(dir, cfg, &report_dir)?;
     let count = functions.len();
     let v2 = BaselineV2 {
         version: 2,
         crate_name: cfg.crate_.name.clone(),
         functions,
-        coverage: None,
+        coverage,
         lints: None,
         suppressions: None,
         exemptions: None,
@@ -439,20 +546,25 @@ fn gate_passed(report: &Value) -> bool {
         && report.get("dry_run").and_then(Value::as_bool) != Some(true)
 }
 
+#[cfg(test)]
 fn crap_layer_passed(report: &Value) -> bool {
+    layer_passed(report, "crap")
+}
+
+fn layer_passed(report: &Value, id: &str) -> bool {
     report
         .get("layers")
         .and_then(Value::as_array)
         .is_some_and(|layers| {
             layers.iter().any(|layer| {
-                layer.get("id").and_then(Value::as_str) == Some("crap")
+                layer.get("id").and_then(Value::as_str) == Some(id)
                     && layer.get("verdict").and_then(Value::as_str) == Some("pass")
             })
         })
 }
 
 enum RefreshInput {
-    Ready(Box<BaselineV2>, BTreeMap<String, f64>),
+    Ready(Box<BaselineV2>, BTreeMap<String, f64>, PathBuf),
     Stop(ExitCode),
 }
 
@@ -475,9 +587,15 @@ fn load_refresh_inputs(dir: &Path, cfg: &TopsConfig, out: &Path) -> Result<Refre
         );
         return Ok(RefreshInput::Stop(ExitCode::from(1)));
     }
-    if !crap_layer_passed(&report) {
+    if cfg.gates.crap.cap().is_some() && !layer_passed(&report, "crap") {
         eprintln!(
             "error: last gate did not pass the crap layer; baseline refresh writes only after a passing crap layer"
+        );
+        return Ok(RefreshInput::Stop(ExitCode::from(1)));
+    }
+    if coverage_floor::floors_set(&cfg.gates.coverage) && !layer_passed(&report, "coverage") {
+        eprintln!(
+            "error: last gate did not pass the coverage layer; baseline refresh writes only after a passing coverage layer"
         );
         return Ok(RefreshInput::Stop(ExitCode::from(1)));
     }
@@ -485,34 +603,72 @@ fn load_refresh_inputs(dir: &Path, cfg: &TopsConfig, out: &Path) -> Result<Refre
     let existing = parse_and_validate(&raw_old, cfg)
         .map_err(|err| anyhow!("baseline {}: {err}", out.display()))?;
     let current = read_last_crap_scores(dir, cfg, &report_dir)?;
-    Ok(RefreshInput::Ready(Box::new(existing), current))
+    Ok(RefreshInput::Ready(Box::new(existing), current, report_dir))
 }
 
 fn run_refresh(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {
     let out = path(dir, cfg);
-    let (existing, current) = match load_refresh_inputs(dir, cfg, &out)? {
-        RefreshInput::Ready(existing, current) => (*existing, current),
-        RefreshInput::Stop(code) => return Ok(code),
-    };
+    match load_refresh_inputs(dir, cfg, &out)? {
+        RefreshInput::Ready(existing, current, report_dir) => {
+            write_refresh(dir, cfg, &out, *existing, &current, &report_dir)
+        }
+        RefreshInput::Stop(code) => Ok(code),
+    }
+}
+
+fn write_refresh(
+    dir: &Path,
+    cfg: &TopsConfig,
+    out: &Path,
+    existing: BaselineV2,
+    current: &BTreeMap<String, f64>,
+    report_dir: &Path,
+) -> Result<ExitCode> {
     let cap = cfg.gates.crap.cap();
-    let rises = refresh_rises(&existing.functions, &current, cap);
-    if !rises.is_empty() {
-        for msg in rises {
+    let rises = refresh_rises(&existing.functions, current, cap);
+    let cov = coverage_refresh(dir, cfg, existing.coverage.as_ref(), report_dir)?;
+    if !rises.is_empty() || !cov.problems.is_empty() {
+        for msg in rises.iter().chain(cov.problems.iter()) {
             eprintln!("error: baseline refresh refused: {msg}");
         }
         return Ok(ExitCode::from(1));
     }
-    let updated = next_functions(&existing.functions, &current, cap);
+    let updated = next_functions(&existing.functions, current, cap);
     let count = updated.len();
     write_v2(
-        &out,
+        out,
         &BaselineV2 {
             functions: updated,
+            coverage: cov.next,
             ..existing
         },
     )?;
     println!("wrote {} ({count} over-cap functions)", out.display());
     Ok(ExitCode::SUCCESS)
+}
+
+struct CovRefresh {
+    problems: Vec<String>,
+    next: Option<CoverageLedger>,
+}
+
+fn coverage_refresh(
+    dir: &Path,
+    cfg: &TopsConfig,
+    old: Option<&CoverageLedger>,
+    report_dir: &Path,
+) -> Result<CovRefresh> {
+    if !coverage_floor::floors_set(&cfg.gates.coverage) {
+        return Ok(CovRefresh {
+            problems: Vec::new(),
+            next: None,
+        });
+    }
+    let (files, live) = last_coverage_files(dir, cfg, report_dir)?;
+    Ok(CovRefresh {
+        problems: coverage_floor::refresh_problems(old, &files, &cfg.gates.coverage, &live),
+        next: coverage_floor::next_coverage(old, &files, &cfg.gates.coverage, &live),
+    })
 }
 
 fn refresh_rises(
@@ -563,11 +719,17 @@ fn validate_local_v2(cur_path: &Path, cfg: &TopsConfig) -> Result<Option<Baselin
             return Ok(None);
         }
     };
-    let cap_errors = check_cap_entries(&cur.functions, cfg.gates.crap.cap());
-    if cap_errors.is_empty() {
+    let mut form_errors = check_cap_entries(&cur.functions, cfg.gates.crap.cap());
+    if let Some(coverage) = &cur.coverage {
+        form_errors.extend(coverage_floor::over_floor_problems(
+            coverage,
+            &cfg.gates.coverage,
+        ));
+    }
+    if form_errors.is_empty() {
         return Ok(Some(cur));
     }
-    for err in cap_errors {
+    for err in form_errors {
         eprintln!("error: {err}");
     }
     Ok(None)
@@ -583,7 +745,8 @@ fn run_check(dir: &Path, cfg: &TopsConfig, base: Option<&str>) -> Result<ExitCod
         println!("first ledger (no compared baseline at {base_ref}): form valid");
         return Ok(ExitCode::SUCCESS);
     };
-    let offenders = compare_functions(&cur, &old);
+    let mut offenders = compare_functions(&cur, &old);
+    offenders.extend(compare_coverage(&cur, &old));
     if offenders.is_empty() {
         println!(
             "ok: {} ({} entries checked against {base_ref})",
@@ -664,7 +827,15 @@ fn compare_functions(cur: &BaselineV2, old: &BaselineV2) -> Vec<String> {
     for (key, &cur_val) in &cur.functions {
         let old_val = old.functions.get(key).copied();
         let grew = old_val.is_none_or(|was| cur_val > was);
-        if grew && !has_regression(cur.regressions.as_deref(), key, old_val, cur_val) {
+        if grew
+            && !has_regression(
+                cur.regressions.as_deref(),
+                "functions",
+                key,
+                old_val,
+                cur_val,
+            )
+        {
             let from = old_val.map_or_else(|| "absent".to_string(), |v| format!("{v:.2}"));
             offenders.push(format!("{key} ({from} -> {cur_val:.2})"));
         }
@@ -672,12 +843,36 @@ fn compare_functions(cur: &BaselineV2, old: &BaselineV2) -> Vec<String> {
     offenders
 }
 
-fn has_regression(records: Option<&[Regression]>, key: &str, from: Option<f64>, to: f64) -> bool {
+fn compare_coverage(cur: &BaselineV2, old: &BaselineV2) -> Vec<String> {
+    coverage_floor::coverage_deltas(cur.coverage.as_ref(), old.coverage.as_ref())
+        .into_iter()
+        .filter(|delta| {
+            !has_regression(
+                cur.regressions.as_deref(),
+                delta.kind,
+                &delta.key,
+                delta.from,
+                delta.to,
+            )
+        })
+        .map(|delta| {
+            let from = delta
+                .from
+                .map_or_else(|| "absent".to_string(), |v| format!("{v:.2}"));
+            format!("{} {} ({from} -> {:.2})", delta.kind, delta.key, delta.to)
+        })
+        .collect()
+}
+
+fn has_regression(
+    records: Option<&[Regression]>,
+    kind: &str,
+    key: &str,
+    from: Option<f64>,
+    to: f64,
+) -> bool {
     records.unwrap_or_default().iter().any(|rec| {
-        rec.kind == "functions"
-            && rec.key == key
-            && same_opt(rec.from, from)
-            && same_val(rec.to, to)
+        rec.kind == kind && rec.key == key && same_opt(rec.from, from) && same_val(rec.to, to)
     })
 }
 
@@ -918,7 +1113,7 @@ mod tests {
         assert!(
             parse_and_validate(r#"{"version":1,"crate":"demo","functions":{}}"#, &cfg).is_err()
         );
-        let esc = "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"coverage\": {\"k\": \"{\\\"}\"},\n  \"functions\": {\n    \"src/a.rs::a\": 8.0\n  }\n}\n";
+        let esc = "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"lints\": {\"k\": \"{\\\"}\"},\n  \"functions\": {\n    \"src/a.rs::a\": 8.0\n  }\n}\n";
         assert!(parse_and_validate(esc, &cfg).is_ok());
         let bad_entry =
             "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"functions\": {\n    123\n  }\n}\n";
@@ -952,6 +1147,20 @@ mod tests {
             "layers": [{"id": "unit", "verdict": "pass"}, {"id": "crap", "verdict": "fail", "judged": {}}]
         }))
         .is_ok());
+        assert!(super::init_precheck(&json!({
+            "dry_run": false, "exit_code": 1,
+            "layers": [
+                {"id": "unit", "verdict": "pass"},
+                {"id": "coverage", "verdict": "fail", "judged": {"files": 1}},
+                {"id": "crap", "verdict": "fail", "judged": {}}
+            ]
+        }))
+        .is_ok());
+        assert!(super::init_precheck(&json!({
+            "dry_run": false, "exit_code": 1,
+            "layers": [{"id": "coverage", "verdict": "fail"}]
+        }))
+        .is_err());
         assert_eq!(
             super::git_rel(Path::new("crates/a"), "./../b/file.json"),
             "crates/b/file.json"
@@ -972,7 +1181,7 @@ mod tests {
         }
         assert!(super::has_colon_digits(":5") && super::has_colon_digits("f:5"));
         assert!(!super::has_colon_digits("Type::5"));
-        let nested_fake = "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"coverage\": {\n    \"note\": \"fake \\\"functions\\\": {\\\"src/x.rs::bad\\\": 9.0} {\",\n    \"functions\": {\"src/fake.rs::f\": 9.0}\n  },\n  \"functions\": {\n    \"src/a.rs::a\": 8.0\n  }\n}\n";
+        let nested_fake = "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"lints\": {\n    \"note\": \"fake \\\"functions\\\": {\\\"src/x.rs::bad\\\": 9.0} {\",\n    \"functions\": {\"src/fake.rs::f\": 9.0}\n  },\n  \"functions\": {\n    \"src/a.rs::a\": 8.0\n  }\n}\n";
         assert!(parse_and_validate(nested_fake, &cfg_for("demo")).is_ok());
         assert!(super::gate_passed(
             &json!({"ok": true, "exit_code": 0, "dry_run": false})
@@ -1016,5 +1225,101 @@ mod tests {
         let drop = BTreeMap::from([("src/a.rs::f".into(), 6.0)]);
         assert!(next_functions(&old_m, &drop, Some(6.0)).is_empty());
         assert!(!super::same_val(0.0, 1e-9));
+    }
+
+    #[test]
+    fn kit_ledger_omits_coverage_and_stays_valid() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-tops-baseline.json");
+        let raw = std::fs::read_to_string(path).expect("kit ledger");
+        let v2 = parse_and_validate(&raw, &cfg_for("cargo-tops")).expect("valid kit ledger");
+        assert!(v2.coverage.is_none());
+        assert!(!raw.contains("\"coverage\""));
+    }
+
+    #[test]
+    fn coverage_files_layout_and_line_numbers_are_rejected() {
+        let cfg = cfg_for("demo");
+        let good = "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"functions\": {},\n  \"coverage\": {\n    \"crate_line\": 80.0,\n    \"files\": {\n      \"src/a.rs\": 70.0,\n      \"src/z.rs\": 60.0\n    }\n  }\n}\n";
+        assert!(parse_and_validate(good, &cfg).is_ok());
+
+        let line_no = good.replace("src/a.rs", "src/a.rs:12");
+        assert!(parse_and_validate(&line_no, &cfg).is_err());
+        let hash_l = good.replace("src/a.rs", "src/a.rs#L12");
+        assert!(parse_and_validate(&hash_l, &cfg).is_err());
+
+        let unsorted = "{\n  \"version\": 2,\n  \"crate\": \"demo\",\n  \"functions\": {},\n  \"coverage\": {\n    \"files\": {\n      \"src/z.rs\": 60.0,\n      \"src/a.rs\": 70.0\n    }\n  }\n}\n";
+        assert!(parse_and_validate(unsorted, &cfg).is_err());
+
+        let inline = "{\"version\": 2, \"crate\": \"demo\", \"functions\": {}, \"coverage\": {\"files\": {\"src/a.rs\": 70.0, \"src/z.rs\": 60.0}}}\n";
+        assert!(parse_and_validate(inline, &cfg).is_err());
+        assert!(super::has_file_line_number("src/a.rs:9"));
+        assert!(!super::has_file_line_number("src/a.rs"));
+    }
+
+    fn v2_with(coverage: super::CoverageLedger) -> super::BaselineV2 {
+        super::BaselineV2 {
+            version: 2,
+            crate_name: "demo".into(),
+            functions: BTreeMap::new(),
+            coverage: Some(coverage),
+            lints: None,
+            suppressions: None,
+            exemptions: None,
+            regressions: None,
+        }
+    }
+
+    fn rec(kind: &str, key: &str, from: Option<f64>, to: f64) -> super::Regression {
+        super::Regression {
+            kind: kind.into(),
+            key: key.into(),
+            from,
+            to,
+            reason: "r".into(),
+            owner: "o".into(),
+            date: "2026-11-27".into(),
+        }
+    }
+
+    #[test]
+    fn compare_coverage_names_drops_without_records() {
+        let old = v2_with(super::CoverageLedger {
+            crate_line: Some(80.0),
+            crate_region: None,
+            files: Some(BTreeMap::from([("src/a.rs".into(), 70.0)])),
+        });
+        let cur = v2_with(super::CoverageLedger {
+            crate_line: Some(70.0),
+            crate_region: Some(80.0),
+            files: Some(BTreeMap::from([
+                ("src/a.rs".into(), 60.0),
+                ("src/b.rs".into(), 50.0),
+            ])),
+        });
+        assert_eq!(super::compare_coverage(&cur, &old).len(), 4);
+    }
+
+    #[test]
+    fn compare_coverage_accepts_matching_regression_records() {
+        let old = v2_with(super::CoverageLedger {
+            crate_line: Some(80.0),
+            crate_region: None,
+            files: Some(BTreeMap::from([("src/a.rs".into(), 70.0)])),
+        });
+        let mut cur = v2_with(super::CoverageLedger {
+            crate_line: Some(70.0),
+            crate_region: Some(80.0),
+            files: Some(BTreeMap::from([
+                ("src/a.rs".into(), 60.0),
+                ("src/b.rs".into(), 50.0),
+            ])),
+        });
+        cur.regressions = Some(vec![
+            rec("coverage", "crate_line", Some(80.0), 70.0),
+            rec("coverage", "crate_region", None, 80.0),
+            rec("coverage.files", "src/a.rs", Some(70.0), 60.0),
+            rec("coverage.files", "src/b.rs", None, 50.0),
+        ]);
+        assert!(super::compare_coverage(&cur, &old).is_empty());
     }
 }
