@@ -258,6 +258,20 @@ fn git(repo: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn disable_crap(f: &Fixture) {
+    edit_yaml(f, |doc| {
+        if let Some(layers) = doc.pointer_mut("/layers").and_then(Value::as_array_mut) {
+            for layer in layers {
+                if layer.get("id").and_then(Value::as_str) == Some("crap") {
+                    if let Some(map) = layer.as_object_mut() {
+                        map.insert("enabled".into(), json!(false));
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn seed_crap_exemption(f: &Fixture) {
     edit_yaml(f, |doc| {
         set_key(
@@ -593,35 +607,146 @@ fn check_accepts_first_ledger_when_base_has_no_ledger_or_yaml() {
 }
 
 #[test]
-fn refresh_refuses_when_crap_layer_did_not_pass() {
-    let f = fixture("refresh-no-crap", Layout::Single);
-    write_reports(&f, 100, &[("./src/a.rs", "alpha", 12.0)]);
-    let _ = tops(&f, &["gate"]);
-    assert_eq!(
-        tops(&f, &["baseline", "--init"]).0.status.code(),
-        Some(0),
-        "init"
+fn coverage_only_init_writes_empty_functions_without_crap_json() {
+    let f = fixture("cov-only-init", Layout::Single);
+    disable_crap(&f);
+    write_reports(&f, 100, &[("./src/a.rs", "clean", 1.0)]);
+    let (out, text) = tops(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("cargo tops baseline --init"), "{text}");
+    assert!(
+        !f.repo.join("target/rust-tops/crap.json").exists(),
+        "crap-off gate writes no crap.json"
     );
-
-    edit_yaml(&f, |doc| {
-        if let Some(layers) = doc.pointer_mut("/layers").and_then(Value::as_array_mut) {
-            for layer in layers {
-                if layer.get("id").and_then(Value::as_str) == Some("crap") {
-                    if let Some(map) = layer.as_object_mut() {
-                        map.insert("enabled".into(), json!(false));
-                    }
-                }
-            }
-        }
-    });
+    let (init, init_text) = tops(&f, &["baseline", "--init"]);
+    assert_eq!(init.status.code(), Some(0), "{init_text}");
+    let doc = read_v2_doc(&f);
+    assert_eq!(doc.get("functions"), Some(&json!({})), "{doc}");
+    assert!(doc.get("coverage").is_none(), "{doc}");
     assert_eq!(
         tops(&f, &["gate"]).0.status.code(),
         Some(0),
-        "pass without crap"
+        "passes after init"
     );
-    let (out, text) = tops(&f, &["baseline"]);
+}
+
+#[test]
+fn coverage_only_init_ignores_a_stale_crap_json() {
+    let f = fixture("cov-only-stale", Layout::Single);
+    disable_crap(&f);
+    write_reports(&f, 100, &[("./src/a.rs", "clean", 1.0)]);
+    assert_eq!(
+        tops(&f, &["gate"]).0.status.code(),
+        Some(1),
+        "missing ledger"
+    );
+    let stale = json!({"version": "0.9.0", "entries": [
+        {"file": "./src/a.rs", "function": "big", "line": 1, "cyclomatic": 1.0, "coverage": 100.0, "crap": 12.0},
+        {"file": "./src/a.rs", "function": "mid", "line": 1, "cyclomatic": 1.0, "coverage": 100.0, "crap": 8.0}
+    ]});
+    fs::write(f.repo.join("target/rust-tops/crap.json"), stale.to_string())
+        .expect("stale crap.json");
+    let (init, text) = tops(&f, &["baseline", "--init"]);
+    assert_eq!(init.status.code(), Some(0), "{text}");
+    let doc = read_v2_doc(&f);
+    assert_eq!(doc.get("functions"), Some(&json!({})), "{doc}");
+    assert!(
+        doc.pointer("/functions/src/a.rs::big").is_none(),
+        "stale functions must not be ingested: {doc}"
+    );
+}
+
+fn layer_verdict(f: &Fixture, id: &str) -> Option<String> {
+    let raw = fs::read_to_string(f.repo.join("target/rust-tops/report.json")).expect("report");
+    let doc: Value = serde_json::from_str(&raw).expect("json");
+    doc.get("layers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        .and_then(|row| {
+            row.get("verdict")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+}
+
+#[test]
+fn a_corrupt_ledger_does_not_fail_when_nothing_is_judged() {
+    let f = fixture_with_class("corrupt-none", "workspace-root", Layout::Single);
+    disable_crap(&f);
+    write_reports(&f, 100, &[("./src/a.rs", "ok", 1.0)]);
+    fs::write(f.repo.join("rust-tops-baseline.json"), "{").expect("write");
+    let (out, text) = tops(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(!text.contains("coverage: baseline"), "{text}");
+    assert!(!text.contains("crap: baseline"), "{text}");
+}
+
+#[test]
+fn a_corrupt_ledger_fails_only_crap_when_coverage_floors_are_unset() {
+    let f = fixture_with_class("corrupt-crap", "workspace-root", Layout::Single);
+    edit_yaml(&f, |doc| {
+        set_key(doc, "/gates/crap", "threshold_agent", Some(json!(6.0)));
+        set_key(doc, "/gates/crap", "threshold_production", Some(json!(6.0)));
+    });
+    write_reports(&f, 100, &[("./src/a.rs", "ok", 1.0)]);
+    fs::write(f.repo.join("rust-tops-baseline.json"), "{").expect("write");
+    let (out, text) = tops(&f, &["gate"]);
     assert_eq!(out.status.code(), Some(1), "{text}");
-    assert!(text.contains("crap layer"), "{text}");
+    assert!(text.contains("crap: baseline"), "{text}");
+    assert!(!text.contains("coverage: baseline"), "{text}");
+    assert_eq!(
+        layer_verdict(&f, "coverage").as_deref(),
+        Some("pass"),
+        "{text}"
+    );
+    assert_eq!(layer_verdict(&f, "crap").as_deref(), Some("fail"), "{text}");
+}
+
+fn plant_stale_crap(f: &Fixture, function: &str, score: f64) {
+    fs::write(
+        f.repo.join("target/rust-tops/crap.json"),
+        json!({"version": "0.9.0", "entries": [{"file": "./src/a.rs", "function": function, "line": 1, "cyclomatic": 1.0, "coverage": 100.0, "crap": score}]}).to_string(),
+    )
+    .expect("stale crap.json");
+}
+
+#[test]
+fn coverage_only_refresh_raises_coverage_and_keeps_functions() {
+    let f = fixture("cov-only-refresh", Layout::Single);
+    disable_crap(&f);
+    write_reports(&f, 80, &[("./src/a.rs", "stale", 20.0)]);
+    assert_eq!(
+        tops(&f, &["gate"]).0.status.code(),
+        Some(1),
+        "missing ledger"
+    );
+    assert_eq!(tops(&f, &["baseline", "--init"]).0.status.code(), Some(0));
+    let mut doc = read_v2_doc(&f);
+    set_key(
+        &mut doc,
+        "",
+        "functions",
+        Some(json!({"src/a.rs::kept": 9.0})),
+    );
+    write_json(&f.repo.join("rust-tops-baseline.json"), &doc);
+    write_reports(&f, 90, &[("./src/a.rs", "stale", 20.0)]);
+    assert_eq!(tops(&f, &["gate"]).0.status.code(), Some(0), "listed");
+    plant_stale_crap(&f, "stale", 20.0);
+    let (out, text) = tops(&f, &["baseline"]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let refreshed = read_v2_doc(&f);
+    assert_eq!(
+        refreshed.get("functions"),
+        Some(&json!({"src/a.rs::kept": 9.0})),
+        "{refreshed}"
+    );
+    assert_eq!(
+        refreshed.pointer("/coverage/crate_line"),
+        Some(&json!(90.0)),
+        "{refreshed}"
+    );
 }
 
 fn read_v2_doc(f: &Fixture) -> Value {

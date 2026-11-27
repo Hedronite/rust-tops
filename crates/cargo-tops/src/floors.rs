@@ -121,34 +121,41 @@ fn attach_ledger_faults(
     ledger: &LedgerLoad,
     runs: &[Run],
 ) {
+    let layers = coverage_floor::JudgedLayers::of(
+        cfg,
+        coverage_floor::LayerRan {
+            coverage: layer_passed(runs, "coverage"),
+            crap: layer_passed(runs, "crap"),
+        },
+    );
     match ledger {
-        LedgerLoad::Invalid(err) => record_on_ran_layers(judged, runs, err),
+        LedgerLoad::Invalid(err) => record_on_judged(judged, layers, err),
         LedgerLoad::Absent if cfg.enforce == Some(Enforce::Ratchet) => {
-            record_missing(judged, dir, cfg, runs);
+            record_missing(judged, dir, cfg, layers);
         }
         LedgerLoad::Off | LedgerLoad::Present(_) | LedgerLoad::Absent => {}
     }
 }
 
-fn record_on_ran_layers(judged: &mut Judged, runs: &[Run], err: &str) {
-    if layer_passed(runs, "coverage") {
-        record_coverage_fault(judged, err);
-    }
-    if layer_passed(runs, "crap") {
-        record_crap_fault(judged, err);
-    }
-}
-
-fn record_missing(judged: &mut Judged, dir: &Path, cfg: &TopsConfig, runs: &[Run]) {
+fn record_missing(
+    judged: &mut Judged,
+    dir: &Path,
+    cfg: &TopsConfig,
+    layers: coverage_floor::JudgedLayers,
+) {
     let msg = format!(
         "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
         baseline::path(dir, cfg).display()
     );
-    if layer_passed(runs, "coverage") && coverage_floor::floors_set(&cfg.gates.coverage) {
-        record_coverage_fault(judged, &msg);
+    record_on_judged(judged, layers, &msg);
+}
+
+fn record_on_judged(judged: &mut Judged, layers: coverage_floor::JudgedLayers, msg: &str) {
+    if layers.coverage {
+        record_coverage_fault(judged, msg);
     }
-    if layer_passed(runs, "crap") && cfg.gates.crap.cap().is_some() {
-        record_crap_fault(judged, &msg);
+    if layers.crap {
+        record_crap_fault(judged, msg);
     }
 }
 
@@ -441,9 +448,19 @@ pub(crate) fn record_baseline(dir: &Path, cfg: &TopsConfig) -> Result<()> {
 mod tests {
     use super::*;
     use crate::config::{CoverageGate, CrapGate, Gates, MutationGate, Protocol};
-    use crate::facts::{Outcome, Run};
     use serde_json::json;
     use std::path::Path;
+
+    fn ran_cov() -> coverage_floor::LayerRan {
+        coverage_floor::LayerRan {
+            coverage: true,
+            crap: false,
+        }
+    }
+
+    fn judged(line: Option<f64>, ran: coverage_floor::LayerRan) -> coverage_floor::JudgedLayers {
+        coverage_floor::JudgedLayers::of(&cfg(line, None), ran)
+    }
 
     fn cfg(line: Option<f64>, cap: Option<f64>) -> TopsConfig {
         TopsConfig {
@@ -487,16 +504,6 @@ mod tests {
         }
     }
 
-    fn passed(layer: &str) -> Run {
-        Run {
-            layer: layer.into(),
-            cmd: layer.into(),
-            step: layer.into(),
-            outcome: Outcome::Passed,
-            note: None,
-        }
-    }
-
     #[test]
     fn a_crap_layer_fault_increments_the_crap_counter() {
         let mut judged = Judged::default();
@@ -513,31 +520,68 @@ mod tests {
     #[test]
     fn a_missing_ledger_needs_a_passed_coverage_layer_and_a_floor() {
         let dir = Path::new("/demo");
-        let mut none = Judged::default();
-        record_missing(&mut none, dir, &cfg(None, None), &[passed("coverage")]);
-        assert_eq!(none.coverage_problems, 0, "no floor");
-        assert!(none.problems.is_empty(), "{:?}", none.problems);
+        let none = judged(None, ran_cov());
+        assert!(!none.coverage, "no floor");
+        let mut none_j = Judged::default();
+        record_missing(&mut none_j, dir, &cfg(None, None), none);
+        assert_eq!(none_j.coverage_problems, 0, "no floor");
+        assert!(none_j.problems.is_empty(), "{:?}", none_j.problems);
 
-        let mut no_run = Judged::default();
-        record_missing(&mut no_run, dir, &cfg(Some(80.0), None), &[]);
-        assert_eq!(no_run.coverage_problems, 0, "coverage did not run");
-        assert!(no_run.problems.is_empty(), "{:?}", no_run.problems);
+        let idle = coverage_floor::LayerRan {
+            coverage: false,
+            crap: false,
+        };
+        let no_run = judged(Some(80.0), idle);
+        assert!(!no_run.coverage, "coverage did not run");
+        let mut no_run_j = Judged::default();
+        record_missing(&mut no_run_j, dir, &cfg(Some(80.0), None), no_run);
+        assert_eq!(no_run_j.coverage_problems, 0, "coverage did not run");
 
-        let mut both = Judged::default();
-        record_missing(
-            &mut both,
-            dir,
-            &cfg(Some(80.0), None),
-            &[passed("coverage")],
-        );
-        assert_eq!(both.coverage_problems, 1, "floor and layer");
-        assert_eq!(both.crap_problems, 0, "crap off");
+        let both = judged(Some(80.0), ran_cov());
+        let mut both_j = Judged::default();
+        record_missing(&mut both_j, dir, &cfg(Some(80.0), None), both);
+        assert_eq!(both_j.coverage_problems, 1, "floor and layer");
+        assert_eq!(both_j.crap_problems, 0, "crap off");
         assert!(
-            both.problems
+            both_j
+                .problems
                 .first()
                 .is_some_and(|p| p.starts_with("coverage: missing baseline")),
             "{:?}",
-            both.problems
+            both_j.problems
+        );
+    }
+
+    #[test]
+    fn an_invalid_ledger_is_charged_only_to_judged_layers() {
+        let mut none = Judged::default();
+        record_on_judged(
+            &mut none,
+            coverage_floor::JudgedLayers {
+                coverage: false,
+                crap: false,
+            },
+            "broken",
+        );
+        assert_eq!(none.coverage_problems, 0, "coverage off");
+        assert_eq!(none.crap_problems, 0, "crap off");
+        assert!(none.problems.is_empty(), "{:?}", none.problems);
+
+        let mut crap_only = Judged::default();
+        record_on_judged(
+            &mut crap_only,
+            coverage_floor::JudgedLayers {
+                coverage: false,
+                crap: true,
+            },
+            "broken",
+        );
+        assert_eq!(crap_only.coverage_problems, 0, "coverage stays pass");
+        assert_eq!(crap_only.crap_problems, 1, "crap fail");
+        assert_eq!(
+            crap_only.problems,
+            vec!["crap: broken".to_string()],
+            "crap only"
         );
     }
 }

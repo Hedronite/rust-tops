@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::CoverageGate;
+use crate::config::{CoverageGate, TopsConfig};
 use crate::crap_ratchet::EPSILON;
 use crate::exemptions::Exemption;
 use crate::scope::Scope;
@@ -62,6 +62,30 @@ pub(crate) fn floors_set(gate: &CoverageGate) -> bool {
     ]
     .iter()
     .any(Option::is_some)
+}
+
+/// Whether the coverage and CRAP commands (or report rows) actually ran.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LayerRan {
+    pub coverage: bool,
+    pub crap: bool,
+}
+
+/// Whether the coverage and CRAP layers of this gate actually judge a ledger.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct JudgedLayers {
+    pub coverage: bool,
+    pub crap: bool,
+}
+
+impl JudgedLayers {
+    /// `ran` is a passed coverage/crap command (gate) or a pass/fail row (report).
+    pub(crate) fn of(cfg: &TopsConfig, ran: LayerRan) -> Self {
+        Self {
+            coverage: ran.coverage && floors_set(&cfg.gates.coverage),
+            crap: ran.crap && cfg.gates.crap.cap().is_some(),
+        }
+    }
 }
 
 /// Covered and total units (lines or regions).

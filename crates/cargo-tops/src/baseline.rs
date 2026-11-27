@@ -523,11 +523,9 @@ fn run_init(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {
         eprintln!("error: {msg}");
         return Ok(ExitCode::from(1));
     }
-    let functions = over_cap_only(
-        read_last_crap_scores(dir, cfg, &report_dir)?,
-        cfg.gates.crap.cap(),
-    );
-    let coverage = read_last_coverage_debt(dir, cfg, &report_dir)?;
+    let judged = judged_from_report(cfg, &report);
+    let functions = init_functions(dir, cfg, &report_dir, judged)?;
+    let coverage = init_coverage(dir, cfg, &report_dir, judged)?;
     let count = functions.len();
     let v2 = BaselineV2 {
         version: 2,
@@ -556,19 +554,73 @@ fn crap_layer_passed(report: &Value) -> bool {
 }
 
 fn layer_passed(report: &Value, id: &str) -> bool {
+    layer_verdict(report, id, "pass")
+}
+
+fn layer_ran(report: &Value, id: &str) -> bool {
+    layer_verdict(report, id, "pass") || layer_verdict(report, id, "fail")
+}
+
+fn layer_verdict(report: &Value, id: &str, want: &str) -> bool {
     report
         .get("layers")
         .and_then(Value::as_array)
         .is_some_and(|layers| {
             layers.iter().any(|layer| {
                 layer.get("id").and_then(Value::as_str) == Some(id)
-                    && layer.get("verdict").and_then(Value::as_str) == Some("pass")
+                    && layer.get("verdict").and_then(Value::as_str) == Some(want)
             })
         })
 }
 
+fn judged_from_report(cfg: &TopsConfig, report: &Value) -> coverage_floor::JudgedLayers {
+    coverage_floor::JudgedLayers::of(
+        cfg,
+        coverage_floor::LayerRan {
+            coverage: layer_ran(report, "coverage"),
+            crap: layer_ran(report, "crap"),
+        },
+    )
+}
+
+fn init_functions(
+    dir: &Path,
+    cfg: &TopsConfig,
+    report_dir: &Path,
+    judged: coverage_floor::JudgedLayers,
+) -> Result<BTreeMap<String, f64>> {
+    if judged.crap {
+        Ok(over_cap_only(
+            read_last_crap_scores(dir, cfg, report_dir)?,
+            cfg.gates.crap.cap(),
+        ))
+    } else {
+        Ok(BTreeMap::new())
+    }
+}
+
+fn init_coverage(
+    dir: &Path,
+    cfg: &TopsConfig,
+    report_dir: &Path,
+    judged: coverage_floor::JudgedLayers,
+) -> Result<Option<CoverageLedger>> {
+    if judged.coverage {
+        read_last_coverage_debt(dir, cfg, report_dir)
+    } else {
+        Ok(None)
+    }
+}
+
+struct RefreshReady {
+    existing: BaselineV2,
+    crap: Option<BTreeMap<String, f64>>,
+    report_dir: PathBuf,
+    coverage_judged: bool,
+}
+
 enum RefreshInput {
-    Ready(Box<BaselineV2>, BTreeMap<String, f64>, PathBuf),
+    Ready(Box<RefreshReady>),
     Stop(ExitCode),
 }
 
@@ -585,8 +637,18 @@ fn load_refresh_inputs(dir: &Path, cfg: &TopsConfig, out: &Path) -> Result<Refre
     let raw_old = fs::read_to_string(out).with_context(|| format!("read {}", out.display()))?;
     let existing = parse_and_validate(&raw_old, cfg)
         .map_err(|err| anyhow!("baseline {}: {err}", out.display()))?;
-    let current = read_last_crap_scores(dir, cfg, &report_dir)?;
-    Ok(RefreshInput::Ready(Box::new(existing), current, report_dir))
+    let judged = judged_from_report(cfg, &report);
+    let crap = if judged.crap {
+        Some(read_last_crap_scores(dir, cfg, &report_dir)?)
+    } else {
+        None
+    };
+    Ok(RefreshInput::Ready(Box::new(RefreshReady {
+        existing,
+        crap,
+        report_dir,
+        coverage_judged: judged.coverage,
+    })))
 }
 
 fn refresh_refuse(cfg: &TopsConfig, out: &Path) -> Option<String> {
@@ -607,24 +669,21 @@ fn refresh_report_refuse(cfg: &TopsConfig, report: &Value) -> Option<String> {
             "last gate did not pass; baseline refresh writes only after a passing gate".into(),
         );
     }
-    if cfg.gates.crap.cap().is_some() && !layer_passed(report, "crap") {
+    let judged = judged_from_report(cfg, report);
+    if judged.crap && !layer_passed(report, "crap") {
         return Some(
             "last gate did not pass the crap layer; baseline refresh writes only after a passing crap layer".into(),
         );
     }
-    (coverage_floor::floors_set(&cfg.gates.coverage) && !layer_passed(report, "coverage")).then(
-        || {
-            "last gate did not pass the coverage layer; baseline refresh writes only after a passing coverage layer".into()
-        },
-    )
+    (judged.coverage && !layer_passed(report, "coverage")).then(|| {
+        "last gate did not pass the coverage layer; baseline refresh writes only after a passing coverage layer".into()
+    })
 }
 
 fn run_refresh(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {
     let out = path(dir, cfg);
     match load_refresh_inputs(dir, cfg, &out)? {
-        RefreshInput::Ready(existing, current, report_dir) => {
-            write_refresh(dir, cfg, &out, *existing, &current, &report_dir)
-        }
+        RefreshInput::Ready(ready) => write_refresh(dir, cfg, &out, *ready),
         RefreshInput::Stop(code) => Ok(code),
     }
 }
@@ -633,31 +692,60 @@ fn write_refresh(
     dir: &Path,
     cfg: &TopsConfig,
     out: &Path,
-    existing: BaselineV2,
-    current: &BTreeMap<String, f64>,
-    report_dir: &Path,
+    ready: RefreshReady,
 ) -> Result<ExitCode> {
-    let cap = cfg.gates.crap.cap();
-    let rises = refresh_rises(&existing.functions, current, cap);
-    let cov = coverage_refresh(dir, cfg, existing.coverage.as_ref(), report_dir)?;
+    let (rises, updated) = refresh_functions(&ready.existing.functions, ready.crap.as_ref(), cfg);
+    let cov = refresh_coverage(dir, cfg, &ready)?;
     if !rises.is_empty() || !cov.problems.is_empty() {
         for msg in rises.iter().chain(cov.problems.iter()) {
             eprintln!("error: baseline refresh refused: {msg}");
         }
         return Ok(ExitCode::from(1));
     }
-    let updated = next_functions(&existing.functions, current, cap);
     let count = updated.len();
     write_v2(
         out,
         &BaselineV2 {
             functions: updated,
             coverage: cov.next,
-            ..existing
+            ..ready.existing
         },
     )?;
     println!("wrote {} ({count} over-cap functions)", out.display());
     Ok(ExitCode::SUCCESS)
+}
+
+fn refresh_functions(
+    existing: &BTreeMap<String, f64>,
+    current: Option<&BTreeMap<String, f64>>,
+    cfg: &TopsConfig,
+) -> (Vec<String>, BTreeMap<String, f64>) {
+    match current {
+        Some(scores) => {
+            let cap = cfg.gates.crap.cap();
+            (
+                refresh_rises(existing, scores, cap),
+                next_functions(existing, scores, cap),
+            )
+        }
+        None => (Vec::new(), existing.clone()),
+    }
+}
+
+fn refresh_coverage(dir: &Path, cfg: &TopsConfig, ready: &RefreshReady) -> Result<CovRefresh> {
+    if ready.coverage_judged {
+        coverage_refresh(
+            dir,
+            cfg,
+            ready.existing.coverage.as_ref(),
+            &ready.report_dir,
+        )
+    } else {
+        Ok(CovRefresh {
+            problems: Vec::new(),
+            next: ready.existing.coverage.clone(),
+        })
+    }
 }
 
 struct CovRefresh {
@@ -1215,6 +1303,67 @@ mod tests {
         ] {
             assert!(!super::gate_passed(&bad));
         }
+    }
+
+    #[test]
+    fn a_fail_row_counts_as_ran_and_a_disabled_crap_layer_is_not_judged() {
+        assert!(super::layer_ran(
+            &json!({"layers": [{"id": "coverage", "verdict": "fail"}]}),
+            "coverage",
+        ));
+        assert!(!super::layer_ran(
+            &json!({"layers": [{"id": "crap", "verdict": "not-run"}]}),
+            "crap",
+        ));
+        let cfg = cfg_for("demo");
+        let cov_only = json!({
+            "ok": true, "exit_code": 0, "dry_run": false,
+            "layers": [{"id": "coverage", "verdict": "pass"}]
+        });
+        assert!(super::refresh_report_refuse(&cfg, &cov_only).is_none());
+        assert!(
+            super::judged_from_report(&cfg, &cov_only).coverage
+                && !super::judged_from_report(&cfg, &cov_only).crap,
+            "cap set but crap did not run"
+        );
+    }
+
+    #[test]
+    fn refresh_report_refuse_names_a_failed_gate_and_failed_layers() {
+        let cfg = cfg_for("demo");
+        let failed = json!({"ok": false, "exit_code": 1, "dry_run": false});
+        assert!(
+            super::refresh_report_refuse(&cfg, &failed)
+                .expect("failed gate")
+                .contains("did not pass"),
+            "failed gate"
+        );
+        let crap_fail = json!({
+            "ok": true, "exit_code": 0, "dry_run": false,
+            "layers": [
+                {"id": "coverage", "verdict": "pass"},
+                {"id": "crap", "verdict": "fail"}
+            ]
+        });
+        assert!(
+            super::refresh_report_refuse(&cfg, &crap_fail)
+                .expect("crap fail")
+                .contains("crap layer"),
+            "crap fail"
+        );
+        let cov_fail = json!({
+            "ok": true, "exit_code": 0, "dry_run": false,
+            "layers": [
+                {"id": "coverage", "verdict": "fail"},
+                {"id": "crap", "verdict": "pass"}
+            ]
+        });
+        assert!(
+            super::refresh_report_refuse(&cfg, &cov_fail)
+                .expect("coverage fail")
+                .contains("coverage layer"),
+            "coverage fail"
+        );
     }
 
     #[test]
