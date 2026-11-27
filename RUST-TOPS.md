@@ -38,11 +38,17 @@ CI runs the same gate in the `tops-gate` job.
 
 Debt ledger: [`rust-tops-baseline.json`](rust-tops-baseline.json), Baseline v2
 (PROTOCOL.md §16.1), tracked. It lists only the functions of `cargo-tops` that
-are over the cap. Under `ratchet` each may only move down, every other function
-is held to the cap, and a missing ledger fails the gate.
+are over the cap. Under `ratchet` a listed function may score up to its entry
+plus 0.01 (a rise that small is noise), every other function is held to the cap,
+and a missing ledger fails the gate.
+
+The same ledger can hold coverage below a floor, in a `coverage` object
+(PROTOCOL.md §7.5); a listed percent may fall by no more than 0.01. This crate
+meets its floors, so its ledger has no `coverage` object.
 
 After a passing gate, run `cargo tops baseline` and commit the result with the
-change that moved the scores. It only lowers or removes entries.
+change that moved the numbers. The refresh lowers or removes function entries,
+raises or removes coverage entries, and never adds one.
 
 In a pull request, run `cargo tops baseline --check --base origin/main` on a
 branch that is up to date with `main`. No CI job runs this check yet. Debt that

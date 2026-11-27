@@ -42,7 +42,7 @@ Rust-TOPS (Rust Testing and Optimization Protocol Suite) is a protocol: a writte
 
 It is for Rust library and binary authors, and for the people who own their CI, who want one gate order: lint, tests, coverage, CRAP, mutation on the diff, then the extra layers the crate class names.
 
-Protocol 1.5.0 adds the enforcement modes `hard`, `ratchet` and `advisory`, and a Baseline v2 debt ledger of the functions over the CRAP cap, written and checked by `cargo tops baseline` ([`PROTOCOL.md`](PROTOCOL.md) §2.3, §16.1, §16.2). Protocol 1.4.0 passes a layer only on evidence from the run: a resolved mutation base, a matching passed test for a credited layer, unexpired exemptions and pinned tool versions ([`PROTOCOL.md`](PROTOCOL.md) §8.3, §6.5.1, §19, §14.5). Protocol 1.3.0 fixes each layer's tier by its id and has `cargo tops check` hold an instance to its class ([`PROTOCOL.md`](PROTOCOL.md) §3, §4). Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with a baseline ratchet for existing code, and how the gate judges the coverage floors ([`PROTOCOL.md`](PROTOCOL.md) §2.1, §7.5, §16). Protocol 1.1.0 added the `laws` layer ([`PROTOCOL.md`](PROTOCOL.md) §3.1). It checks an adopting crate against the Bend2 laws pack under [`laws/`](laws/). For each law, the runner reads one fact from the crate's files or this gate run's reports and picks a case. `bend` then judges the case file, one program that imports `LAWS.bend`. A `Refuse` fails the gate. Fifteen of the 53 laws have fact readers. The other thirty-eight are reported `not-evaluated`, never as a pass. On this repository, required CI also proves all 53 laws with Bend 2.0.36 (TOFU-pinned) and rechecks them with Lean 4.34.0.
+Protocol 1.5.0 adds the enforcement modes `hard`, `ratchet` and `advisory`, and a Baseline v2 debt ledger of the functions over the CRAP cap and the coverage below its floors, written and checked by `cargo tops baseline` ([`PROTOCOL.md`](PROTOCOL.md) §2.3, §16.1, §16.2). Protocol 1.4.0 passes a layer only on evidence from the run: a resolved mutation base, a matching passed test for a credited layer, unexpired exemptions and pinned tool versions ([`PROTOCOL.md`](PROTOCOL.md) §8.3, §6.5.1, §19, §14.5). Protocol 1.3.0 fixes each layer's tier by its id and has `cargo tops check` hold an instance to its class ([`PROTOCOL.md`](PROTOCOL.md) §3, §4). Protocol 1.2.0 says how the CRAP thresholds apply to new and changed code, with a baseline ratchet for existing code, and how the gate judges the coverage floors ([`PROTOCOL.md`](PROTOCOL.md) §2.1, §7.5, §16). Protocol 1.1.0 added the `laws` layer ([`PROTOCOL.md`](PROTOCOL.md) §3.1). It checks an adopting crate against the Bend2 laws pack under [`laws/`](laws/). For each law, the runner reads one fact from the crate's files or this gate run's reports and picks a case. `bend` then judges the case file, one program that imports `LAWS.bend`. A `Refuse` fails the gate. Fifteen of the 53 laws have fact readers. The other thirty-eight are reported `not-evaluated`, never as a pass. On this repository, required CI also proves all 53 laws with Bend 2.0.36 (TOFU-pinned) and rechecks them with Lean 4.34.0.
 
 ## Pins
 
@@ -87,7 +87,7 @@ cargo install --path crates/cargo-tops --locked   # run in a checkout of this re
 cargo tops init --class parser-codec              # the rest runs in your crate
 cargo tops check
 cargo tops gate             # fails: enforce is ratchet and there is no ledger yet
-cargo tops baseline --init  # records what is over the CRAP cap today
+cargo tops baseline --init  # records what is over the CRAP cap or under a coverage floor today
 cargo tops gate
 ```
 
@@ -95,9 +95,17 @@ cargo tops gate
 
 `check` reads `rust-tops.yaml` and checks protocol id, a non-empty version, a crate name, `gates.crap.threshold_agent >= 1`, a well-formed `advisory` block under `enforce: advisory`, and that class `library-core` keeps `unexplained_survivors_max` at 0.
 
-`gate` runs enabled layers at or below `--max-tier` (default 1). `--dry-run` prints the commands and does not run them. A mapped tool missing from `PATH` fails the gate. After the layers run, `gate` judges their reports: the crate's line and region coverage and each production file against the `gates.coverage` floors, and each production function against the CRAP cap (`gates.crap.threshold_agent`) as `enforce` says ([`PROTOCOL.md`](PROTOCOL.md) §2.3). The `laws` layer runs last, on the reports the other layers wrote. When Bend 2.0.36 is absent, `gate` fetches it by `laws/bend.lock` first.
+`gate` runs enabled layers at or below `--max-tier` (default 1). `--dry-run` prints the commands and does not run them. A mapped tool missing from `PATH` fails the gate. After the layers run, `gate` judges their reports: the crate's line and region coverage and each production file against the `gates.coverage` floors, and each production function against the CRAP cap (`gates.crap.threshold_agent`, or `threshold_production` when the instance has no agent threshold) as `enforce` says ([`PROTOCOL.md`](PROTOCOL.md) §2.3). The `laws` layer runs last, on the reports the other layers wrote. When Bend 2.0.36 is absent, `gate` fetches it by `laws/bend.lock` first.
 
-`baseline --init` writes the debt ledger, `rust-tops-baseline.json`, from the last gate run; in this build it also refuses while that run missed a coverage floor. `baseline` lowers or removes entries after a passing gate. `baseline --check` refuses debt that grew without a `regressions` record; in a pull request run `cargo tops baseline --check --base origin/main`.
+#### The debt ledger
+
+Under `enforce: ratchet` the gate holds existing code to `rust-tops-baseline.json` (Baseline v2) and new code to the cap and the floors. The ledger's `functions` object lists the functions over the CRAP cap. Its optional `coverage` object lists what is below a coverage floor: `crate_line`, `crate_region`, and one line per file under `files`. A listed score may rise, and a listed percent may fall, by no more than 0.01. A file the ledger does not list is held to the full floor. `hard`, and an instance that omits `enforce`, do not read the ledger.
+
+- `cargo tops baseline --init` writes the first ledger from the last gate run. The tests must have passed; a function over the cap or a missed coverage floor does not stop it.
+- `cargo tops baseline` refreshes it after a passing gate. It lowers or removes function entries and raises or removes coverage entries, and refuses new or worse debt.
+- `cargo tops baseline --check` refuses debt that grew without a `regressions` record. In a pull request run `cargo tops baseline --check --base origin/main`.
+
+The rules are [`PROTOCOL.md`](PROTOCOL.md) §2.3, §7.5, §16.1 and §16.2.
 
 `crap-baseline` is deprecated. It still serves instances that omit `enforce`: it copies the last gate run's CRAP report to `gates.crap.baseline` when the instance names one, otherwise `crap-baseline.json` in the Cargo target directory. For those instances, without a baseline every function is judged as new.
 
@@ -197,7 +205,7 @@ Order for a gated change, from [`PROTOCOL.md`](PROTOCOL.md):
 1. `cargo fmt`, Clippy with `-D warnings`, `cargo deny check`.
 2. `cargo nextest` (profile `ci`) and `cargo test --doc`.
 3. `cargo llvm-cov` writing LCOV, then `test -s` on that file.
-4. `cargo crap --lcov` against that LCOV. The drop-in threshold is 6.0. Pass `--lcov` on the CLI. `fail = true` is not a cargo-crap config field. `cargo tops gate` reads the JSON report and fails on a new function over the threshold or, under `ratchet`, a function that got worse than its ledger entry.
+4. `cargo crap --lcov` against that LCOV. The drop-in threshold is 6.0. Pass `--lcov` on the CLI. `fail = true` is not a cargo-crap config field. `cargo tops gate` reads the JSON report and fails on a new function over the threshold or, under `ratchet`, a function that got worse than its ledger entry. Coverage floors ratchet the same way (§7.5).
 5. `cargo mutants --in-diff`. The diff starts at the merge base with `--base`, then `gates.base_ref`, then `origin/HEAD`. A missing base fails under CI and is vacuous otherwise.
 6. Property tests, fuzz, Miri, Kani, and Callgrind when the crate class requires them. `cargo tops gate` has no commands for this step.
 
@@ -230,9 +238,18 @@ The Bend2 pack is 53 laws. [`scripts/bend-gate.sh`](scripts/bend-gate.sh) checks
 
 `cargo tops init --skills` writes a portable skill layout. The canonical copy is `.agents/skills/<name>/`. Codex and omp read that path. Cursor's native directory is `.cursor/skills/<name>/`; its docs also list `.agents/skills/` and `.claude/skills/`. `.claude/skills/<name>/`, `.cursor/skills/<name>/`, and `.grok/skills/<name>/` are ordinary-file copies of the same bytes. The layout uses regular files. `cargo test --workspace` fails if any copy differs or is a symlink. `CLAUDE.md` is one line, `@AGENTS.md`, so Claude Code imports the harness. `AGENTS.md` stays the instruction file. Default `cargo tops init` does not write those files.
 
-The skills are five: `rust-tops-adopt`, `rust-tops-gate`, `rust-tops-review`, `rust-tops-style` and `rust-tops-port`. One rule catalog, `rules.toml`, sits beside `rust-tops-style` and is read by the style, review and port skills. Each rule has an ID and a kind. A `lint` rule is decided by clippy, a `probe` rule by a Nushell check, and a `judgment` rule by the agent. `rust-tops-style check` runs the first two and prints the findings with the catalog's fix text. `rust-tops-review style` gives the same findings limited to the diff, and `rust-tops-review answers` checks that every judgment rule was answered. `rust-tops-port` lists the tests of the code being ported and verifies that each has a passing Rust counterpart. The catalog and the skills distill BeautifulRust v1.5.0, rewritten and credited in [`NOTICE`](NOTICE).
+The skills are five: `rust-tops-adopt`, `rust-tops-gate`, `rust-tops-review`, `rust-tops-style` and `rust-tops-port`. One rule catalog, `rules.toml`, sits beside `rust-tops-style` and is read by the style, review and port skills. Each rule has an ID and a kind. A `lint` rule is decided by clippy, a `probe` rule by a Nushell check, and a `judgment` rule by the agent. `rust-tops-style check` runs the first two and prints the findings with the catalog's fix text. `rust-tops-review style` runs the style check on the changed lines of a review range, and `rust-tops-review answers` checks that every judgment rule was answered. `rust-tops-port` lists the tests of the code being ported and verifies that each has a passing Rust counterpart. The catalog and the skills distill BeautifulRust v1.5.0, rewritten and credited in [`NOTICE`](NOTICE).
 
-Nushell 0.108.0 is a required, deliberate dependency of these skills. Their scripts do the file, JSON, TOML and diff work with Nushell builtins, so the output is the same bytes on every run, and a script refuses to run on another Nushell minor with `nu <lock> required, found <version>`. The version is `[tools] nushell` in `rust-tops.lock`. Install it with `cargo install nu --locked --version 0.108.0`, or download the 0.108.0 archive for your platform from the [Nushell releases](https://github.com/nushell/nushell/releases/tag/0.108.0); this repository's workflow fetches that archive and checks its sha256. `cargo tops init --skills` prints a line naming this requirement. Without `nu` on PATH a skill has no JSON to read.
+`rust-tops-style check` has two modes:
+
+- **Writer mode**, `check --base <ref>`, is for a draft. It compares the working tree with `<ref>`, so staged and unstaged lines and untracked `.rs` files count, and keeps only findings on changed lines. `--committed-only` takes `<ref>...HEAD` instead; it needs a clean tree and refuses when a tracked file has uncommitted changes. Clippy restriction lints run only where the crate turns them on. `PANIC-1` and `PANIC-2` are not reported for `tests/`, `*_test.rs` or `#[cfg(test)]` code. The judgment list holds only the rules the changed non-test lines give a reason to ask.
+- **Audit mode**, no `--base` or `--audit`, checks the whole tree with every catalog lint and every judgment rule.
+
+In both modes the probes skip `vendor/`, as they skip `target/`, `.git/` and `node_modules/`.
+
+`rust-tops-review style` takes a range, by default `origin/main...HEAD` plus the working tree, and `--committed-only` refuses a dirty tracked tree there too. It does not apply the writer profile: it forces the restriction lints, reports `PANIC-1` and `PANIC-2` in test code, and lists every judgment rule.
+
+Nushell 0.108.0 is a required, deliberate dependency of these skills. Their scripts do the file, JSON, TOML and diff work with Nushell builtins, so the output is the same bytes on every run. The version is `[tools] nushell` in `rust-tops.lock`. `rust-tops-style` and `rust-tops-review` accept that version or a newer one of the same major (found >= required), and refuse an older or other-major Nushell. `rust-tops-port` requires the locked minor. A refusal says `nu <lock> required, found <version>`. `rust-tops-adopt` and `rust-tops-gate` do not check the version. Install it with `cargo install nu --locked --version 0.108.0`, or download the 0.108.0 archive for your platform from the [Nushell releases](https://github.com/nushell/nushell/releases/tag/0.108.0); this repository's workflow fetches that archive and checks its sha256. `cargo tops init --skills` prints a line naming this requirement. Without `nu` on PATH a skill has no JSON to read.
 
 Current limits:
 
