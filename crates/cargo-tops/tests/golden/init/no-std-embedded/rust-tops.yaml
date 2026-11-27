@@ -29,6 +29,7 @@ density:
     - "no trait or builder with a single impl"
     - "unwrap only for programmer-invariant bugs"
     - "tests may be table-driven; production may not be copy-pasted"
+enforce: "ratchet"
 exemptions: []
 gates:
   coverage:
@@ -242,4 +243,4 @@ protocol:
   adopted: "2026-09-24"
   id: "rust-tops"
   spec_uri: "./PROTOCOL.md"
-  version: "1.4.0"
+  version: "1.5.0"

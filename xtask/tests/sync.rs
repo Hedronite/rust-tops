@@ -483,7 +483,7 @@ fn a_list_that_writes_a_source_or_a_non_copy_is_refused() {
         (
             pair("config/drop-in/clippy.toml", "clippy.toml"),
             "clippy.toml",
-            "a source is under crates/cargo-tops/templates/, is schema/rust-tops.schema.json, or is LICENSES/BeautifulRust-MIT.txt",
+            "a source is under crates/cargo-tops/templates/, is schema/rust-tops.schema.json, is schema/baseline.schema.json, or is LICENSES/BeautifulRust-MIT.txt",
         ),
         (
             pair(&format!("{TEMPLATES}/AGENTS.md"), "../AGENTS.md"),
@@ -678,6 +678,10 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         &format!("{TEMPLATES}/rust-tops.schema.json")
     ));
     assert!(has(
+        "schema/baseline.schema.json",
+        &format!("{TEMPLATES}/baseline.schema.json")
+    ));
+    assert!(has(
         &format!("{TEMPLATES}/lints/tops-strict.toml"),
         "config/lints/tops-strict.toml"
     ));
@@ -698,7 +702,7 @@ fn the_list_names_the_hand_copies_and_nothing_else() {
         assert_ne!(dest, "deny.toml");
         assert_ne!(dest, "rust-toolchain.toml");
     }
-    assert_eq!(pairs.len(), 77);
+    assert_eq!(pairs.len(), 78);
 }
 
 /// A link at `config` that comes and goes while sync writes

@@ -109,6 +109,9 @@ pub(crate) fn judge(
     let measured = floors::judge(dir, cfg, &done.runs, &plan.report);
     failed.extend(measured.problems.iter().cloned());
     add_expired(cfg, &mut failed);
+    if let Some(problem) = cfg.expired_advisory(&exemptions::today()) {
+        failed.push(problem);
+    }
     let laws = judge_laws(&inputs, prepared, total, &mut failed)?;
     Ok(finish(&inputs, failed, measured, laws, total, survivors))
 }
@@ -194,6 +197,9 @@ fn dry_judgement(
     let mut failed = done.not_run.clone();
     failed.push(count.clone());
     add_expired(cfg, &mut failed);
+    if let Some(problem) = cfg.expired_advisory(&exemptions::today()) {
+        failed.push(problem);
+    }
     Judgement {
         failed,
         evaluated: format!("laws evaluated: 0/{total} (dry run: bend did not run)"),
@@ -309,6 +315,11 @@ pub(crate) fn laws_verdict(judged: Option<&Judgement>) -> &'static str {
     }
 }
 
+enum Floor {
+    Met,
+    Missed,
+}
+
 /// The row verdict of layer `id`: `not-run` when nothing ran for it,
 /// otherwise its worst run. A run that passed still fails the row when its
 /// floors, or its survivors, did not.
@@ -318,12 +329,23 @@ pub(crate) fn layer_verdict(
     id: &str,
 ) -> &'static str {
     let runs: Vec<&Run> = done.runs.iter().filter(|run| run.layer == id).collect();
+    let floor = if judged.is_some_and(|judged| judged.missed(id)) {
+        Floor::Missed
+    } else {
+        Floor::Met
+    };
+    row_verdict(&runs, floor)
+}
+
+/// The row verdict of one layer's runs, given whether its floors or
+/// survivors were missed.
+fn row_verdict(runs: &[&Run], floor: Floor) -> &'static str {
     if runs.is_empty() {
         return "not-run";
     }
-    match runs_verdict(&runs) {
-        "pass" if judged.is_some_and(|judged| judged.missed(id)) => "fail",
-        verdict => verdict,
+    match (runs_verdict(runs), floor) {
+        ("pass", Floor::Missed) => "fail",
+        (verdict, _) => verdict,
     }
 }
 
@@ -588,5 +610,116 @@ mod tests {
             ..quiet()
         };
         assert_eq!(laws_verdict(Some(&failed)), "fail");
+    }
+
+    #[derive(serde::Deserialize)]
+    struct JudgeCorpus {
+        cases: Vec<JudgeCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct JudgeCase {
+        #[serde(rename = "fn")]
+        func: String,
+        input: JudgeInput,
+        expect: serde_json::Value,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct JudgeInput {
+        #[serde(default)]
+        runs: Vec<String>,
+        #[serde(default)]
+        missed: bool,
+    }
+
+    fn parse_outcome(name: &str) -> super::Outcome {
+        match name {
+            "Passed" => super::Outcome::Passed,
+            "Failed" => super::Outcome::Failed,
+            "ToolMissing" => super::Outcome::ToolMissing,
+            "ToolMismatch" => super::Outcome::ToolMismatch,
+            "Vacuous" => super::Outcome::Vacuous,
+            other => {
+                assert_eq!(other, "", "unknown outcome in corpus: {other}");
+                super::Outcome::Passed
+            }
+        }
+    }
+
+    fn make_runs(names: &[String]) -> Vec<super::Run> {
+        names
+            .iter()
+            .map(|name| super::Run {
+                layer: "unit".to_string(),
+                cmd: String::new(),
+                step: String::new(),
+                outcome: parse_outcome(name),
+                note: None,
+            })
+            .collect()
+    }
+
+    fn check_judge_case(case: &JudgeCase) -> (usize, usize, usize) {
+        let owned = make_runs(&case.input.runs);
+        let refs: Vec<&super::Run> = owned.iter().collect();
+        match case.func.as_str() {
+            "runs_verdict" => {
+                let expect = case.expect.as_str().expect("runs_verdict expect str");
+                assert_eq!(
+                    super::runs_verdict(&refs),
+                    expect,
+                    "runs_verdict {:?}",
+                    case.input.runs
+                );
+                (1, 0, 0)
+            }
+            "layer_verdict" => {
+                let expect = case.expect.as_str().expect("layer_verdict expect str");
+                let floor = if case.input.missed {
+                    super::Floor::Missed
+                } else {
+                    super::Floor::Met
+                };
+                assert_eq!(
+                    super::row_verdict(&refs, floor),
+                    expect,
+                    "layer_verdict {:?} missed={}",
+                    case.input.runs,
+                    case.input.missed
+                );
+                (0, 1, 0)
+            }
+            "live" => (0, 0, 1),
+            other => {
+                assert_eq!(other, "", "unexpected fn in corpus: {other}");
+                (0, 0, 0)
+            }
+        }
+    }
+
+    #[test]
+    fn corpus_matches_runs_verdict_and_layer_verdict() {
+        let raw = include_str!("../../../../conformance/tops_core.json");
+        let corpus: JudgeCorpus = serde_json::from_str(raw).expect("parse tops_core.json");
+        assert_eq!(
+            corpus.cases.len(),
+            3_335,
+            "expected 3,335 total corpus cases"
+        );
+        let (mut runs_count, mut layer_count, mut live_count) = (0usize, 0usize, 0usize);
+        for case in &corpus.cases {
+            let (r, l, v) = check_judge_case(case);
+            runs_count += r;
+            layer_count += l;
+            live_count += v;
+        }
+        assert_eq!(runs_count, 781, "expected 781 runs_verdict cases");
+        assert_eq!(layer_count, 1_562, "expected 1,562 layer_verdict cases");
+        assert_eq!(
+            runs_count + layer_count + live_count,
+            3_335,
+            "unaccounted corpus cases"
+        );
     }
 }

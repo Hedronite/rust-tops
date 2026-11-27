@@ -1,12 +1,15 @@
-# Rust-TOPS 1.4.0 instance for this repository (cargo-tops, binary-cli).
+# Rust-TOPS 1.5.0 instance for this repository (cargo-tops, binary-cli).
 # Adopters start from `cargo tops init`, not from this file.
 # Validate against schema/rust-tops.schema.json
 
 protocol:
   id: rust-tops
-  version: "1.4.0"
+  version: "1.5.0"
   spec_uri: "./PROTOCOL.md"
   adopted: "2026-09-25"
+
+enforce: ratchet
+baseline: rust-tops-baseline.json
 
 crate:
   name: cargo-tops
@@ -84,8 +87,6 @@ gates:
     classic_crappy: 30
     fail_on: any-over-threshold
     scar_guard: true
-    # Tracked, so CI ratchets against it. `cargo tops crap-baseline` rewrites it.
-    baseline: crap-baseline.json
   mutation:
     tool: cargo-mutants
     scope: diff

@@ -10,6 +10,9 @@
 //! cargo-tops install pin.
 //! Re-recorded for protocol 1.4.0 / package 0.5.0: `RUST-TOPS.md` spec tag
 //! and `cargo-tops` install pin updated to `v0.5.0` / `0.5.0`.
+//! Re-recorded for protocol 1.5.0 (G3): `rust-tops.yaml` sets `enforce: ratchet`
+//! and `protocol.version: "1.5.0"`, `rust-tops.lock` `notes.schema = "1.5.0"`,
+//! and `AGENTS.md` documents `enforce` and `cargo tops baseline`.
 //!
 //! Re-recorded for P0 G2: `init` reads the crate it runs in (name, edition,
 //! `rust-version`, the lint table), writes `rust-tops.lock`, writes no Bend

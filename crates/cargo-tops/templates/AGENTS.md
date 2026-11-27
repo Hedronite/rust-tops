@@ -1,10 +1,10 @@
-# Agent standing orders (Rust-TOPS 1.4.0)
+# Agent standing orders (Rust-TOPS 1.5.0)
 
 Goal: correct, dense, fast Rust.
 Production: fewest necessary lines that preserve named invariants and measured performance.
 Tests: as many as the contract needs. Never write tests by reading the implementation.
 
-Protocol 1.4.0. The text is [`PROTOCOL.md`](PROTOCOL.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
+Protocol 1.5.0. The text is [`PROTOCOL.md`](PROTOCOL.md). This file is the harness. [`RUST-TOPS.md`](RUST-TOPS.md) records what this repo adopted.
 The `laws` layer is optional. A 1.0.0 instance with no `laws` layer still validates, and `gate` does not call Bend.
 
 ## Do this
@@ -36,7 +36,7 @@ cargo crap --lcov target/rust-tops/lcov.info --format json --output target/rust-
 cargo mutants --in-diff <diff>
 ```
 
-After those commands the gate judges the reports itself. It fails when this crate's line or region coverage, or any of its production files, is under a floor in `rust-tops.yaml`. It fails when a new production function's CRAP is over `threshold_agent`, or when a function in the CRAP baseline gets worse (PROTOCOL.md §2.1, §16). `cargo tops crap-baseline` records that baseline from the last gate run.
+After those commands the gate judges the reports itself. It fails when this crate's line or region coverage, or any of its production files, is under a floor in `rust-tops.yaml`. It enforces `enforce` (`hard` | `ratchet` | `advisory`; §2.3) against the Baseline v2 ledger (`rust-tops-baseline.json`, §16.1): unlisted functions are held to `threshold_agent` and listed ones may not rise. `cargo tops baseline --init` creates it, `cargo tops baseline` refreshes it after a pass, and `cargo tops baseline --check` refuses unrecorded rises.
 
 Do not set `RUSTFLAGS=-D warnings`. Do not pass `--fail-under-lines` unless the instance class floor says so and the LCOV is already nonempty. `cargo tops gate` does not pass it.
 

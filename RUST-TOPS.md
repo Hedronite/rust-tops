@@ -6,9 +6,10 @@ and it adopts the protocol for its own code
 
 | Item | Value |
 | --- | --- |
-| Protocol version | `1.4.0` |
+| Protocol version | `1.5.0` |
 | Spec | [`PROTOCOL.md`](PROTOCOL.md) in this tree |
 | cargo-tops | built from this checkout (`cargo install --path crates/cargo-tops --locked`), package 0.5.0 |
+| Enforcement | `enforce: ratchet` (PROTOCOL.md §2.3) |
 
 ## Crates and thresholds
 
@@ -28,19 +29,25 @@ two `examples/` fixtures are outside that crate.
 cargo install --path crates/cargo-tops --locked
 cargo tops check
 cargo tops gate --max-tier 1
+cargo tops baseline --check --base origin/main
 ```
 
 CI runs the same gate in the `tops-gate` job.
 
 ## CRAP baseline
 
-Baseline: [`crap-baseline.json`](crap-baseline.json) (`gates.crap.baseline`),
-tracked. It started as the CRAP report of `main` at the 0.3.0 release merge.
+Debt ledger: [`rust-tops-baseline.json`](rust-tops-baseline.json), Baseline v2
+(PROTOCOL.md §16.1), tracked. It lists only the functions of `cargo-tops` that
+are over the cap. Under `ratchet` each may only move down, every other function
+is held to the cap, and a missing ledger fails the gate.
 
-To refresh it, run the gate, then `cargo tops crap-baseline`, and commit the
-result with the change that moved the scores. Refresh it to record code that
-got better or new code at or under the threshold. Never refresh it to let a
-score rise.
+After a passing gate, run `cargo tops baseline` and commit the result with the
+change that moved the scores. It only lowers or removes entries.
+
+In a pull request, run `cargo tops baseline --check --base origin/main` on a
+branch that is up to date with `main`. No CI job runs this check yet. Debt that
+has to grow is written by hand, with a `regressions` record (PROTOCOL.md §16.2),
+and reviewed like any other change to the gate.
 
 ## Exemptions in force
 

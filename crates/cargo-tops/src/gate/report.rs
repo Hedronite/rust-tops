@@ -13,7 +13,8 @@ use super::execute::Executed;
 use super::judge::{self, Judgement};
 use super::plan::{GatePlan, What};
 use super::{Fault, Mode, Options};
-use crate::config::TopsConfig;
+use crate::config::{Enforce, TopsConfig};
+use crate::exemptions;
 use crate::floors::{CoverageNumbers, CrapNumbers};
 use crate::steps::{self, Base};
 use crate::{laws, PROTOCOL_VERSION};
@@ -70,6 +71,34 @@ pub(crate) fn announce_skipped(plan: &GatePlan<'_>) {
     }
 }
 
+fn outcome_kind(judged: &Judgement) -> Kind {
+    if judged.failed.is_empty() {
+        Kind::Pass
+    } else if judged.environment {
+        Kind::Env
+    } else {
+        Kind::Failed
+    }
+}
+
+fn mask_advisory(cfg: &TopsConfig, opts: Options, kind: Kind) -> bool {
+    kind != Kind::Env && opts.mode == Mode::Run && cfg.live_advisory(&exemptions::today())
+}
+
+fn advisory_banner(
+    cfg: &TopsConfig,
+    opts: Options,
+    kind: Kind,
+    unwritten: Option<&Path>,
+) -> Option<String> {
+    if unwritten.is_some() || !mask_advisory(cfg, opts, kind) {
+        return None;
+    }
+    cfg.advisory
+        .as_ref()
+        .map(|adv| format!("NOT ENFORCED (advisory, expires {})", adv.expires))
+}
+
 /// Print the summary, write the report and return the exit code.
 pub(crate) fn finish(
     dir: &Path,
@@ -79,13 +108,8 @@ pub(crate) fn finish(
     done: &Executed<'_>,
     judged: &Judgement,
 ) -> ExitCode {
-    let kind = if judged.failed.is_empty() {
-        Kind::Pass
-    } else if judged.environment {
-        Kind::Env
-    } else {
-        Kind::Failed
-    };
+    let kind = outcome_kind(judged);
+    let masked = mask_advisory(cfg, opts, kind);
     // The report is written before the summary, so the summary's last line
     // is true: a report that could not be written ends it with `fail:`.
     let (code, unwritten) = write_report(&Parts {
@@ -93,6 +117,7 @@ pub(crate) fn finish(
         cfg: Some(cfg),
         opts,
         kind,
+        enforced: !masked,
         error: None,
         plan: Some(plan),
         done: Some(done),
@@ -100,6 +125,9 @@ pub(crate) fn finish(
         report_dir: plan.report.clone(),
     });
     print_summary(opts, done, judged, unwritten.as_deref());
+    if let Some(line) = advisory_banner(cfg, opts, kind, unwritten.as_deref()) {
+        println!("{line}");
+    }
     code
 }
 
@@ -189,6 +217,7 @@ pub(crate) fn fault(
         } else {
             Kind::Env
         },
+        enforced: true,
         error: Some(format!("{:#}", fault.error)),
         plan,
         done: None,
@@ -208,6 +237,7 @@ pub(crate) fn config_invalid(dir: &Path, error: &anyhow::Error, opts: Options) -
         cfg: None,
         opts,
         kind: Kind::Config,
+        enforced: true,
         error: Some(format!("{error:#}")),
         plan: None,
         done: None,
@@ -229,6 +259,7 @@ struct Parts<'a> {
     cfg: Option<&'a TopsConfig>,
     opts: Options,
     kind: Kind,
+    enforced: bool,
     error: Option<String>,
     plan: Option<&'a GatePlan<'a>>,
     done: Option<&'a Executed<'a>>,
@@ -246,21 +277,24 @@ fn emit(parts: &Parts<'_>) -> ExitCode {
 /// returned so the summary can say so.
 fn write_report(parts: &Parts<'_>) -> (ExitCode, Option<PathBuf>) {
     let mut kind = parts.kind;
+    let exit_code = if parts.enforced { kind.code() } else { 0 };
     let path = parts.report_dir.join(REPORT);
     let wrote = fs::create_dir_all(&parts.report_dir).and_then(|()| {
-        let text =
-            serde_json::to_string_pretty(&document(parts, kind)).map_err(std::io::Error::other)?;
+        let text = serde_json::to_string_pretty(&document(parts, kind, exit_code))
+            .map_err(std::io::Error::other)?;
         fs::write(&path, format!("{text}\n"))
     });
     let mut unwritten = None;
+    let mut final_code = exit_code;
     if let Err(err) = wrote {
         eprintln!("error: write {}: {err}", path.display());
         if matches!(kind, Kind::Pass | Kind::Failed) {
             kind = Kind::Env;
+            final_code = kind.code();
         }
         unwritten = Some(path);
     }
-    (ExitCode::from(kind.code()), unwritten)
+    (ExitCode::from(final_code), unwritten)
 }
 
 fn git_sha(dir: &Path) -> Option<String> {
@@ -287,7 +321,7 @@ fn crate_name(parts: &Parts<'_>) -> String {
     )
 }
 
-fn document(parts: &Parts<'_>, kind: Kind) -> Value {
+fn document(parts: &Parts<'_>, kind: Kind, exit_code: u8) -> Value {
     let (layers, disabled) = layer_rows(parts);
     let (laws, checked, total) = law_rows(parts);
     let problems: Vec<String> = parts.judged.map_or_else(
@@ -306,8 +340,9 @@ fn document(parts: &Parts<'_>, kind: Kind) -> Value {
     doc.insert("max_tier".into(), json!(parts.opts.max_tier));
     doc.insert("dry_run".into(), json!(parts.opts.mode == Mode::DryRun));
     doc.insert("kind".into(), json!(kind.name()));
-    doc.insert("exit_code".into(), json!(kind.code()));
+    doc.insert("exit_code".into(), json!(exit_code));
     doc.insert("ok".into(), json!(kind == Kind::Pass));
+    insert_mode_and_warnings(&mut doc, parts);
     if let Some(error) = &parts.error {
         doc.insert("error".into(), json!(error));
     }
@@ -324,6 +359,25 @@ fn document(parts: &Parts<'_>, kind: Kind) -> Value {
     }
     doc.insert("laws".into(), json!(laws));
     Value::Object(doc)
+}
+
+fn insert_mode_and_warnings(doc: &mut Map<String, Value>, parts: &Parts<'_>) {
+    if let Some(enforce) = parts.cfg.and_then(|cfg| cfg.enforce) {
+        doc.insert("enforce".into(), json!(enforce.as_str()));
+        doc.insert("enforced".into(), json!(parts.enforced));
+        if enforce == Enforce::Advisory {
+            if let Some(adv) = parts.cfg.and_then(|cfg| cfg.advisory.as_ref()) {
+                doc.insert("advisory_expires".into(), json!(adv.expires));
+            }
+        }
+    }
+    if let Some(warnings) = parts
+        .plan
+        .map(|p| &p.pin_warnings)
+        .filter(|w| !w.is_empty())
+    {
+        doc.insert("warnings".into(), json!(warnings));
+    }
 }
 
 fn row(
@@ -598,5 +652,66 @@ mod tests {
             row.get("judged"),
             Some(&json!({ "base": { "ref": "x" }, "caught": 3 }))
         );
+    }
+
+    #[test]
+    fn unwritable_report_exits_three_even_when_unenforced() {
+        let scratch = Scratch::new("unwritable-adv");
+        let blocker = scratch.0.join("not-a-dir");
+        fs::write(&blocker, "x").expect("write blocker");
+        let opts = super::super::Options {
+            max_tier: 1,
+            mode: super::super::Mode::Run,
+        };
+        let parts = super::Parts {
+            dir: &scratch.0,
+            cfg: None,
+            opts,
+            kind: super::Kind::Failed,
+            enforced: false,
+            error: None,
+            plan: None,
+            done: None,
+            judged: None,
+            report_dir: blocker,
+        };
+        let (code, unwritten) = super::write_report(&parts);
+        assert!(unwritten.is_some());
+        assert_eq!(code, std::process::ExitCode::from(3));
+    }
+
+    #[test]
+    fn advisory_mask_and_banner_only_trigger_on_written_run_findings() {
+        let yaml = r#"protocol: { id: rust-tops, version: "1.5.0" }
+enforce: advisory
+advisory: { expires: "2999-01-01", reason: "adopting on legacy crate" }
+crate: { name: demo, class: library-core }
+goals: { tests: "x", errors: "x", invariants: "x", performance: "x" }
+layers: []
+gates: { coverage: {}, crap: {}, mutation: { unexplained_survivors_max: 0 } }
+density: {}"#;
+        let mut cfg: crate::config::TopsConfig = serde_saphyr::from_str(yaml).expect("cfg");
+        let run = super::super::Options {
+            max_tier: 1,
+            mode: super::super::Mode::Run,
+        };
+        let dry = super::super::Options {
+            max_tier: 1,
+            mode: super::super::Mode::DryRun,
+        };
+        for kind in [super::Kind::Failed, super::Kind::Pass] {
+            assert!(super::mask_advisory(&cfg, run, kind));
+            assert_eq!(
+                super::advisory_banner(&cfg, run, kind, None).as_deref(),
+                Some("NOT ENFORCED (advisory, expires 2999-01-01)")
+            );
+        }
+        assert!(!super::mask_advisory(&cfg, run, super::Kind::Env));
+        assert!(!super::mask_advisory(&cfg, dry, super::Kind::Failed));
+        assert!(super::advisory_banner(&cfg, run, super::Kind::Env, None).is_none());
+        let unwritten = Some(std::path::Path::new("r"));
+        assert!(super::advisory_banner(&cfg, run, super::Kind::Failed, unwritten).is_none());
+        cfg.advisory = None;
+        assert!(!super::mask_advisory(&cfg, run, super::Kind::Failed));
     }
 }

@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "crate": "cargo-tops",
+  "functions": {
+    "src/facts.rs::baseline_green": 7.105266691282602,
+    "src/facts.rs::class_keywords": 8.0,
+    "src/facts.rs::clippy_toolchain_pinned": 7.019915663262714,
+    "src/facts.rs::lock_honesty": 8.043964990840626,
+    "src/facts.rs::not_evaluated": 10.0,
+    "src/facts.rs::segments": 7.0010502400548695,
+    "src/facts.rs::single_deny_site": 6.216378662659654,
+    "src/gate/execute.rs::run_step": 8.0,
+    "src/gate/mod.rs::run": 9.053258814826991,
+    "src/laws.rs::run": 14.01417824074074,
+    "src/main.rs::Parent::open": 7.057151188219857,
+    "src/main.rs::with_init_exemptions": 13.187707665297948,
+    "src/profile_data.rs::emit_number": 7.116148148148148,
+    "src/profile_data.rs::write_scalar": 7.06721536351166,
+    "src/profile_data.rs::write_string": 7.0,
+    "src/schema.rs::check": 27.017002915451897,
+    "src/schema.rs::has_type": 9.060856498873028,
+    "src/schema.rs::object": 11.0,
+    "src/steps.rs::Step::artifact_path": 6.972,
+    "src/steps.rs::cargo_binary": 9.0,
+    "src/steps.rs::cargo_subcommand": 9.374999999999998,
+    "src/steps.rs::tokenize": 10.14927113702624,
+    "src/steps.rs::tokens_from_argv": 6.288,
+    "src/steps.rs::valid_expiry": 9.318851144481703,
+    "src/strict_lints.rs::enabled_clippy_lints": 12.0,
+    "src/strict_lints.rs::key_lint_name": 11.0,
+    "src/strict_lints.rs::prove_markers": 9.0
+  }
+}

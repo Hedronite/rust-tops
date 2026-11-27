@@ -972,3 +972,27 @@ fn ok_count_matches_ran_commands_when_laws_and_vacuous_mutation_run() {
     enable(&fixture, &["mutation"]);
     assert_ok_matches_count(&fixture, &home, 1);
 }
+
+#[test]
+fn report_carries_enforce_and_unknown_lock_warnings() {
+    let fixture = fixture("n13-warn");
+    fs::write(
+        fixture.repo.join("rust-tops.lock"),
+        "[tools]\nrustc = \"1.99.1\"\ncargo-nexttest = \"0.9.145\"\n",
+    )
+    .expect("write lock");
+    let (out, text) = gate(&fixture, &[], None);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let doc = report(&fixture);
+    assert_eq!(at(&doc, "/enforce"), &json!("ratchet"));
+    assert_eq!(at(&doc, "/enforced"), &json!(true));
+    let warnings = at(&doc, "/warnings").as_array().expect("warnings array");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings
+            .first()
+            .and_then(Value::as_str)
+            .is_some_and(|w| w.contains("cargo-nexttest")),
+        "{warnings:?}"
+    );
+}
