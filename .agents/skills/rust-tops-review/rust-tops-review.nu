@@ -129,8 +129,21 @@ def fail [command: string, error: string] {
   {ok: false, command: $command, error: ($error | str trim | str substring 0..<400)} | to json
 }
 
-def minor [v: string] {
-  $v | split row "." | first 2 | str join "."
+# [major minor patch] of a version string, or null.
+def semver [v: string] {
+  let m = ($v | parse --regex '^(?<a>\d+)\.(?<b>\d+)(?:\.(?<c>\d+))?')
+  if ($m | is-empty) { return null }
+  let p = ($m | first)
+  [($p.a | into int) ($p.b | into int) (if ($p.c | is-empty) { 0 } else { $p.c | into int })]
+}
+
+# The same major, and not older than the lock asks.
+def nu-ok [required: string, found: string] {
+  let r = (semver $required)
+  let f = (semver $found)
+  if $r == null or $f == null { return false }
+  if $f.0 != $r.0 { return false }
+  $f.1 > $r.1 or ($f.1 == $r.1 and $f.2 >= $r.2)
 }
 
 def find-lock [start: string] {
@@ -144,13 +157,13 @@ def find-lock [start: string] {
   }
 }
 
-# The error text when this nu is not the pinned minor, else null.
+# The error text when this nu cannot stand in for the pinned one, else null.
 def nu-mismatch [start: string] {
   let lock = (find-lock $start)
   let doc = if $lock == null { {} } else { try { open --raw $lock | from toml } catch { {} } }
   let required = ($doc | get -o tools.nushell | default $DEFAULT_NU)
   let found = (version | get version)
-  if (minor $required) != (minor $found) { $"nu ($required) required, found ($found)" } else { null }
+  if (nu-ok $required $found) { null } else { $"nu ($required) required, found ($found)" }
 }
 
 def style-dir [] {
@@ -167,14 +180,14 @@ def changed-ranges [diff: string] {
   mut rows = []
   for l in ($diff | lines) {
     if ($l | str starts-with "+++ ") {
-      let p = ($l | str substring 4..)
+      let p = ($l | str substring 4.. | str trim --right --char "\t")
       $cur = if $p == "/dev/null" { "" } else if ($p | str starts-with "b/") { $p | str substring 2.. } else { $p }
     } else if $cur != "" and ($l | str starts-with "@@ ") {
       let m = ($l | parse --regex '^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,(?<count>\d+))? @@')
       if not ($m | is-empty) {
         let h = ($m | first)
         let start = ($h.start | into int)
-        let count = if $h.count == "" { 1 } else { $h.count | into int }
+        let count = if ($h.count | is-empty) { 1 } else { $h.count | into int }
         if $count > 0 {
           $rows = ($rows | append {file: $cur, start: $start, end: ($start + $count - 1)})
         }
@@ -188,6 +201,21 @@ def in-ranges [f: record, ranges: list] {
   $ranges | any {|r| $r.file == $f.file and $f.line >= $r.start and $f.line <= $r.end }
 }
 
+# `--committed-only` takes line numbers from HEAD, but clippy and the probes read
+# the working tree, so tracked edits would move hits off their lines. Untracked
+# files cannot. {command, error}: `error` is null for a clean tree.
+const CLEAN_ARGS = ["status" "--porcelain" "--untracked-files=no"]
+const DIRTY = "--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"
+
+def clean-tree [root: string] {
+  let command = (["git" "-C" "."] ++ $CLEAN_ARGS | str join " ")
+  let r = (^git -C $root ...$CLEAN_ARGS | complete)
+  let error = if $r.exit_code != 0 {
+    $r.stderr | str replace --all ($root | path expand) "."
+  } else if not ($r.stdout | str trim | is-empty) { $DIRTY } else { null }
+  {command: $command, error: $error}
+}
+
 def "main style" [--base: string = "origin/main", --path: string = ".", --committed-only] {
   let own = "nu rust-tops-review.nu style"
   let wrong = (nu-mismatch $path)
@@ -197,6 +225,13 @@ def "main style" [--base: string = "origin/main", --path: string = ".", --commit
   let script = (style-dir | path join "rust-tops-style.nu")
   if not ($script | path exists) { return (fail $own "rust-tops-style.nu is missing beside this skill") }
 
+  mut checked = ""
+  if $committed_only {
+    let tree = (clean-tree $path)
+    if $tree.error != null { return (fail $tree.command $tree.error) }
+    $checked = $"($tree.command) && "
+  }
+
   let child = (^$nu.current-exe $script check --path $path | complete)
   let doc = (try { $child.stdout | from json } catch { null })
   if $doc == null { return (fail $"nu rust-tops-style.nu check" $"the style check printed no JSON: ($child.stderr)") }
@@ -204,7 +239,7 @@ def "main style" [--base: string = "origin/main", --path: string = ".", --commit
 
   let committed = (git-run ["-C" $path "-c" "core.quotePath=false" "diff" "-U0" "--no-renames" "--no-color" "--relative" $"($base)...HEAD"])
   if not $committed.ok { return (fail $"git -C . diff -U0 ($base)...HEAD" $committed.error) }
-  mut command = $"($doc.command) && git -C . diff -U0 ($base)...HEAD"
+  mut command = $"($checked)($doc.command) && git -C . diff -U0 ($base)...HEAD"
   mut ranges = (changed-ranges $committed.stdout)
   if not $committed_only {
     let work = (git-run ["-C" $path "-c" "core.quotePath=false" "diff" "-U0" "--no-renames" "--no-color" "--relative" "HEAD"])
@@ -275,5 +310,5 @@ def "main answers" [file: string] {
 }
 
 def main [] {
-  {ok: false, command: "git diff", error: "pass files or diff", exit: 2} | to json
+  {ok: false, command: "nu rust-tops-review.nu", error: "pass files, diff, style or answers", exit: 2} | to json
 }
