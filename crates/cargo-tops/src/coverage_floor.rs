@@ -280,18 +280,23 @@ enum Miss {
 
 fn miss_kind(pct: f64, floor: f64, bind: Bind) -> Miss {
     if pct >= floor {
-        return Miss::Ok;
+        Miss::Ok
+    } else {
+        ratchet_miss(pct, bind)
     }
+}
+
+fn ratchet_miss(pct: f64, bind: Bind) -> Miss {
     match bind {
-        Bind::Floor => Miss::Floor,
-        Bind::Ratchet {
-            was: Some(baseline),
-        } if pct >= baseline - EPSILON => Miss::Ok,
-        Bind::Ratchet {
-            was: Some(baseline),
-        } => Miss::Drop(baseline),
-        Bind::Ratchet { was: None } => Miss::Floor,
+        Bind::Floor | Bind::Ratchet { was: None } => Miss::Floor,
+        Bind::Ratchet { was: Some(was) } if !dropped(pct, was) => Miss::Ok,
+        Bind::Ratchet { was: Some(was) } => Miss::Drop(was),
     }
+}
+
+/// True when `cur` is more than [`EPSILON`] below `was`.
+fn dropped(cur: f64, was: f64) -> bool {
+    cur < was - EPSILON
 }
 
 /// The percent when `count` is below `floor`. No floor, or nothing to
@@ -370,7 +375,7 @@ fn metric_refresh_problems(
     let floor = floor?;
     let cur = cur?;
     match was {
-        Some(was) if cur < was - EPSILON => {
+        Some(was) if dropped(cur, was) => {
             Some(format!("coverage.{key} dropped from {was:.2} to {cur:.2}"))
         }
         None if cur < floor => Some(format!(
@@ -395,7 +400,7 @@ fn file_refresh_problems(
         .filter_map(|file| {
             let pct = below_pct(file.lines, floor)?;
             match old.and_then(|o| o.file(&file.rel)) {
-                Some(was) if pct < was - EPSILON => Some(format!(
+                Some(was) if dropped(pct, was) => Some(format!(
                     "coverage.files {} dropped from {was:.2} to {pct:.2}",
                     file.rel
                 )),
@@ -830,6 +835,51 @@ mod tests {
         )
         .iter()
         .any(|p| p.contains("src/new.rs")));
+    }
+
+    #[test]
+    fn dropped_is_strictly_more_than_epsilon_below_baseline() {
+        assert!(super::dropped(69.0, 70.0));
+        assert!(!super::dropped(70.0, 70.0));
+        assert!(!super::dropped(69.99, 70.0));
+        assert!(super::dropped(69.98, 70.0));
+        assert!(!super::dropped(80.0, 70.0));
+    }
+
+    #[test]
+    fn crate_line_refresh_drop_is_independent_of_files() {
+        use super::{metric_refresh_problems, refresh_problems};
+        let g = gate(Some(95.0), None, None);
+        let old = ledger(Some(80.0), None, &[]);
+        assert!(
+            metric_refresh_problems("crate_line", Some(70.0), Some(80.0), Some(95.0)).is_some()
+        );
+        assert!(
+            metric_refresh_problems("crate_line", Some(80.0), Some(80.0), Some(95.0)).is_none()
+        );
+        assert!(metric_refresh_problems("crate_line", Some(80.0), None, Some(95.0)).is_some());
+        assert!(metric_refresh_problems("crate_line", Some(95.0), None, Some(95.0)).is_none());
+        let files = [file("src/a.rs", (70, 100), (100, 100))];
+        assert!(refresh_problems(Some(&old), &files, &g, &[])
+            .iter()
+            .any(|p| p.contains("crate_line")));
+    }
+
+    #[test]
+    fn file_refresh_drop_is_independent_of_crate_totals() {
+        use super::refresh_problems;
+        let g = gate(None, None, Some(90.0));
+        let old = ledger(None, None, &[("src/a.rs", 80.0)]);
+        let drop = [file("src/a.rs", (70, 100), (100, 100))];
+        assert!(refresh_problems(Some(&old), &drop, &g, &[])
+            .iter()
+            .any(|p| p.contains("src/a.rs") && p.contains("dropped")));
+        let same = [file("src/a.rs", (80, 100), (100, 100))];
+        assert!(refresh_problems(Some(&old), &same, &g, &[]).is_empty());
+        let fresh = [file("src/new.rs", (50, 100), (100, 100))];
+        assert!(refresh_problems(Some(&old), &fresh, &g, &[])
+            .iter()
+            .any(|p| p.contains("src/new.rs")));
     }
 
     #[test]

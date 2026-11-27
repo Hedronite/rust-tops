@@ -191,15 +191,7 @@ fn check_object_layout(
     if !expected.is_empty() && !body.contains('\n') {
         return Err(format!("non-empty {field} must place one entry per line"));
     }
-    let mut seen: Vec<String> = Vec::new();
-    for line in body.lines() {
-        let trimmed = line.trim().trim_end_matches(',').trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let key = parse_named_entry_line(field, trimmed)?;
-        seen.push(key);
-    }
+    let seen = layout_keys(field, body)?;
     let want: Vec<String> = expected.keys().cloned().collect();
     if seen != want {
         return Err(format!(
@@ -207,6 +199,18 @@ fn check_object_layout(
         ));
     }
     Ok(())
+}
+
+fn layout_keys(field: &str, body: &str) -> Result<Vec<String>, String> {
+    let mut seen = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim().trim_end_matches(',').trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        seen.push(parse_named_entry_line(field, trimmed)?);
+    }
+    Ok(seen)
 }
 
 fn object_body<'a>(raw: &'a str, field: &str, under: Option<&str>) -> Option<&'a str> {
@@ -569,34 +573,13 @@ enum RefreshInput {
 }
 
 fn load_refresh_inputs(dir: &Path, cfg: &TopsConfig, out: &Path) -> Result<RefreshInput> {
-    if cfg.enforce == Some(Enforce::Advisory) {
-        eprintln!("error: `cargo tops baseline` is refused under enforce: advisory");
-        return Ok(RefreshInput::Stop(ExitCode::from(1)));
-    }
-    if !out.exists() {
-        eprintln!(
-            "error: missing baseline {}; run `cargo tops baseline --init`",
-            out.display()
-        );
+    if let Some(msg) = refresh_refuse(cfg, out) {
+        eprintln!("error: {msg}");
         return Ok(RefreshInput::Stop(ExitCode::from(1)));
     }
     let (report_dir, report) = artifact_report(dir)?;
-    if !gate_passed(&report) {
-        eprintln!(
-            "error: last gate did not pass; baseline refresh writes only after a passing gate"
-        );
-        return Ok(RefreshInput::Stop(ExitCode::from(1)));
-    }
-    if cfg.gates.crap.cap().is_some() && !layer_passed(&report, "crap") {
-        eprintln!(
-            "error: last gate did not pass the crap layer; baseline refresh writes only after a passing crap layer"
-        );
-        return Ok(RefreshInput::Stop(ExitCode::from(1)));
-    }
-    if coverage_floor::floors_set(&cfg.gates.coverage) && !layer_passed(&report, "coverage") {
-        eprintln!(
-            "error: last gate did not pass the coverage layer; baseline refresh writes only after a passing coverage layer"
-        );
+    if let Some(msg) = refresh_report_refuse(cfg, &report) {
+        eprintln!("error: {msg}");
         return Ok(RefreshInput::Stop(ExitCode::from(1)));
     }
     let raw_old = fs::read_to_string(out).with_context(|| format!("read {}", out.display()))?;
@@ -604,6 +587,36 @@ fn load_refresh_inputs(dir: &Path, cfg: &TopsConfig, out: &Path) -> Result<Refre
         .map_err(|err| anyhow!("baseline {}: {err}", out.display()))?;
     let current = read_last_crap_scores(dir, cfg, &report_dir)?;
     Ok(RefreshInput::Ready(Box::new(existing), current, report_dir))
+}
+
+fn refresh_refuse(cfg: &TopsConfig, out: &Path) -> Option<String> {
+    if cfg.enforce == Some(Enforce::Advisory) {
+        return Some("`cargo tops baseline` is refused under enforce: advisory".into());
+    }
+    (!out.exists()).then(|| {
+        format!(
+            "missing baseline {}; run `cargo tops baseline --init`",
+            out.display()
+        )
+    })
+}
+
+fn refresh_report_refuse(cfg: &TopsConfig, report: &Value) -> Option<String> {
+    if !gate_passed(report) {
+        return Some(
+            "last gate did not pass; baseline refresh writes only after a passing gate".into(),
+        );
+    }
+    if cfg.gates.crap.cap().is_some() && !layer_passed(report, "crap") {
+        return Some(
+            "last gate did not pass the crap layer; baseline refresh writes only after a passing crap layer".into(),
+        );
+    }
+    (coverage_floor::floors_set(&cfg.gates.coverage) && !layer_passed(report, "coverage")).then(
+        || {
+            "last gate did not pass the coverage layer; baseline refresh writes only after a passing coverage layer".into()
+        },
+    )
 }
 
 fn run_refresh(dir: &Path, cfg: &TopsConfig) -> Result<ExitCode> {

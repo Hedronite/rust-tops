@@ -88,19 +88,16 @@ pub(crate) struct Judged {
 /// Every coverage floor and CRAP rule this gate's reports miss. `report`
 /// is the gate's artifact directory.
 pub(crate) fn judge(dir: &Path, cfg: &TopsConfig, runs: &[Run], report: &Path) -> Judged {
-    let passed = |layer: &str| {
-        runs.iter()
-            .any(|run| run.layer == layer && run.outcome == Outcome::Passed)
-    };
-    let (coverage, crap) = (passed("coverage"), passed("crap"));
+    let coverage = layer_passed(runs, "coverage");
+    let crap = layer_passed(runs, "crap");
     if !coverage && !crap {
         return Judged::default();
     }
     let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
     let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
     let today = exemptions::today();
-    let mut judged = Judged::default();
     let ledger = load_v2(dir, cfg);
+    let mut judged = Judged::default();
     if let Some(err) = &ledger.error {
         judged.problems.push(format!("crap: {err}"));
         judged.crap_problems = 1;
@@ -118,6 +115,11 @@ pub(crate) fn judge(dir: &Path, cfg: &TopsConfig, runs: &[Run], report: &Path) -
         judged.crap = numbers;
     }
     judged
+}
+
+fn layer_passed(runs: &[Run], layer: &str) -> bool {
+    runs.iter()
+        .any(|run| run.layer == layer && run.outcome == Outcome::Passed)
 }
 
 fn judge_coverage(
@@ -307,13 +309,11 @@ fn crap_baseline(
         (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(Some(v2))) => {
             Ok(Some(baseline::scores_from(v2.as_ref())))
         }
-        (Some(Enforce::Ratchet), ModeV2::On(None)) if cfg.gates.crap.cap().is_some() => {
-            Err(format!(
-                "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
-                baseline::path(dir, cfg).display()
-            ))
-        }
-        (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(None)) => Ok(None),
+        (Some(Enforce::Ratchet), ModeV2::On(None)) => Err(format!(
+            "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
+            baseline::path(dir, cfg).display()
+        )),
+        (Some(Enforce::Advisory), ModeV2::On(None)) => Ok(None),
     }
 }
 
