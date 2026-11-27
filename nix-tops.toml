@@ -1,0 +1,19 @@
+protocol = "0.2.0"
+facets = ["package-set", "dev-flake"]
+enforce = "ratchet"
+baseline = ".nix-tops/baseline.json"
+nixpkgs_input = "nixpkgs"
+
+[toolchain]
+systems = ["aarch64-darwin", "aarch64-linux", "x86_64-linux"]
+
+[eval]
+all_systems = true
+abort_on_warn = true
+allow_ifd = false
+
+[layers]
+coverage = { enabled = false, reason = "not built in M2" }
+facet-layers = { enabled = false, reason = "not built in M2" }
+laws = { enabled = false, reason = "not built in M2" }
+vm_tests = { enabled = false }

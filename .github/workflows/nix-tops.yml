@@ -1,0 +1,57 @@
+name: nix-tops
+
+# The Nix-TOPS gate (NIX_TOPS.md section 11). One job runs one command; the workflow does not
+# repeat the tools as steps, because steps that bypass nixtops judge nothing.
+# Every nix command passes --no-accept-flake-config, so a flake cannot change the gate's settings.
+# Never use pull_request_target here: this workflow runs code from the PR.
+# The tier 2 jobs of section 11 (build-matrix, nightly) arrive with the layers they run.
+# Both jobs run on x86_64-linux and name it with --system, so only that system's outputs are
+# evaluated and built here until build-matrix covers the others.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate (x86_64-linux, sandbox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            sandbox = true
+            experimental-features = nix-command flakes
+      - name: Gate
+        run: nix run .#nixtops --no-update-lock-file --no-accept-flake-config -- gate --max-tier 1 --system x86_64-linux
+
+  determinate:
+    name: gate (Determinate Nix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The named Determinate leg of section 2: lazy trees and parallel eval off.
+      NIX_CONFIG: |
+        lazy-trees = false
+        eval-cores = 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@16f94ba7aae399b9f9077c254b6719ec6de7e3e3 # v3.24.2
+      - name: Gate
+        run: nix run .#nixtops --no-update-lock-file --no-accept-flake-config -- gate --max-tier 1 --system x86_64-linux --evaluator host
