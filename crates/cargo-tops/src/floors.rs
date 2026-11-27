@@ -132,10 +132,10 @@ fn attach_ledger_faults(
 
 fn record_on_ran_layers(judged: &mut Judged, runs: &[Run], err: &str) {
     if layer_passed(runs, "coverage") {
-        record_layer_fault(judged, "coverage", err);
+        record_coverage_fault(judged, err);
     }
     if layer_passed(runs, "crap") {
-        record_layer_fault(judged, "crap", err);
+        record_crap_fault(judged, err);
     }
 }
 
@@ -145,20 +145,21 @@ fn record_missing(judged: &mut Judged, dir: &Path, cfg: &TopsConfig, runs: &[Run
         baseline::path(dir, cfg).display()
     );
     if layer_passed(runs, "coverage") && coverage_floor::floors_set(&cfg.gates.coverage) {
-        record_layer_fault(judged, "coverage", &msg);
+        record_coverage_fault(judged, &msg);
     }
     if layer_passed(runs, "crap") && cfg.gates.crap.cap().is_some() {
-        record_layer_fault(judged, "crap", &msg);
+        record_crap_fault(judged, &msg);
     }
 }
 
-fn record_layer_fault(judged: &mut Judged, layer: &str, msg: &str) {
-    judged.problems.push(format!("{layer}: {msg}"));
-    match layer {
-        "coverage" => judged.coverage_problems += 1,
-        "crap" => judged.crap_problems += 1,
-        _ => {}
-    }
+fn record_coverage_fault(judged: &mut Judged, msg: &str) {
+    judged.problems.push(format!("coverage: {msg}"));
+    judged.coverage_problems += 1;
+}
+
+fn record_crap_fault(judged: &mut Judged, msg: &str) {
+    judged.problems.push(format!("crap: {msg}"));
+    judged.crap_problems += 1;
 }
 
 fn layer_passed(runs: &[Run], layer: &str) -> bool {
@@ -434,4 +435,109 @@ pub(crate) fn record_baseline(dir: &Path, cfg: &TopsConfig) -> Result<()> {
         source.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{CoverageGate, CrapGate, Gates, MutationGate, Protocol};
+    use crate::facts::{Outcome, Run};
+    use serde_json::json;
+    use std::path::Path;
+
+    fn cfg(line: Option<f64>, cap: Option<f64>) -> TopsConfig {
+        TopsConfig {
+            protocol: Protocol {
+                id: "rust-tops".into(),
+                version: "1.5.0".into(),
+            },
+            enforce: Some(Enforce::Ratchet),
+            advisory: None,
+            baseline: None,
+            crate_: crate::config::Crate {
+                name: "demo".into(),
+                class: "library-core".into(),
+            },
+            goals: json!({}),
+            layers: Vec::new(),
+            gates: Gates {
+                coverage: CoverageGate {
+                    line_min_pct: line,
+                    region_min_pct: None,
+                    per_file_line_min_pct: None,
+                    exclude_globs: None,
+                },
+                crap: CrapGate {
+                    threshold_agent: cap,
+                    threshold_production: None,
+                    fail_on: None,
+                    baseline: None,
+                },
+                mutation: MutationGate {
+                    unexplained_survivors_max: 0,
+                },
+                base_ref: None,
+                property: None,
+                acceptance: None,
+            },
+            density: json!({}),
+            performance: None,
+            agent: None,
+            exemptions: None,
+        }
+    }
+
+    fn passed(layer: &str) -> Run {
+        Run {
+            layer: layer.into(),
+            cmd: layer.into(),
+            step: layer.into(),
+            outcome: Outcome::Passed,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn a_crap_layer_fault_increments_the_crap_counter() {
+        let mut judged = Judged::default();
+        record_crap_fault(&mut judged, "broken");
+        assert_eq!(judged.crap_problems, 1, "crap_problems");
+        assert_eq!(judged.coverage_problems, 0, "coverage_problems");
+        assert_eq!(
+            judged.problems,
+            vec!["crap: broken".to_string()],
+            "problem text"
+        );
+    }
+
+    #[test]
+    fn a_missing_ledger_needs_a_passed_coverage_layer_and_a_floor() {
+        let dir = Path::new("/demo");
+        let mut none = Judged::default();
+        record_missing(&mut none, dir, &cfg(None, None), &[passed("coverage")]);
+        assert_eq!(none.coverage_problems, 0, "no floor");
+        assert!(none.problems.is_empty(), "{:?}", none.problems);
+
+        let mut no_run = Judged::default();
+        record_missing(&mut no_run, dir, &cfg(Some(80.0), None), &[]);
+        assert_eq!(no_run.coverage_problems, 0, "coverage did not run");
+        assert!(no_run.problems.is_empty(), "{:?}", no_run.problems);
+
+        let mut both = Judged::default();
+        record_missing(
+            &mut both,
+            dir,
+            &cfg(Some(80.0), None),
+            &[passed("coverage")],
+        );
+        assert_eq!(both.coverage_problems, 1, "floor and layer");
+        assert_eq!(both.crap_problems, 0, "crap off");
+        assert!(
+            both.problems
+                .first()
+                .is_some_and(|p| p.starts_with("coverage: missing baseline")),
+            "{:?}",
+            both.problems
+        );
+    }
 }
