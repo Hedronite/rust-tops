@@ -102,17 +102,8 @@ pub(crate) fn judge(dir: &Path, cfg: &TopsConfig, runs: &[Run], report: &Path) -
     let mut judged = Judged::default();
     let ledger = load_v2(dir, cfg);
     if let Some(err) = &ledger.error {
-        let prefix = if cfg.gates.crap.cap().is_some() {
-            "crap"
-        } else {
-            "coverage"
-        };
-        judged.problems.push(format!("{prefix}: {err}"));
-        if prefix == "crap" {
-            judged.crap_problems = 1;
-        } else {
-            judged.coverage_problems = 1;
-        }
+        judged.problems.push(format!("crap: {err}"));
+        judged.crap_problems = 1;
     }
     if coverage {
         let (found, numbers) = judge_coverage(cfg, &scope, report, &today, &ledger);
@@ -285,35 +276,22 @@ fn load_v2(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
 
 fn read_v2_mode(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
     let path = baseline::path(dir, cfg);
-    if path.exists() {
-        return match baseline::read_v2(&path, cfg) {
-            Ok(v2) => LedgerLoad {
-                mode: ModeV2::On(Some(Box::new(v2))),
-                error: None,
-            },
-            Err(err) => LedgerLoad {
-                mode: ModeV2::Off,
-                error: Some(err),
-            },
-        };
-    }
-    if cfg.enforce == Some(Enforce::Ratchet) && needs_v2(cfg) {
+    if !path.exists() {
         return LedgerLoad {
-            mode: ModeV2::Off,
-            error: Some(format!(
-                "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
-                path.display()
-            )),
+            mode: ModeV2::On(None),
+            error: None,
         };
     }
-    LedgerLoad {
-        mode: ModeV2::On(None),
-        error: None,
+    match baseline::read_v2(&path, cfg) {
+        Ok(v2) => LedgerLoad {
+            mode: ModeV2::On(Some(Box::new(v2))),
+            error: None,
+        },
+        Err(err) => LedgerLoad {
+            mode: ModeV2::Off,
+            error: Some(err),
+        },
     }
-}
-
-fn needs_v2(cfg: &TopsConfig) -> bool {
-    cfg.gates.crap.cap().is_some() || coverage_floor::floors_set(&cfg.gates.coverage)
 }
 
 fn crap_baseline(
@@ -328,6 +306,12 @@ fn crap_baseline(
         (Some(Enforce::Hard), _) | (_, ModeV2::Off) => Ok(None),
         (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(Some(v2))) => {
             Ok(Some(baseline::scores_from(v2.as_ref())))
+        }
+        (Some(Enforce::Ratchet), ModeV2::On(None)) if cfg.gates.crap.cap().is_some() => {
+            Err(format!(
+                "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
+                baseline::path(dir, cfg).display()
+            ))
         }
         (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(None)) => Ok(None),
     }
