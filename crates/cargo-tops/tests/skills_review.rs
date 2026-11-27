@@ -253,6 +253,17 @@ fn findings(doc: &Json) -> Vec<(String, u64)> {
         .unwrap_or_default()
 }
 
+/// A tracked edit would move hits off HEAD's lines, so the run is refused.
+fn assert_refused_as_dirty(doc: &Json) {
+    assert_eq!(ok(doc), Some(false), "{doc}");
+    assert_eq!(
+        doc.get("error").and_then(Json::as_str),
+        Some("--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"),
+        "{doc}"
+    );
+    assert!(doc.get("data").is_none(), "{doc}");
+}
+
 #[test]
 fn style_reports_only_findings_inside_the_review_range() {
     let Some(nu) = nu_or_skip() else { return };
@@ -277,13 +288,11 @@ fn style_reports_only_findings_inside_the_review_range() {
     let rule = unwrap_rule_id();
     assert!(all.to_string().contains(&rule));
 
-    let committed = json(&run(
-        &nu,
-        &script,
-        &repo,
-        &[&args[..], &["--committed-only"]].concat(),
-        &target,
-    ));
+    let only = [&args[..], &["--committed-only"]].concat();
+    assert_refused_as_dirty(&json(&run(&nu, &script, &repo, &only, &target)));
+    // The untracked module stays: it moves no tracked line.
+    git(&repo, &["checkout", "--", "src/lib.rs"]);
+    let committed = json(&run(&nu, &script, &repo, &only, &target));
     assert_eq!(
         findings(&committed),
         vec![("src/lib.rs".to_string(), lines - 3)],

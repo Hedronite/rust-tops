@@ -694,6 +694,9 @@ fn base_sees_unstaged_and_untracked_lines_unless_committed_only() {
     ];
     assert_eq!(places(&doc), want, "{doc}");
     let args = ["--base", "HEAD", "--committed-only"];
+    assert_refused_as_dirty(&json(&check(&nu, &dir, &target, &args)));
+    // Untracked files cannot move a tracked line, and are not checked.
+    git(&dir, &["checkout", "--", "src/lib.rs"]);
     let doc = json(&check(&nu, &dir, &target, &args));
     assert_eq!(places(&doc), Vec::new(), "{doc}");
     assert_eq!(judgment_ids(&doc), Vec::<String>::new(), "{doc}");
@@ -894,4 +897,49 @@ fn a_changed_last_line_of_a_chain_is_found() {
     );
     let found = findings(&doc);
     assert!(found.iter().all(|f| f.get("end").is_none()), "{doc}");
+}
+
+fn assert_refused_as_dirty(doc: &serde_json::Value) {
+    assert_eq!(
+        doc.get("ok"),
+        Some(&serde_json::Value::Bool(false)),
+        "{doc}"
+    );
+    assert_eq!(
+        doc.get("error").and_then(serde_json::Value::as_str),
+        Some("--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"),
+        "{doc}"
+    );
+    assert!(doc.get("data").is_none(), "{doc}");
+}
+
+#[test]
+fn committed_only_refuses_a_shifted_tracked_edit() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("shifted");
+    opt_in(&dir);
+    git(&dir, &["commit", "-aqm", "opt in"]);
+    put(&dir, "src/lib.rs", SMALL_EDIT);
+    git(&dir, &["commit", "-aqm", "unwrap"]);
+    let args = ["--base", "HEAD~1", "--committed-only"];
+    let hit = vec![place("PANIC-1", "src/lib.rs", 5)];
+    let doc = json(&check(&nu, &dir, &target, &args));
+    assert_eq!(places(&doc), hit, "{doc}");
+    // Three lines on top move the unwrap off the committed range.
+    let shifted = format!("//! One.\n//! Two.\n//! Three.\n{SMALL_EDIT}");
+    put(&dir, "src/lib.rs", &shifted);
+    assert_refused_as_dirty(&json(&check(&nu, &dir, &target, &args)));
+    git(&dir, &["add", "."]);
+    assert_refused_as_dirty(&json(&check(&nu, &dir, &target, &args)));
+    let working = json(&check(&nu, &dir, &target, &["--base", "HEAD~1"]));
+    let moved = vec![place("PANIC-1", "src/lib.rs", 8)];
+    assert_eq!(places(&working), moved, "{working}");
+    git(&dir, &["reset", "-q", "--hard"]);
+    put(&dir, "src/bin/new.rs", "fn main() {}\n");
+    let doc = json(&check(&nu, &dir, &target, &args));
+    assert_eq!(places(&doc), hit, "{doc}");
+    assert!(
+        command(&doc).starts_with("git -C . status --porcelain"),
+        "{doc}"
+    );
 }

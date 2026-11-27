@@ -18,7 +18,7 @@ nu rust-tops-style.nu check [--audit] [--path .]                         # audit
 
 **Writer mode** (`--base <ref>`) is for a draft:
 
-- It compares the working tree with `<ref>` itself: staged, unstaged and untracked `.rs` lines count. Use `--base HEAD` for uncommitted work. `--committed-only` takes `<ref>...HEAD` instead; run it on a clean tree.
+- It compares the working tree with `<ref>` itself: staged, unstaged and untracked `.rs` lines count. Use `--base HEAD` for uncommitted work. `--committed-only` takes `<ref>...HEAD` instead and needs a clean tree: with any tracked change it refuses, `ok: false`. Untracked files are allowed and not checked.
 - Only findings on changed lines are kept, and `ok` speaks for those alone.
 - Clippy restriction lints (`unwrap_used`, `indexing_slicing` and the like) run only if the crate turns them on: its `[lints]` tables, its source, or `gates.lint.clippy_deny` in `rust-tops.yaml`.
 - `PANIC-1` and `PANIC-2` are reported for library and binary code only, not for `tests/`, `*_test.rs` or `#[cfg(test)]` code.

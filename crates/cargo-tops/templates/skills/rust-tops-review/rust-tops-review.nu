@@ -201,6 +201,21 @@ def in-ranges [f: record, ranges: list] {
   $ranges | any {|r| $r.file == $f.file and $f.line >= $r.start and $f.line <= $r.end }
 }
 
+# `--committed-only` takes line numbers from HEAD, but clippy and the probes read
+# the working tree, so tracked edits would move hits off their lines. Untracked
+# files cannot. {command, error}: `error` is null for a clean tree.
+const CLEAN_ARGS = ["status" "--porcelain" "--untracked-files=no"]
+const DIRTY = "--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"
+
+def clean-tree [root: string] {
+  let command = (["git" "-C" "."] ++ $CLEAN_ARGS | str join " ")
+  let r = (^git -C $root ...$CLEAN_ARGS | complete)
+  let error = if $r.exit_code != 0 {
+    $r.stderr | str replace --all ($root | path expand) "."
+  } else if not ($r.stdout | str trim | is-empty) { $DIRTY } else { null }
+  {command: $command, error: $error}
+}
+
 def "main style" [--base: string = "origin/main", --path: string = ".", --committed-only] {
   let own = "nu rust-tops-review.nu style"
   let wrong = (nu-mismatch $path)
@@ -210,6 +225,13 @@ def "main style" [--base: string = "origin/main", --path: string = ".", --commit
   let script = (style-dir | path join "rust-tops-style.nu")
   if not ($script | path exists) { return (fail $own "rust-tops-style.nu is missing beside this skill") }
 
+  mut checked = ""
+  if $committed_only {
+    let tree = (clean-tree $path)
+    if $tree.error != null { return (fail $tree.command $tree.error) }
+    $checked = $"($tree.command) && "
+  }
+
   let child = (^$nu.current-exe $script check --path $path | complete)
   let doc = (try { $child.stdout | from json } catch { null })
   if $doc == null { return (fail $"nu rust-tops-style.nu check" $"the style check printed no JSON: ($child.stderr)") }
@@ -217,7 +239,7 @@ def "main style" [--base: string = "origin/main", --path: string = ".", --commit
 
   let committed = (git-run ["-C" $path "-c" "core.quotePath=false" "diff" "-U0" "--no-renames" "--no-color" "--relative" $"($base)...HEAD"])
   if not $committed.ok { return (fail $"git -C . diff -U0 ($base)...HEAD" $committed.error) }
-  mut command = $"($doc.command) && git -C . diff -U0 ($base)...HEAD"
+  mut command = $"($checked)($doc.command) && git -C . diff -U0 ($base)...HEAD"
   mut ranges = (changed-ranges $committed.stdout)
   if not $committed_only {
     let work = (git-run ["-C" $path "-c" "core.quotePath=false" "diff" "-U0" "--no-renames" "--no-color" "--relative" "HEAD"])

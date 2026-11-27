@@ -290,6 +290,21 @@ def base-ranges [root: string, base: string, committed: bool] {
   {command: $both, error: null, ranges: ($ranges ++ $whole)}
 }
 
+# `--committed-only` takes line numbers from HEAD, but clippy and the probes read
+# the working tree, so tracked edits would move hits off their lines. Untracked
+# files cannot. {command, error}: `error` is null for a clean tree.
+const CLEAN_ARGS = ["status" "--porcelain" "--untracked-files=no"]
+const DIRTY = "--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"
+
+def clean-tree [root: string] {
+  let command = (["git" "-C" "."] ++ $CLEAN_ARGS | str join " ")
+  let r = (^git -C $root ...$CLEAN_ARGS | complete)
+  let error = if $r.exit_code != 0 {
+    $r.stderr | str replace --all ($root | path expand) "."
+  } else if not ($r.stdout | str trim | is-empty) { $DIRTY } else { null }
+  {command: $command, error: $error}
+}
+
 # --- writer mode -------------------------------------------------------------
 
 # Clippy's restriction lints in the catalog. Writer mode does not turn these on;
@@ -470,12 +485,18 @@ def "main check" [--path: string = ".", --base: string, --committed-only, --audi
   }
 
   let root = ($path | path expand)
+  mut checked = ""
+  if $writer and $committed_only {
+    let tree = (clean-tree $root)
+    if $tree.error != null { return (fail $tree.command $tree.error) }
+    $checked = $"($tree.command) && "
+  }
   let opted = if $writer { yaml-lints $root } else { [] }
   let warn = (
     $lints | get check
     | where {|c| (not $writer) or ($c not-in $RESTRICTION) or ("restriction" in $opted) or (($c | str replace "clippy::" "") in $opted) }
   )
-  mut command = "cargo metadata --no-deps --format-version 1"
+  mut command = $"($checked)cargo metadata --no-deps --format-version 1"
   let meta = (do { cd $root; ^cargo metadata --no-deps --format-version 1 | complete })
   if $meta.exit_code != 0 {
     return (fail "cargo metadata --no-deps --format-version 1" $"build failed: ($meta.stderr | str replace --all $root '.')")
