@@ -808,3 +808,60 @@ fn the_crap_layer_alone_runs_the_pin_check_and_only_with_a_lock() {
     assert_eq!(code, Some(0), "{text}");
     assert_ne!(at(row(&written(&fixture), "crap"), "/argv/0"), &pin);
 }
+
+#[test]
+fn ratchet_coverage_listed_file_passes_and_unlisted_fails_the_floor() {
+    let fixture = fixture("cov-ratchet");
+    edit(&fixture, |doc| {
+        set(doc, "", "enforce", Some(json!("ratchet")));
+    });
+    summary(
+        &fixture,
+        &[
+            ("src/lib.rs", 70, 100, 100, 100),
+            ("src/a.rs", 70, 100, 100, 100),
+        ],
+    );
+    crap(&fixture, &[("./src/lib.rs", "ok", 1.0)]);
+    let ledger = json!({
+        "version": 2,
+        "crate": "fixture",
+        "functions": {},
+        "coverage": {
+            "crate_line": 70.0,
+            "files": { "src/lib.rs": 70.0 }
+        }
+    });
+    fs::write(
+        fixture.repo.join("rust-tops-baseline.json"),
+        format!("{}\n", serde_json::to_string_pretty(&ledger).expect("json")),
+    )
+    .expect("write v2");
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("src/a.rs") && text.contains("per_file_line_min_pct"),
+        "{text}"
+    );
+    assert!(!text.contains("src/lib.rs line coverage"), "{text}");
+}
+
+#[test]
+fn a_corrupt_ledger_is_a_coverage_problem_when_crap_did_not_run() {
+    let fixture = fixture("cov-corrupt");
+    edit(&fixture, |doc| {
+        set(doc, "", "enforce", Some(json!("ratchet")));
+        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
+        for layer in layers.expect("layers") {
+            if layer.get("id").and_then(Value::as_str) == Some("crap") {
+                set(layer, "", "enabled", Some(Value::Bool(false)));
+            }
+        }
+    });
+    good_summary(&fixture);
+    fs::write(fixture.repo.join("rust-tops-baseline.json"), "{not json\n").expect("write");
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(text.contains("coverage: baseline"), "{text}");
+    assert!(!text.contains("crap: baseline"), "{text}");
+}

@@ -156,7 +156,7 @@ Where more than one applies, 2 wins over 3, and 3 over 1.")]
     Lock(LockArgs),
     /// Initialize, refresh, or check the Baseline v2 debt ledger (rust-tops-baseline.json)
     #[command(
-        after_help = "Exit codes:\n  0  baseline written or checked\n  1  refused under advisory, score rose, unexcused regression, or invalid ledger\n  2  config invalid, missing gate report, or usage error"
+        after_help = "Exit codes:\n  0  baseline written or checked\n  1  refused under advisory, score rose, coverage dropped, unexcused regression, or invalid ledger\n  2  config invalid, missing gate report, or usage error"
     )]
     Baseline(BaselineArgs),
     /// Compatibility alias for legacy v1 CRAP baselines (use `cargo tops baseline`)

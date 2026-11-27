@@ -108,6 +108,11 @@ fn fixture(name: &str, extra: &[&str], junit: Option<&str>) -> Fixture {
     .expect("write Cargo.toml");
     stage_tools_and_reports(&fixture, junit);
     enable_only(&fixture, extra);
+    fs::write(
+        fixture.repo.join("rust-tops-baseline.json"),
+        "{\n  \"version\": 2,\n  \"crate\": \"fixture\",\n  \"functions\": {}\n}\n",
+    )
+    .expect("write empty v2 baseline");
     fixture
 }
 

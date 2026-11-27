@@ -277,7 +277,7 @@ fn fixture_with(name: &str, keep: &[&str]) -> Fixture {
             layer["enabled"] = serde_json::Value::Bool(required || keep.contains(&id.as_str()));
         }
     });
-    if keep.contains(&"crap") {
+    if keep.contains(&"crap") || keep.contains(&"coverage") {
         seed_empty_baseline(&fixture);
     }
     fixture

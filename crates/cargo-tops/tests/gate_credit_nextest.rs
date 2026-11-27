@@ -124,6 +124,11 @@ fn fixture(name: &str) -> Fixture {
         stub(&fixture.bin, plugin, "#!/bin/sh\nexit 0\n");
     }
     enable_layers(&fixture, &[]);
+    fs::write(
+        fixture.repo.join("rust-tops-baseline.json"),
+        "{\n  \"version\": 2,\n  \"crate\": \"fixture\",\n  \"functions\": {}\n}\n",
+    )
+    .expect("write empty v2 baseline");
     fixture
 }
 

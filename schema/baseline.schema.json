@@ -19,8 +19,17 @@
       "additionalProperties": { "type": "number", "minimum": 0 }
     },
     "coverage": {
-      "description": "Reserved; no gate reads it in 1.5.0.",
-      "type": "object"
+      "description": "Below-floor crate and per-file coverage. Omitted when every floor is met. files keys are crate-relative slash-separated paths, sorted lexicographically, one entry per line.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "crate_line": { "type": "number", "minimum": 0, "maximum": 100 },
+        "crate_region": { "type": "number", "minimum": 0, "maximum": 100 },
+        "files": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 100 }
+        }
+      }
     },
     "lints": {
       "description": "Reserved; no gate reads it in 1.5.0.",
@@ -43,7 +52,7 @@
         "required": ["kind", "key", "from", "to", "reason", "owner", "date"],
         "properties": {
           "kind": {
-            "description": "The ledger object the key is in, such as functions.",
+            "description": "The ledger object the key is in: functions, coverage, or coverage.files.",
             "type": "string",
             "minLength": 1
           },

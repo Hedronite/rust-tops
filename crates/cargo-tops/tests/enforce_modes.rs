@@ -172,11 +172,20 @@ fn write_reports(f: &Fixture, line_cov: u64, crap_entries: &[(&str, &str, f64)])
 }
 
 fn write_v2(f: &Fixture, entries: &[(&str, f64)]) {
+    write_v2_full(f, entries, None);
+}
+
+fn write_v2_full(f: &Fixture, entries: &[(&str, f64)], coverage: Option<Value>) {
     let mut map = serde_json::Map::new();
     for &(k, v) in entries {
         map.insert(k.to_string(), json!(v));
     }
-    let doc = json!({"version": 2, "crate": "fixture", "functions": map});
+    let mut doc = json!({"version": 2, "crate": "fixture", "functions": map});
+    if let Some(coverage) = coverage {
+        doc.as_object_mut()
+            .expect("object")
+            .insert("coverage".into(), coverage);
+    }
     fs::write(
         f.repo.join("rust-tops-baseline.json"),
         format!("{}\n", serde_json::to_string_pretty(&doc).expect("json")),
@@ -372,11 +381,9 @@ fn live_advisory_keeps_dry_run_pre_fault_and_refuses_baseline() {
         Some(1),
         "refuse init"
     );
-    assert_eq!(
-        run(&f, &["baseline"]).0.status.code(),
-        Some(1),
-        "refuse refresh"
-    );
+    let (bout, btext) = run(&f, &["baseline"]);
+    assert_eq!(bout.status.code(), Some(1), "refuse refresh");
+    assert!(btext.contains("advisory"), "{btext}");
     fs::write(
         f.repo.join("rust-tops.lock"),
         "[tools
@@ -480,4 +487,209 @@ fn clean_live_advisory_passes_with_unenforced_banner() {
     assert_eq!(rep.get("enforced"), Some(&json!(false)));
     assert_eq!(rep.get("advisory_expires"), Some(&json!("2999-01-01")));
     assert_eq!(rep.get("problems"), Some(&json!([])));
+}
+
+fn seed_cov80(f: &Fixture, file_key: &str) {
+    let mut files = serde_json::Map::new();
+    files.insert(file_key.to_string(), json!(80.0));
+    write_v2_full(
+        f,
+        &[],
+        Some(json!({
+            "crate_line": 80.0,
+            "crate_region": 80.0,
+            "files": files
+        })),
+    );
+}
+
+fn disable_crap(f: &Fixture) {
+    edit_yaml(f, |doc| {
+        if let Some(layers) = doc.pointer_mut("/layers").and_then(Value::as_array_mut) {
+            for layer in layers {
+                if layer.get("id").and_then(Value::as_str) == Some("crap") {
+                    if let Some(map) = layer.as_object_mut() {
+                        map.insert("enabled".into(), json!(false));
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn coverage_layer(rep: &Value) -> Option<&Value> {
+    rep.get("layers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some("coverage"))
+}
+
+#[test]
+fn coverage_ratchet_requires_ledger_when_crap_is_off() {
+    let f = fixture("cov-only-missing");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    disable_crap(&f);
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("coverage: missing baseline"), "{text}");
+    assert!(!text.contains("crap: missing baseline"), "{text}");
+    assert!(!text.contains("line_min_pct"), "{text}");
+    let rep = read_report(&f);
+    assert_eq!(
+        rep.get("problems").and_then(Value::as_array).map(Vec::len),
+        Some(1),
+        "{rep}"
+    );
+    assert_eq!(
+        coverage_layer(&rep)
+            .and_then(|row| row.get("verdict"))
+            .and_then(Value::as_str),
+        Some("fail"),
+        "{rep}"
+    );
+}
+
+#[test]
+fn coverage_ratchet_requires_ledger_and_allows_listed_within_epsilon() {
+    let f = fixture("cov-ratchet");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("cargo tops baseline --init"), "{text}");
+    seed_cov80(&f, "src/lib.rs");
+    assert_eq!(run(&f, &["gate"]).0.status.code(), Some(0), "listed at 80");
+    write_reports_counts(&f, 7999, 10000, &[("./src/lib.rs", "ok", 1.0)]);
+    assert_eq!(
+        run(&f, &["gate"]).0.status.code(),
+        Some(0),
+        "within epsilon"
+    );
+}
+
+#[test]
+fn coverage_ratchet_drop_is_a_gate_problem() {
+    let f = fixture("cov-drop");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    seed_cov80(&f, "src/lib.rs");
+    write_reports(&f, 79, &[("./src/lib.rs", "ok", 1.0)]);
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("dropped below baseline 80.00"), "{text}");
+    let problems = read_report(&f)
+        .get("problems")
+        .cloned()
+        .unwrap_or(json!([]));
+    assert!(
+        problems.as_array().into_iter().flatten().any(|n| n
+            .as_str()
+            .is_some_and(|s| s.contains("dropped below baseline 80.00"))),
+        "{problems}"
+    );
+}
+
+#[test]
+fn coverage_ratchet_unlisted_file_fails_the_floor() {
+    let f = fixture("cov-unlisted");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    seed_cov80(&f, "src/other.rs");
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("src/lib.rs") && text.contains("per_file_line_min_pct"),
+        "{text}"
+    );
+}
+
+fn write_reports_counts(f: &Fixture, covered: u64, count: u64, crap_entries: &[(&str, &str, f64)]) {
+    let cov = json!({"type": "llvm.coverage.json.export", "data": [{"files": [
+        {"filename": "src/lib.rs", "summary": {"lines": {"covered": covered, "count": count}, "regions": {"covered": covered, "count": count}}}
+    ]}]});
+    fs::write(f.reports.join("coverage.json"), cov.to_string()).expect("write coverage");
+    let entries: Vec<Value> = crap_entries
+        .iter()
+        .map(|&(file, func, score)| {
+            json!({"file": file, "function": func, "line": 1, "cyclomatic": 1.0, "coverage": 100.0, "crap": score})
+        })
+        .collect();
+    fs::write(
+        f.reports.join("crap.json"),
+        json!({"version": "0.9.0", "entries": entries}).to_string(),
+    )
+    .expect("write crap");
+}
+
+#[test]
+fn coverage_hard_and_omitted_ignore_the_ledger() {
+    let f = fixture("cov-hard");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    write_v2_full(
+        &f,
+        &[],
+        Some(json!({
+            "crate_line": 80.0,
+            "crate_region": 80.0,
+            "files": { "src/lib.rs": 80.0 }
+        })),
+    );
+    edit_yaml(&f, |doc| set_key(doc, "", "enforce", Some(json!("hard"))));
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("line_min_pct"), "{text}");
+
+    edit_yaml(&f, |doc| set_key(doc, "", "enforce", None));
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("line_min_pct"), "{text}");
+}
+
+#[test]
+fn coverage_advisory_missing_ledger_uses_full_floors() {
+    let f = fixture("cov-adv");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    set_advisory(&f, "2999-01-01", "adopting on legacy crate");
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let rep = read_report(&f);
+    assert_eq!(rep.get("ok"), Some(&json!(false)));
+    assert!(
+        rep.get("problems")
+            .and_then(Value::as_array)
+            .is_some_and(|p| p
+                .iter()
+                .any(|n| n.as_str().is_some_and(|s| s.contains("line_min_pct")))),
+        "{rep}"
+    );
+}
+
+#[test]
+fn coverage_exemption_still_excuses_per_file_under_ratchet() {
+    let f = fixture("cov-ex");
+    let cov = json!({"type": "llvm.coverage.json.export", "data": [{"files": [
+        {"filename": "src/lib.rs", "summary": {"lines": {"covered": 1000, "count": 1000}, "regions": {"covered": 1000, "count": 1000}}},
+        {"filename": "src/gen.rs", "summary": {"lines": {"covered": 1, "count": 20}, "regions": {"covered": 1, "count": 20}}}
+    ]}]});
+    fs::write(f.reports.join("coverage.json"), cov.to_string()).expect("write coverage");
+    fs::write(
+        f.reports.join("crap.json"),
+        json!({"version": "0.9.0", "entries": [
+            {"file": "./src/lib.rs", "function": "ok", "line": 1, "cyclomatic": 1.0, "coverage": 100.0, "crap": 1.0}
+        ]})
+        .to_string(),
+    )
+    .expect("write crap");
+    write_v2(&f, &[]);
+    edit_yaml(&f, |doc| {
+        set_key(
+            doc,
+            "",
+            "exemptions",
+            Some(json!([{
+                "path": "src/gen.rs", "layer": "coverage",
+                "reason": "generated decode tables live here", "owner": "cli", "expires": "2999-01-01"
+            }])),
+        );
+    });
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(0), "{text}");
 }
