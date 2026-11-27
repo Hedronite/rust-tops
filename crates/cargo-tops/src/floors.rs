@@ -121,34 +121,43 @@ fn attach_ledger_faults(
     ledger: &LedgerLoad,
     runs: &[Run],
 ) {
-    let coverage = layer_passed(runs, "coverage");
-    let crap = layer_passed(runs, "crap");
     match ledger {
-        LedgerLoad::Invalid(err) => {
-            if coverage {
-                judged.problems.push(format!("coverage: {err}"));
-                judged.coverage_problems += 1;
-            }
-            if crap {
-                judged.problems.push(format!("crap: {err}"));
-                judged.crap_problems += 1;
-            }
-        }
+        LedgerLoad::Invalid(err) => record_on_ran_layers(judged, runs, err),
         LedgerLoad::Absent if cfg.enforce == Some(Enforce::Ratchet) => {
-            let msg = format!(
-                "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
-                baseline::path(dir, cfg).display()
-            );
-            if coverage && coverage_floor::floors_set(&cfg.gates.coverage) {
-                judged.problems.push(format!("coverage: {msg}"));
-                judged.coverage_problems += 1;
-            }
-            if crap && cfg.gates.crap.cap().is_some() {
-                judged.problems.push(format!("crap: {msg}"));
-                judged.crap_problems += 1;
-            }
+            record_missing(judged, dir, cfg, runs);
         }
         LedgerLoad::Off | LedgerLoad::Present(_) | LedgerLoad::Absent => {}
+    }
+}
+
+fn record_on_ran_layers(judged: &mut Judged, runs: &[Run], err: &str) {
+    if layer_passed(runs, "coverage") {
+        record_layer_fault(judged, "coverage", err);
+    }
+    if layer_passed(runs, "crap") {
+        record_layer_fault(judged, "crap", err);
+    }
+}
+
+fn record_missing(judged: &mut Judged, dir: &Path, cfg: &TopsConfig, runs: &[Run]) {
+    let msg = format!(
+        "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
+        baseline::path(dir, cfg).display()
+    );
+    if layer_passed(runs, "coverage") && coverage_floor::floors_set(&cfg.gates.coverage) {
+        record_layer_fault(judged, "coverage", &msg);
+    }
+    if layer_passed(runs, "crap") && cfg.gates.crap.cap().is_some() {
+        record_layer_fault(judged, "crap", &msg);
+    }
+}
+
+fn record_layer_fault(judged: &mut Judged, layer: &str, msg: &str) {
+    judged.problems.push(format!("{layer}: {msg}"));
+    match layer {
+        "coverage" => judged.coverage_problems += 1,
+        "crap" => judged.crap_problems += 1,
+        _ => {}
     }
 }
 

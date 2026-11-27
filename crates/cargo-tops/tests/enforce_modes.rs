@@ -503,11 +503,8 @@ fn seed_cov80(f: &Fixture, file_key: &str) {
     );
 }
 
-#[test]
-fn coverage_ratchet_requires_ledger_when_crap_is_off() {
-    let f = fixture("cov-only-missing");
-    write_reports(&f, 100, &[("./src/lib.rs", "ok", 1.0)]);
-    edit_yaml(&f, |doc| {
+fn disable_crap(f: &Fixture) {
+    edit_yaml(f, |doc| {
         if let Some(layers) = doc.pointer_mut("/layers").and_then(Value::as_array_mut) {
             for layer in layers {
                 if layer.get("id").and_then(Value::as_str) == Some("crap") {
@@ -518,11 +515,39 @@ fn coverage_ratchet_requires_ledger_when_crap_is_off() {
             }
         }
     });
+}
+
+fn coverage_layer(rep: &Value) -> Option<&Value> {
+    rep.get("layers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some("coverage"))
+}
+
+#[test]
+fn coverage_ratchet_requires_ledger_when_crap_is_off() {
+    let f = fixture("cov-only-missing");
+    write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);
+    disable_crap(&f);
     let (out, text) = run(&f, &["gate"]);
     assert_eq!(out.status.code(), Some(1), "{text}");
-    assert!(text.contains("cargo tops baseline --init"), "{text}");
     assert!(text.contains("coverage: missing baseline"), "{text}");
     assert!(!text.contains("crap: missing baseline"), "{text}");
+    assert!(!text.contains("line_min_pct"), "{text}");
+    let rep = read_report(&f);
+    assert_eq!(
+        rep.get("problems").and_then(Value::as_array).map(Vec::len),
+        Some(1),
+        "{rep}"
+    );
+    assert_eq!(
+        coverage_layer(&rep)
+            .and_then(|row| row.get("verdict"))
+            .and_then(Value::as_str),
+        Some("fail"),
+        "{rep}"
+    );
 }
 
 #[test]
