@@ -88,33 +88,58 @@ pub(crate) struct Judged {
 /// Every coverage floor and CRAP rule this gate's reports miss. `report`
 /// is the gate's artifact directory.
 pub(crate) fn judge(dir: &Path, cfg: &TopsConfig, runs: &[Run], report: &Path) -> Judged {
-    let coverage = layer_passed(runs, "coverage");
-    let crap = layer_passed(runs, "crap");
-    if !coverage && !crap {
+    if !layer_passed(runs, "coverage") && !layer_passed(runs, "crap") {
         return Judged::default();
     }
-    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
-    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
-    let today = exemptions::today();
     let ledger = load_v2(dir, cfg);
     let mut judged = Judged::default();
     if let Some(err) = &ledger.error {
         judged.problems.push(format!("crap: {err}"));
         judged.crap_problems = 1;
     }
-    if coverage {
-        let (found, numbers) = judge_coverage(cfg, &scope, report, &today, &ledger);
-        judged.coverage_problems += found.len();
-        judged.problems.extend(found);
-        judged.coverage = Some(numbers);
-    }
-    if crap {
-        let (found, numbers) = judge_crap(dir, cfg, &scope, report, &today, &ledger);
-        judged.crap_problems += found.len();
-        judged.problems.extend(found);
-        judged.crap = numbers;
-    }
+    add_coverage(&mut judged, dir, cfg, runs, report, &ledger);
+    add_crap(&mut judged, dir, cfg, runs, report, &ledger);
     judged
+}
+
+fn add_coverage(
+    judged: &mut Judged,
+    dir: &Path,
+    cfg: &TopsConfig,
+    runs: &[Run],
+    report: &Path,
+    ledger: &LedgerLoad,
+) {
+    if !layer_passed(runs, "coverage") {
+        return;
+    }
+    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
+    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
+    let today = exemptions::today();
+    let (found, numbers) = judge_coverage(cfg, &scope, report, &today, ledger);
+    judged.coverage_problems += found.len();
+    judged.problems.extend(found);
+    judged.coverage = Some(numbers);
+}
+
+fn add_crap(
+    judged: &mut Judged,
+    dir: &Path,
+    cfg: &TopsConfig,
+    runs: &[Run],
+    report: &Path,
+    ledger: &LedgerLoad,
+) {
+    if !layer_passed(runs, "crap") {
+        return;
+    }
+    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
+    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
+    let today = exemptions::today();
+    let (found, numbers) = judge_crap(dir, cfg, &scope, report, &today, ledger);
+    judged.crap_problems += found.len();
+    judged.problems.extend(found);
+    judged.crap = numbers;
 }
 
 fn layer_passed(runs: &[Run], layer: &str) -> bool {

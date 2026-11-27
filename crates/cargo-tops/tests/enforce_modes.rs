@@ -381,11 +381,9 @@ fn live_advisory_keeps_dry_run_pre_fault_and_refuses_baseline() {
         Some(1),
         "refuse init"
     );
-    assert_eq!(
-        run(&f, &["baseline"]).0.status.code(),
-        Some(1),
-        "refuse refresh"
-    );
+    let (bout, btext) = run(&f, &["baseline"]);
+    assert_eq!(bout.status.code(), Some(1), "refuse refresh");
+    assert!(btext.contains("advisory"), "{btext}");
     fs::write(
         f.repo.join("rust-tops.lock"),
         "[tools

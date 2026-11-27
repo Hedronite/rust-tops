@@ -1241,6 +1241,19 @@ mod tests {
     }
 
     #[test]
+    fn refresh_refuse_names_advisory_and_a_missing_file() {
+        use crate::config::Enforce;
+        let cfg = cfg_for("demo");
+        let mut adv = cfg_for("demo");
+        adv.enforce = Some(Enforce::Advisory);
+        assert!(super::refresh_refuse(&adv, Path::new("ledger.json")).is_some());
+        let missing = std::env::temp_dir().join("cargo-tops-no-such-ledger.json");
+        let msg = super::refresh_refuse(&cfg, &missing).expect("missing file");
+        assert!(msg.contains("missing baseline"), "{msg}");
+        assert!(super::refresh_refuse(&cfg, Path::new(env!("CARGO_MANIFEST_DIR"))).is_none());
+    }
+
+    #[test]
     fn kit_ledger_omits_coverage_and_stays_valid() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-tops-baseline.json");
         let raw = std::fs::read_to_string(path).expect("kit ledger");
