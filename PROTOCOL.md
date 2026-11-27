@@ -19,7 +19,7 @@ This document is the canonical protocol. The JSON Schema is the machine contract
 
 > **1.4.0:** makes the gate pass a layer only on evidence from the run: the mutation base comes from `--base`, `gates.base_ref` or `origin/HEAD`, and a missing base fails under CI (§8.3); a credited `property` or `acceptance` layer needs a matching passed test (§6.5.1); an expired exemption fails the gate for every layer, and survivors are judged per function (§19); a pinned tool at another version fails its layer with exit 3, and `cargo tops lock` checks and writes the pins (§14.5). The schema adds `gates.base_ref`, `gates.property.test_filter` and `gates.acceptance`. No default threshold and no part of the CRAP formula changed.
 
-> **1.5.0:** adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger with `cargo tops baseline` (§16.1, §16.2). The schema adds `enforce`, `advisory` and `baseline`. No default threshold and no part of the CRAP formula changed.
+> **1.5.0:** adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger, with its CRAP and coverage ratchets and `cargo tops baseline` (§16.1, §16.2). The schema adds `enforce`, `advisory` and `baseline`. No default threshold and no part of the CRAP formula changed.
 
 ## 0. Purpose
 
@@ -138,20 +138,24 @@ The top-level key `enforce` says how floors and caps are applied. `cargo tops in
 
 | `enforce` | What fails the gate |
 |---|---|
-| `hard` | Every floor and gate binds directly. No baseline excuses a production function over the CRAP cap; only a live, dated exemption (§19) does. |
-| `ratchet` | The `hard` rules, except where the debt ledger (§16.1) holds an entry for a function that is over the cap. |
+| `hard` | Every floor and gate binds directly. No baseline excuses a production function over the CRAP cap or a missed coverage floor. A live, dated exemption (§19) can excuse a function, or a file from the per-file floor. |
+| `ratchet` | The `hard` rules, except where the debt ledger (§16.1) holds an entry for a function that is over the cap, or for coverage that is below a floor. |
 | `advisory` | No finding, while the advisory is live. Config errors and environment faults still fail. The report keeps every problem. |
 
 The **cap** is `gates.crap.threshold_agent`, or `threshold_production` when the instance has no agent threshold. An instance with neither is not judged for CRAP (§2.1), in any mode. `enforce` changes no threshold and no class floor: `cargo tops check` holds an instance to its class in every mode (§4). An instance that sets `enforce` does not read `gates.crap.baseline`.
 
-**`hard`.** Every non-exempt production function is held to the cap, new or old. A ledger file, if there is one, is not read by the gate.
+**`hard`.** Every non-exempt production function is held to the cap, new or old, and every `gates.coverage` floor binds in full (§7.5). A ledger file, if there is one, is not read by the gate, its `coverage` object included. An instance that omits `enforce` does not read it either.
 
 **`ratchet`.**
 
 - A function the ledger lists, with a value over the cap, may score up to that value plus 0.01 (a rise of 0.01 or less is noise).
 - Every other function, a new, renamed or moved one included, is held to the cap. A function at or under the cap may change up to the cap.
-- A missing ledger fails the gate with exit 1. Deleting the file is not a reset.
-- A ledger that cannot be read, or does not validate, fails the gate. It is never read as an empty ledger.
+- A crate line or region total below its floor passes only when the ledger holds `coverage.crate_line` or `coverage.crate_region` and the current percent is at least that value minus 0.01.
+- A production file below `per_file_line_min_pct` passes only when `coverage.files` lists it and its current percent is at least the listed value minus 0.01. An unlisted file, a new, renamed or moved one included, is held to the full floor.
+- Coverage that meets its floor passes whatever the ledger says. The percents are compared as measured, not as rounded for printing.
+- A live `coverage` exemption still excuses a file from the per-file floor, and the file still counts toward the crate totals (§19).
+- The gate needs a ledger when it judges a CRAP cap or any coverage floor. A missing ledger then fails each of those layers with exit 1 and names `cargo tops baseline --init`. Deleting the file is not a reset. A layer that did not run, or that has no cap or floor to judge, needs no ledger.
+- A ledger that cannot be read, or does not validate, fails the gate on each layer that judges against it, and on no other. It is never read as an empty ledger.
 
 **`advisory`.** The instance also carries:
 
@@ -164,11 +168,12 @@ advisory:
 
 - `expires` is a real day, `YYYY-MM-DD`, in UTC. The advisory expires at 00:00 UTC on that date, as an exemption does (§19).
 - `reason` has at least three words.
+- A live advisory judges CRAP and coverage as `ratchet` does when there is a ledger. With no ledger file it judges them against the cap and the full floors, and the missing file is not a problem.
 - A missing or malformed `advisory`, `expires` or `reason` is a config error: `cargo tops check` exits 2 and `cargo tops gate` exits 2. Malformed means an `expires` that is not in that format or not a real calendar day, or a `reason` of fewer than three words.
 - An advisory has **expired** when its date is valid and today, in UTC, is on or after `expires`. It is treated as an expired exemption is (§19): `cargo tops check` warns and exits 0, and `cargo tops gate` fails with exit 1. An expired advisory is not 2: it is 1.
 - While the advisory is live, one exit code changes: a run that would exit 1 on what its layers, CRAP rules or laws found exits 0.
 - Exit 2 (a config or schema error) and exit 3 (an environment fault: a missing tool, a tool at another version than its pin, a `report.json` that cannot be written) are never turned into 0. `--dry-run` is not changed either.
-- Every live-advisory run that is not an environment fault, passing or failing, carries `enforced: false` and prints `NOT ENFORCED (advisory, expires <date>)`. A dry run, an environment fault and an unwritable report print no such line.
+- Every live-advisory run, other than a dry run or an environment fault, passing or failing, carries `enforced: false` and prints `NOT ENFORCED (advisory, expires <date>)`. A dry run, an environment fault and an unwritable report print no such line.
 - `report.json` is not masked. `problems`, `ok` and `kind` say what the run found, so a run with problems has `ok: false` and `kind: "fail"` beside `exit_code: 0`. It carries `enforce: "advisory"`, `advisory_expires`, and `enforced` as above. A CI that must hold part of the gate under `advisory` reads the report.
 - `cargo tops baseline` refuses to write.
 
@@ -506,7 +511,7 @@ The floors judge only the instance's crate. Its root is the directory of the pac
 
 The gate fails when the crate's line or region total over its production files is below `line_min_pct` or `region_min_pct`, and lists every production file below `per_file_line_min_pct` that no live `coverage` exemption names. A floor that is absent or `null` is not judged. A floor is met at exactly its value. A report that holds none of the crate's production files fails, because its floors cannot be judged.
 
-Since 1.5.0, the floors bind the same way under `hard` and `ratchet`: the debt ledger (§16.1) holds no coverage entry that a gate reads yet. Under a live `advisory` (§2.3) a missed floor is reported and does not change the exit code.
+Since 1.5.0, `enforce` selects whether the debt ledger (§16.1) may excuse a missed floor (§2.3). Under `hard`, and when `enforce` is omitted, it may not. Under `ratchet`, a crate line total, crate region total or production file below its floor passes when the ledger holds it and the current percent is at least the recorded value minus 0.01. A floor that is absent or `null` is still not judged. Under a live `advisory` the judgment is the same where there is a ledger, and a missed floor or a drop is reported and does not change the exit code.
 
 ---
 
@@ -1018,6 +1023,13 @@ The ledger lists only what is over the line today. It is one tracked JSON file p
   "functions": {
     "src/main.rs::main": 29.0,
     "src/parse.rs::Parser::next": 14.2
+  },
+  "coverage": {
+    "crate_line": 87.1,
+    "files": {
+      "src/main.rs": 61.5,
+      "src/parse.rs": 84.0
+    }
   }
 }
 ```
@@ -1028,22 +1040,39 @@ The ledger lists only what is over the line today. It is one tracked JSON file p
 - Where several production functions of one file have the same name in the report, they share one entry, which records the highest score.
 - Keys are sorted lexicographically, one entry per line. So parallel branches that change non-adjacent entries, or add entries in different gaps, merge cleanly under plain git. Changes to adjacent lines can still raise an ordinary git context conflict.
 - It holds **only** non-exempt production functions over the cap (§2.3). A function at or under the cap, or covered by a live `crap` exemption, has no entry. With nothing over the cap, `functions` is `{}`.
-- `coverage`, `lints`, `suppressions` and `exemptions` are optional objects reserved for later ratchets. No gate reads them in 1.5.0.
-- `regressions` is an optional array of audit records for debt that was allowed to grow. Each has `kind` (the ledger object, such as `functions`), `key`, `from` (the old value, `null` for a new entry), `to`, `reason`, `owner` and `date` (`YYYY-MM-DD`).
+- `coverage` is the optional record of coverage below the floors. It allows these keys and no other (`additionalProperties: false`), each optional: `crate_line` and `crate_region`, the crate totals in percent, and `files`, which maps a production file to its line percent. Every value is from 0 to 100, as measured.
+- A `coverage.files` key is the file's path relative to the crate root, with `/` separators. The keys are sorted lexicographically, one entry per line, with no line numbers. A key written another way (a leading `./`, a backslash, an absolute path) matches no file.
+- It holds **only** what is below its floor. A file covered by a live `coverage` exemption has no `files` entry. With every floor met, `coverage` is omitted.
+- `lints`, `suppressions` and `exemptions` are optional objects reserved for later ratchets. No gate reads them in 1.5.0.
+- `regressions` is an optional array of audit records for debt that was allowed to grow. Each has `kind` (`functions`, `coverage` or `coverage.files`), `key` (a `functions` key; `crate_line` or `crate_region`; or a `coverage.files` path), `from` (the old value, `null` for a new entry), `to`, `reason`, `owner` and `date` (`YYYY-MM-DD`).
 
 ### 16.2 `cargo tops baseline` (since 1.5.0)
 
 `cargo tops baseline` is the writer of the ledger. All three forms take `--path` like the other commands.
 
-**`cargo tops baseline --init`** records the first ledger from the last gate run. It needs that run's tests to have passed and its CRAP report to be non-empty. It records what was measured, so functions over the cap do not stop it. It refuses when the ledger already exists, and under `advisory`.
+**`cargo tops baseline --init`** records the first ledger from the last gate run. It records what was measured, so neither a function over the cap nor a missed coverage floor stops it:
 
-**`cargo tops baseline`** refreshes the ledger, and writes **only after a passing gate**: the last run's `report.json` has `ok: true` and `exit_code: 0`, it is not a dry run, and its `crap` layer passed. It only lowers a value or removes an entry (the function is now at or under the cap, is exempt, or is gone). A function more than 0.01 above its entry, or over the cap with no entry, is refused with exit 1 and the file is not written. It keeps the reserved objects and `regressions` as they are. It refuses under `advisory`.
+- That run's tests must have passed.
+- The `crap` and `coverage` layers, where they ran, must have passed, or have failed with their numbers judged (the row carries `judged`).
+- A layer is *judged* here when the last `report.json` has it as `pass` or `fail` and the instance sets a CRAP cap, or at least one coverage floor. A judged layer needs its report: a non-empty CRAP report, or a coverage summary that holds production files of the crate.
+- When `crap` was not judged, `functions` is `{}` and no CRAP report is read, so a crate that ratchets coverage alone can start a ledger. When `coverage` was not judged, there is no `coverage` object. To record a layer turned on later, delete the ledger, run the gate and init again.
+- `functions` takes the non-exempt production functions over the cap. `coverage` takes `crate_line`, `crate_region` and the non-exempt `files` that are below their floors.
 
-**`cargo tops baseline --check [--base REF]`** writes nothing. It checks that the tracked file validates and is in the form of §16.1 (version 2, no line numbers, sorted keys, one entry per line), then compares it, through git, with the ledger of the compared commit, which is `HEAD`, or `REF`. A `functions` entry whose score is at or under the instance's CRAP cap (§2.3) is rejected with exit 1: the ledger holds over-cap functions only.
+It refuses when a test failed, when the last run was a dry run or did not complete, when a judged layer's report is missing or empty, when the ledger already exists, and under `advisory`.
+
+**`cargo tops baseline`** refreshes the ledger, and writes **only after a passing gate**: the last run's `report.json` has `ok: true` and `exit_code: 0`, it is not a dry run, and each of `crap` and `coverage` that was judged (as above) passed. It refuses under `advisory`, and when there is no ledger.
+
+- In `functions` it only lowers a value or removes an entry (the function is now at or under the cap, is exempt, or is gone). A function more than 0.01 above its entry, or over the cap with no entry, is refused.
+- In `coverage` it only raises a value or removes an entry (the total or file now meets its floor, the file is exempt or gone, or that floor is no longer set). A value no more than 0.01 below its entry keeps the higher, recorded value, so repeated refreshes cannot move the ratchet down. A value more than 0.01 below its entry, or below its floor with no entry, is refused. An empty `coverage` object is omitted.
+- A layer that was not judged keeps its part of the ledger as it is.
+
+A refusal exits 1 and the file is not written. A refresh keeps the reserved objects and `regressions` as they are.
+
+**`cargo tops baseline --check [--base REF]`** writes nothing. It checks that the tracked file validates and is in the form of §16.1 (version 2, no line numbers, sorted `functions` and `coverage.files` keys, one entry per line), then compares it, through git, with the ledger of the compared commit, which is `HEAD`, or `REF`. A `functions` entry whose score is at or under the instance's CRAP cap (§2.3) is rejected with exit 1: the ledger holds over-cap functions only. So is a `coverage` entry whose value is at or above its floor, or whose floor is not set.
 
 **Which ledger is compared.** `--check` reads the compared commit's own `rust-tops.yaml` and takes the path from it: its `baseline` key if set, else `rust-tops-baseline.json`. A commit with no `rust-tops.yaml` has the default path; one whose `rust-tops.yaml` cannot be parsed fails the check. So a change that moves `baseline` to a new path has the new file compared with the compared commit's ledger at the old path. The file is a first ledger only when the compared commit has no ledger at its own resolved path: there is then nothing to compare, and the command says so.
 
-**What is refused.** An entry whose value is greater than in the compared ledger, or that it does not have, fails with exit 1 unless a `regressions` record matches it on all four of: `kind` (`functions`); `key`; `from`, equal to the compared commit's value, or `null` when it had no entry; and `to`, equal to the new value. Every offending key is named.
+**What is refused.** Debt that grew: a `functions` score greater than in the compared ledger, a `coverage` percent lower than in it, or an entry it does not have. Each fails with exit 1 unless a `regressions` record matches it on all four of: `kind` (`functions`; `coverage` for `crate_line` and `crate_region`; `coverage.files` for a file); `key`; `from`, equal to the compared commit's value, or `null` when it had no entry; and `to`, equal to the new value. The 0.01 tolerance does not apply here: any lower coverage value needs a record. Every offending key is named.
 
 Without `--base` the comparison is with `HEAD`, which shows only uncommitted changes. For a pull request, pass the target branch: `cargo tops baseline --check --base origin/main`. The comparison is with that commit itself, not with the merge base, so bring the branch up to date first.
 
@@ -1120,7 +1149,7 @@ Since 1.5.0, exemptions are the only way past the cap under `enforce: hard`, and
 
 `cargo tops gate` checks every record, whatever its `layer`, whether that layer is on or off, and at any `--max-tier`: a record that has expired, or whose `expires` is not a real day, is a problem line in the report and the gate exits 1 (never 2; the config is still valid). `cargo tops check` prints the same lines as warnings and exits 0. The day is UTC: a record expires at 00:00 UTC on its `expires` date, whatever the local time zone.
 
-How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `mutation` exemption explains survivors per function. A missed mutant inside a function is explained only by a record whose `symbol` names that function (matched as for `crap`) and whose `path` covers its file. A missed mutant in no function (cargo-mutants writes `function: null` for a `const` or `static` initialiser, a type alias or a field type) is explained only by a record with no `symbol` whose `path` covers its file. No record, of any shape or path, explains every survivor, so `gates.mutation.unexplained_survivors_max` always decides. A record with no `symbol` and a whole-crate `path` (`**`, `./**`, `**/*`, `.` or `./`) still lifts the class floor on `unexplained_survivors_max` in `cargo tops check` (§4), as for the other floors; it explains no survivor inside a function. A `coverage` exemption takes a file out of the per-file floor; its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
+How the gate reads them (since 1.2.0): `path` is a glob matched like the coverage exclude globs (§7.5), relative to the crate root. A `crap` exemption covers the functions of the matching files, or, with `symbol`, only the function of that name (`run` also matches a method `Cli::run`). A `mutation` exemption explains survivors per function. A missed mutant inside a function is explained only by a record whose `symbol` names that function (matched as for `crap`) and whose `path` covers its file. A missed mutant in no function (cargo-mutants writes `function: null` for a `const` or `static` initialiser, a type alias or a field type) is explained only by a record with no `symbol` whose `path` covers its file. No record, of any shape or path, explains every survivor, so `gates.mutation.unexplained_survivors_max` always decides. A record with no `symbol` and a whole-crate `path` (`**`, `./**`, `**/*`, `.` or `./`) still lifts the class floor on `unexplained_survivors_max` in `cargo tops check` (§4), as for the other floors; it explains no survivor inside a function. A `coverage` exemption takes a file out of the per-file floor (and out of `coverage.files`, §16.1); its `symbol` is not read, and the file still counts toward the crate total. An exemption counts until its `expires` date. On that date and after, or when `expires` is not a real day, it exempts nothing and the gate reports it as a failure.
 
 The `symbol` of a `crap` or `mutation` record matches the function name as cargo-mutants 27.1.0 writes it, either in full or as a `::` suffix. A bare `run` therefore matches every function called `run` under the record's `path`, and a bare `twice` matches that method in every impl there. Write the qualified form. The forms 27.1.0 writes are:
 
@@ -1221,7 +1250,7 @@ This spec is `1.5.0`. Additive layers bump minor. Changing a default threshold o
 
 1.4.0 makes the gate honest about what a pass rests on. The mutation base resolves from `--base`, then `gates.base_ref`, then `origin/HEAD`, and none found fails under CI (§8.3). A credited `property` or `acceptance` layer passes only when the credited run's nextest report holds a matching passed test, found by the new `test_filter` keys (§6.5.1). Every expired exemption fails the gate, and survivors are judged per function (§19). A pinned tool at another version is an environment failure with exit 3, and `cargo tops lock --verify` and `--write` check and record the pins (§14.5). Every change to the schema is additive, so a 1.3.0 instance still validates. A 1.3.0 gate that went green without a base, without a matching test, or past an expiry can now fail until it is fixed. No default threshold and no part of the formula changed.
 
-1.5.0 adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger with `cargo tops baseline` (§16.1, §16.2). `cargo tops init` writes `enforce: ratchet`, so a new instance needs a ledger before its gate passes. The schema adds the optional `enforce`, `advisory` and `baseline`, and the new `schema/baseline.schema.json` describes the ledger; 1.2.0 to 1.4.0 instances still validate, and one that omits `enforce` is judged for CRAP as before. The gate report adds the optional `enforce`, `enforced`, `advisory_expires` and `warnings`, where unknown lock keys are listed. `cargo tops lock --write` refuses a read-only or hard-linked lock (§14.5). Baseline v1 is deprecated. No default threshold and no part of the formula changed.
+1.5.0 adds the enforcement modes `hard`, `ratchet` and `advisory` (§2.3) and the Baseline v2 debt ledger with `cargo tops baseline` (§16.1, §16.2). The ledger ratchets CRAP scores and, in its `coverage` object, the crate and per-file coverage that is below a floor (§7.5); `baseline --init` records both, so a missed floor does not stop it. `cargo tops init` writes `enforce: ratchet`, so a new instance needs a ledger before its gate passes. The schema adds the optional `enforce`, `advisory` and `baseline`, and the new `schema/baseline.schema.json` describes the ledger; 1.2.0 to 1.4.0 instances still validate, and one that omits `enforce` is judged for CRAP and coverage as before. The gate report adds the optional `enforce`, `enforced`, `advisory_expires` and `warnings`, where unknown lock keys are listed. `cargo tops lock --write` refuses a read-only or hard-linked lock (§14.5). Baseline v1 is deprecated. No default threshold and no part of the formula changed.
 
 ---
 
