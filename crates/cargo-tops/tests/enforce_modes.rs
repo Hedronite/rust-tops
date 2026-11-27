@@ -504,6 +504,28 @@ fn seed_cov80(f: &Fixture, file_key: &str) {
 }
 
 #[test]
+fn coverage_ratchet_requires_ledger_when_crap_is_off() {
+    let f = fixture("cov-only-missing");
+    write_reports(&f, 100, &[("./src/lib.rs", "ok", 1.0)]);
+    edit_yaml(&f, |doc| {
+        if let Some(layers) = doc.pointer_mut("/layers").and_then(Value::as_array_mut) {
+            for layer in layers {
+                if layer.get("id").and_then(Value::as_str) == Some("crap") {
+                    if let Some(map) = layer.as_object_mut() {
+                        map.insert("enabled".into(), json!(false));
+                    }
+                }
+            }
+        }
+    });
+    let (out, text) = run(&f, &["gate"]);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("cargo tops baseline --init"), "{text}");
+    assert!(text.contains("coverage: missing baseline"), "{text}");
+    assert!(!text.contains("crap: missing baseline"), "{text}");
+}
+
+#[test]
 fn coverage_ratchet_requires_ledger_and_allows_listed_within_epsilon() {
     let f = fixture("cov-ratchet");
     write_reports(&f, 80, &[("./src/lib.rs", "ok", 1.0)]);

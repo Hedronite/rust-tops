@@ -88,58 +88,68 @@ pub(crate) struct Judged {
 /// Every coverage floor and CRAP rule this gate's reports miss. `report`
 /// is the gate's artifact directory.
 pub(crate) fn judge(dir: &Path, cfg: &TopsConfig, runs: &[Run], report: &Path) -> Judged {
-    if !layer_passed(runs, "coverage") && !layer_passed(runs, "crap") {
+    let coverage = layer_passed(runs, "coverage");
+    let crap = layer_passed(runs, "crap");
+    if !coverage && !crap {
         return Judged::default();
     }
+    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
+    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
+    let today = exemptions::today();
     let ledger = load_v2(dir, cfg);
     let mut judged = Judged::default();
-    if let Some(err) = &ledger.error {
-        judged.problems.push(format!("crap: {err}"));
-        judged.crap_problems = 1;
+    attach_ledger_faults(&mut judged, dir, cfg, &ledger, runs);
+    if coverage {
+        let (found, numbers) = judge_coverage(cfg, &scope, report, &today, &ledger);
+        judged.coverage_problems += found.len();
+        judged.problems.extend(found);
+        judged.coverage = Some(numbers);
     }
-    add_coverage(&mut judged, dir, cfg, runs, report, &ledger);
-    add_crap(&mut judged, dir, cfg, runs, report, &ledger);
+    if crap {
+        let (found, numbers) = judge_crap(dir, cfg, &scope, report, &today, &ledger);
+        judged.crap_problems += found.len();
+        judged.problems.extend(found);
+        judged.crap = numbers;
+    }
     judged
 }
 
-fn add_coverage(
+fn attach_ledger_faults(
     judged: &mut Judged,
     dir: &Path,
     cfg: &TopsConfig,
-    runs: &[Run],
-    report: &Path,
     ledger: &LedgerLoad,
-) {
-    if !layer_passed(runs, "coverage") {
-        return;
-    }
-    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
-    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
-    let today = exemptions::today();
-    let (found, numbers) = judge_coverage(cfg, &scope, report, &today, ledger);
-    judged.coverage_problems += found.len();
-    judged.problems.extend(found);
-    judged.coverage = Some(numbers);
-}
-
-fn add_crap(
-    judged: &mut Judged,
-    dir: &Path,
-    cfg: &TopsConfig,
     runs: &[Run],
-    report: &Path,
-    ledger: &LedgerLoad,
 ) {
-    if !layer_passed(runs, "crap") {
-        return;
+    let coverage = layer_passed(runs, "coverage");
+    let crap = layer_passed(runs, "crap");
+    match ledger {
+        LedgerLoad::Invalid(err) => {
+            if coverage {
+                judged.problems.push(format!("coverage: {err}"));
+                judged.coverage_problems += 1;
+            }
+            if crap {
+                judged.problems.push(format!("crap: {err}"));
+                judged.crap_problems += 1;
+            }
+        }
+        LedgerLoad::Absent if cfg.enforce == Some(Enforce::Ratchet) => {
+            let msg = format!(
+                "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
+                baseline::path(dir, cfg).display()
+            );
+            if coverage && coverage_floor::floors_set(&cfg.gates.coverage) {
+                judged.problems.push(format!("coverage: {msg}"));
+                judged.coverage_problems += 1;
+            }
+            if crap && cfg.gates.crap.cap().is_some() {
+                judged.problems.push(format!("crap: {msg}"));
+                judged.crap_problems += 1;
+            }
+        }
+        LedgerLoad::Off | LedgerLoad::Present(_) | LedgerLoad::Absent => {}
     }
-    let globs = cfg.gates.coverage.exclude_globs.clone().unwrap_or_default();
-    let scope = Scope::new(dir, &crate_root(dir, &cfg.crate_.name), &globs);
-    let today = exemptions::today();
-    let (found, numbers) = judge_crap(dir, cfg, &scope, report, &today, ledger);
-    judged.crap_problems += found.len();
-    judged.problems.extend(found);
-    judged.crap = numbers;
 }
 
 fn layer_passed(runs: &[Run], layer: &str) -> bool {
@@ -178,12 +188,12 @@ fn judge_coverage(
         Ok(files) => {
             (numbers.line_pct, numbers.region_pct) = coverage_floor::percents(&files);
             numbers.files = files.len();
-            if ledger.error.is_none() {
+            if ledger.ready(cfg) {
                 problems.extend(coverage_floor::judge(
                     &files,
                     gate,
                     &live,
-                    coverage_ratchet(cfg, &ledger.mode),
+                    coverage_ratchet(cfg, ledger),
                 ));
             }
         }
@@ -193,10 +203,10 @@ fn judge_coverage(
     (problems, numbers)
 }
 
-fn coverage_ratchet<'a>(cfg: &TopsConfig, v2: &'a ModeV2) -> Option<&'a CoverageLedger> {
-    match (cfg.enforce, v2) {
-        (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(Some(ledger))) => {
-            Some(ledger.coverage.as_ref().unwrap_or(&coverage_floor::EMPTY))
+fn coverage_ratchet<'a>(cfg: &TopsConfig, ledger: &'a LedgerLoad) -> Option<&'a CoverageLedger> {
+    match (cfg.enforce, ledger) {
+        (Some(Enforce::Ratchet | Enforce::Advisory), LedgerLoad::Present(v2)) => {
+            Some(v2.coverage.as_ref().unwrap_or(&coverage_floor::EMPTY))
         }
         _ => None,
     }
@@ -214,8 +224,7 @@ fn judge_crap(
     today: &str,
     ledger: &LedgerLoad,
 ) -> (Vec<String>, Option<CrapNumbers>) {
-    let gate = &cfg.gates.crap;
-    let Some(threshold) = gate.cap() else {
+    let Some(threshold) = cfg.gates.crap.cap() else {
         println!(
             "\n==> [crap] no threshold_agent or threshold_production: not judged here \
              (a workspace root keeps its packages' floors)"
@@ -236,8 +245,8 @@ fn judge_crap(
         Ok(current) => {
             numbers.max = current.iter().map(|score| score.crap).reduce(f64::max);
             numbers.functions = current.len();
-            if ledger.error.is_none() {
-                match crap_baseline(dir, cfg, scope, report, &ledger.mode) {
+            if ledger.ready(cfg) {
+                match crap_baseline(dir, cfg, scope, report, ledger) {
                     Ok(before) => {
                         announce(cfg.enforce, before.as_deref());
                         let over =
@@ -281,22 +290,27 @@ fn announce_crap_header(
     }
 }
 
-enum ModeV2 {
+enum LedgerLoad {
     Off,
-    On(Option<Box<BaselineV2>>),
+    Present(Box<BaselineV2>),
+    Absent,
+    Invalid(String),
 }
 
-struct LedgerLoad {
-    mode: ModeV2,
-    error: Option<String>,
+impl LedgerLoad {
+    /// Floor and cap judging run when the ledger is usable for this mode.
+    fn ready(&self, cfg: &TopsConfig) -> bool {
+        match self {
+            Self::Off | Self::Present(_) => true,
+            Self::Absent => cfg.enforce == Some(Enforce::Advisory),
+            Self::Invalid(_) => false,
+        }
+    }
 }
 
 fn load_v2(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
     match cfg.enforce {
-        Some(Enforce::Hard) | None => LedgerLoad {
-            mode: ModeV2::Off,
-            error: None,
-        },
+        Some(Enforce::Hard) | None => LedgerLoad::Off,
         Some(Enforce::Ratchet | Enforce::Advisory) => read_v2_mode(dir, cfg),
     }
 }
@@ -304,20 +318,11 @@ fn load_v2(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
 fn read_v2_mode(dir: &Path, cfg: &TopsConfig) -> LedgerLoad {
     let path = baseline::path(dir, cfg);
     if !path.exists() {
-        return LedgerLoad {
-            mode: ModeV2::On(None),
-            error: None,
-        };
+        return LedgerLoad::Absent;
     }
     match baseline::read_v2(&path, cfg) {
-        Ok(v2) => LedgerLoad {
-            mode: ModeV2::On(Some(Box::new(v2))),
-            error: None,
-        },
-        Err(err) => LedgerLoad {
-            mode: ModeV2::Off,
-            error: Some(err),
-        },
+        Ok(v2) => LedgerLoad::Present(Box::new(v2)),
+        Err(err) => LedgerLoad::Invalid(err),
     }
 }
 
@@ -326,19 +331,15 @@ fn crap_baseline(
     cfg: &TopsConfig,
     scope: &Scope,
     report: &Path,
-    mode: &ModeV2,
+    ledger: &LedgerLoad,
 ) -> Result<Option<Vec<Score>>, String> {
-    match (cfg.enforce, mode) {
+    match (cfg.enforce, ledger) {
         (None, _) => read_baseline(&baseline_path(dir, cfg, report), scope),
-        (Some(Enforce::Hard), _) | (_, ModeV2::Off) => Ok(None),
-        (Some(Enforce::Ratchet | Enforce::Advisory), ModeV2::On(Some(v2))) => {
+        (Some(Enforce::Hard), _) | (_, LedgerLoad::Off | LedgerLoad::Invalid(_)) => Ok(None),
+        (Some(Enforce::Ratchet | Enforce::Advisory), LedgerLoad::Present(v2)) => {
             Ok(Some(baseline::scores_from(v2.as_ref())))
         }
-        (Some(Enforce::Ratchet), ModeV2::On(None)) => Err(format!(
-            "missing baseline {}; run `cargo tops baseline --init` (PROTOCOL.md §2.3, §16.2)",
-            baseline::path(dir, cfg).display()
-        )),
-        (Some(Enforce::Advisory), ModeV2::On(None)) => Ok(None),
+        (Some(Enforce::Ratchet | Enforce::Advisory), LedgerLoad::Absent) => Ok(None),
     }
 }
 

@@ -845,3 +845,23 @@ fn ratchet_coverage_listed_file_passes_and_unlisted_fails_the_floor() {
     );
     assert!(!text.contains("src/lib.rs line coverage"), "{text}");
 }
+
+#[test]
+fn a_corrupt_ledger_is_a_coverage_problem_when_crap_did_not_run() {
+    let fixture = fixture("cov-corrupt");
+    edit(&fixture, |doc| {
+        set(doc, "", "enforce", Some(json!("ratchet")));
+        let layers = doc.pointer_mut("/layers").and_then(Value::as_array_mut);
+        for layer in layers.expect("layers") {
+            if layer.get("id").and_then(Value::as_str) == Some("crap") {
+                set(layer, "", "enabled", Some(Value::Bool(false)));
+            }
+        }
+    });
+    good_summary(&fixture);
+    fs::write(fixture.repo.join("rust-tops-baseline.json"), "{not json\n").expect("write");
+    let (code, text) = gate(&fixture);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(text.contains("coverage: baseline"), "{text}");
+    assert!(!text.contains("crap: baseline"), "{text}");
+}
