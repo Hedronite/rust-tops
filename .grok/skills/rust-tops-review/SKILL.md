@@ -32,8 +32,8 @@ MIT. The style rules are distilled from BeautifulRust v1.5.0 (40db61c6), rewritt
 
 `status` is `ok`, `finding` or `n/a`. A `finding` needs a note. `answers` gives `ok: false` for a missing or unknown ID. Report each `finding` as a review finding.
 
-By default the range is `base...HEAD` plus the working tree: tracked edits and untracked files. `--committed-only` omits the working tree.
+By default the range is `base...HEAD` plus the working tree: tracked edits and untracked files. `--committed-only` omits the working tree. For `style` it also needs a clean tree: with any tracked change it refuses, `ok: false`; untracked files are allowed.
 
-Each command prints JSON. `command` is the exact argv of each external command run, in order, joined by ` && `, with paths relative to `--path`; a command that runs none gives the script's own invocation. `ok` is false when a command fails or, for `style` and `answers`, finds a problem. `style` needs a build. A wrong Nushell minor is `ok: false` with `nu <lock> required, found <version>`.
+Each command prints JSON. `command` is the exact argv of each external command run, in order, joined by ` && `, with paths relative to `--path`; a command that runs none gives the script's own invocation. `ok` is false when a command fails or, for `style` and `answers`, finds a problem. `style` runs `cargo clippy`, so run it where this project's cargo builds belong, not on a machine that only edits or controls. An older or other-major Nushell than the lock's is `ok: false` with `nu <lock> required, found <version>`.
 
 If `nu` is not on PATH, there is no JSON. Treat `nu: command not found` as `{"ok":false,"command":"nu rust-tops-review.nu","error":"nu: command not found"}`.

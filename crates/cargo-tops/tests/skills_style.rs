@@ -261,41 +261,54 @@ fn two_runs_in_different_dirs_are_byte_identical() {
     }
 }
 
-#[test]
-fn another_nushell_minor_is_refused() {
-    let Some(nu) = nu_or_skip() else { return };
-    let (dir, target) = fresh("minor");
-    let version = Command::new(&nu)
+/// The running nu's version, as `(major, minor, text)`.
+fn nu_version(nu: &Path) -> (u32, u32, String) {
+    let out = Command::new(nu)
         .arg("--version")
         .output()
         .expect("nu --version");
-    let found = String::from_utf8(version.stdout)
+    let text = String::from_utf8(out.stdout)
         .expect("utf-8")
         .trim()
         .to_string();
-    let minor: u32 = found
-        .split('.')
-        .nth(1)
-        .expect("minor")
-        .parse()
-        .expect("number");
-    let wrong = format!("0.{}.0", if minor == 0 { 1 } else { minor - 1 });
-    fs::write(
-        dir.join("rust-tops.lock"),
-        format!("[tools]\nnushell = \"{wrong}\"\n"),
-    )
-    .expect("lock");
-    let doc = json(&check(&nu, &dir, &target, &[]));
-    assert_eq!(
-        doc.get("ok"),
-        Some(&serde_json::Value::Bool(false)),
-        "{doc}"
-    );
-    assert_eq!(
-        doc.get("error").and_then(serde_json::Value::as_str),
-        Some(format!("nu {wrong} required, found {found}").as_str())
-    );
-    assert!(doc.get("data").is_none(), "{doc}");
+    let mut parts = text.split('.').map(|p| p.parse().expect("number"));
+    let (major, minor) = (parts.next().expect("major"), parts.next().expect("minor"));
+    (major, minor, text)
+}
+
+/// `check` on a copy of the fixture whose lock asks for `required`.
+fn check_with_lock(nu: &Path, label: &str, required: &str) -> serde_json::Value {
+    let (dir, target) = fresh(label);
+    let lock = format!("[tools]\nnushell = \"{required}\"\n");
+    fs::write(dir.join("rust-tops.lock"), lock).expect("lock");
+    json(&check(nu, &dir, &target, &[]))
+}
+
+#[test]
+fn an_older_minor_or_another_major_of_nushell_is_refused() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (major, minor, found) = nu_version(&nu);
+    let newer_minor = format!("{major}.{}.0", minor + 1);
+    let next_major = format!("{}.0.0", major + 1);
+    for (label, required) in [("older", newer_minor), ("major", next_major)] {
+        let doc = check_with_lock(&nu, label, &required);
+        assert_eq!(doc.get("ok"), Some(&serde_json::Value::Bool(false)));
+        assert_eq!(
+            doc.get("error").and_then(serde_json::Value::as_str),
+            Some(format!("nu {required} required, found {found}").as_str())
+        );
+        assert!(doc.get("data").is_none(), "{doc}");
+    }
+}
+
+#[test]
+fn a_newer_minor_of_the_same_major_runs() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (major, minor, _) = nu_version(&nu);
+    let older = format!("{major}.{}.0", minor.saturating_sub(1));
+    let doc = check_with_lock(&nu, "newer", &older);
+    assert!(doc.get("error").is_none(), "{doc}");
+    assert!(!findings(&doc).is_empty(), "{doc}");
 }
 
 #[test]
@@ -339,6 +352,7 @@ fn base_keeps_only_findings_on_changed_lines() {
     let Some(nu) = nu_or_skip() else { return };
     let (dir, target) = fresh("base");
     fs::write(dir.join(".gitignore"), "target\n").expect("gitignore");
+    opt_in(&dir);
     git(&dir, &["init", "-q"]);
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-qm", "base"]);
@@ -539,5 +553,393 @@ fn a_planted_judgment_drift_is_reported() {
             .iter()
             .any(|p| p.contains(&format!("misses the style judgment {id}"))),
         "{drift:?}"
+    );
+}
+
+// --- writer mode (`--base`) --------------------------------------------------
+
+/// Turn `unwrap_used` and `indexing_slicing` on in the crate's own lint table.
+fn opt_in(dir: &Path) {
+    let manifest = dir.join("Cargo.toml");
+    let text = fs::read_to_string(&manifest).expect("Cargo.toml");
+    let table = "unwrap_used = \"warn\"\nindexing_slicing = \"warn\"\n";
+    let text = if text.contains("[lints.clippy]") {
+        text.replace("[lints.clippy]\n", &format!("[lints.clippy]\n{table}"))
+    } else {
+        format!("{text}\n[lints.clippy]\n{table}")
+    };
+    fs::write(manifest, text).expect("Cargo.toml");
+}
+
+fn put(dir: &Path, rel: &str, text: &str) {
+    let path = dir.join(rel);
+    fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    fs::write(path, text).expect("write");
+}
+
+const SMALL_LIB: &str = "//! Fixture.\n\n/// First.\npub fn first(v: &[i32]) -> i32 {\n    v.first().copied().unwrap_or(0)\n}\n\n/// Gone.\npub fn gone() {}\n";
+
+const SMALL_EDIT: &str =
+    "//! Fixture.\n\n/// First.\npub fn first(v: &[i32]) -> i32 {\n    *v.first().unwrap()\n}\n";
+
+/// A small committed library in its own temp dir, plus a target dir.
+fn small(label: &str) -> (PathBuf, PathBuf) {
+    let root =
+        std::env::temp_dir().join(format!("cargo-tops-style-{label}-{}", std::process::id()));
+    drop(fs::remove_dir_all(&root));
+    let dir = root.join("crate");
+    let manifest = "[package]\nname = \"small\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
+    put(&dir, "Cargo.toml", manifest);
+    put(&dir, ".gitignore", "target\nCargo.lock\n");
+    put(&dir, "src/lib.rs", SMALL_LIB);
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-qm", "base"]);
+    (dir, root.join("target"))
+}
+
+/// `(rule, file, line)` of every finding.
+fn places(doc: &serde_json::Value) -> Vec<(String, String, u64)> {
+    assert!(doc.get("error").is_none(), "the check did not run: {doc}");
+    findings(doc)
+        .iter()
+        .map(|f| {
+            let text = |key| field(f, key).as_str().unwrap_or("").to_string();
+            let line = field(f, "line").as_u64().unwrap_or(0);
+            (text("rule"), text("file"), line)
+        })
+        .collect()
+}
+
+fn place(rule: &str, file: &str, line: u64) -> (String, String, u64) {
+    (rule.to_string(), file.to_string(), line)
+}
+
+fn judgment_ids(doc: &serde_json::Value) -> Vec<String> {
+    doc.pointer("/data/judgment")
+        .and_then(serde_json::Value::as_array)
+        .expect("judgment")
+        .iter()
+        .filter_map(|j| j.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+fn command(doc: &serde_json::Value) -> &str {
+    doc.get("command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+}
+
+/// The hunk headers `git diff -U0 HEAD` prints.
+fn hunks(dir: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["diff", "-U0", "HEAD"])
+        .output()
+        .expect("git diff");
+    String::from_utf8(out.stdout)
+        .expect("utf-8")
+        .lines()
+        .filter(|l| l.starts_with("@@ "))
+        .map(|l| l.split(" @@").next().unwrap_or(l).to_string())
+        .collect()
+}
+
+#[test]
+fn count_less_and_deletion_hunks_give_json_and_exact_findings() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("hunks");
+    opt_in(&dir);
+    git(&dir, &["commit", "-aqm", "opt in"]);
+    put(&dir, "src/lib.rs", SMALL_EDIT);
+    put(&dir, "src/bin/tool.rs", "fn main() {}\n");
+    git(&dir, &["add", "."]);
+    assert_eq!(
+        hunks(&dir),
+        ["@@ -0,0 +1", "@@ -5 +5", "@@ -7,3 +6,0"],
+        "one added line, one edited line, a pure deletion"
+    );
+    let want = vec![
+        place("DOC-1", "src/bin/tool.rs", 1),
+        place("PANIC-1", "src/lib.rs", 5),
+    ];
+    let doc = json(&check(&nu, &dir, &target, &["--base", "HEAD"]));
+    assert_eq!(places(&doc), want, "{doc}");
+    git(&dir, &["commit", "-qm", "change"]);
+    let args = ["--base", "HEAD~1", "--committed-only"];
+    let doc = json(&check(&nu, &dir, &target, &args));
+    assert_eq!(places(&doc), want, "{doc}");
+}
+
+#[test]
+fn base_sees_unstaged_and_untracked_lines_unless_committed_only() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("worktree");
+    opt_in(&dir);
+    git(&dir, &["commit", "-aqm", "opt in"]);
+    // A user's diff settings must not hide the paths.
+    git(&dir, &["config", "diff.mnemonicPrefix", "true"]);
+    put(&dir, "src/lib.rs", SMALL_EDIT);
+    put(
+        &dir,
+        "src/bin/extra.rs",
+        "//! Extra.\nfn main() {\n    let v = [1];\n    let _ = v.first().unwrap();\n}\n",
+    );
+    let doc = json(&check(&nu, &dir, &target, &["--base", "HEAD"]));
+    let want = vec![
+        place("PANIC-1", "src/bin/extra.rs", 4),
+        place("PANIC-1", "src/lib.rs", 5),
+    ];
+    assert_eq!(places(&doc), want, "{doc}");
+    let args = ["--base", "HEAD", "--committed-only"];
+    assert_refused_as_dirty(&json(&check(&nu, &dir, &target, &args)));
+    // Untracked files cannot move a tracked line, and are not checked.
+    git(&dir, &["checkout", "--", "src/lib.rs"]);
+    let doc = json(&check(&nu, &dir, &target, &args));
+    assert_eq!(places(&doc), Vec::new(), "{doc}");
+    assert_eq!(judgment_ids(&doc), Vec::<String>::new(), "{doc}");
+}
+
+const WITH_TESTS: &str = "//! Fixture.\n\n/// First.\npub fn first(v: &[i32]) -> i32 {\n    v.first().copied().unwrap_or(0)\n}\n\n/// Gone.\npub fn gone() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn first_of_one() {\n        let v = vec![1];\n        assert_eq!(*v.first().unwrap(), v[0]);\n    }\n}\n";
+
+const TEST_FILE: &str = "//! Journey.\n#[test]\nfn journey() {\n    let v = vec![1];\n    assert_eq!(*v.first().unwrap(), v[0]);\n}\n";
+
+#[test]
+fn a_tests_only_change_is_ok_and_asks_nothing() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("tests-only");
+    opt_in(&dir);
+    // A hit that was there before the change does not count against it.
+    put(
+        &dir,
+        "src/lib.rs",
+        &SMALL_LIB.replace("v.first().copied().unwrap_or(0)", "*v.first().unwrap()"),
+    );
+    git(&dir, &["commit", "-aqm", "an old unwrap"]);
+    let old = fs::read_to_string(dir.join("src/lib.rs")).expect("lib.rs");
+    let tests = WITH_TESTS.split_once("\n#[cfg(test)]").expect("tests").1;
+    put(&dir, "src/lib.rs", &format!("{old}\n#[cfg(test)]{tests}"));
+    put(&dir, "tests/journey.rs", TEST_FILE);
+    let doc = json(&check(&nu, &dir, &target, &["--base", "HEAD"]));
+    assert_eq!(doc.get("ok"), Some(&serde_json::Value::Bool(true)), "{doc}");
+    assert_eq!(places(&doc), Vec::new(), "{doc}");
+    assert_eq!(judgment_ids(&doc), Vec::<String>::new(), "{doc}");
+}
+
+#[test]
+fn writer_mode_keeps_production_hits_and_audit_keeps_all() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("exempt");
+    opt_in(&dir);
+    git(&dir, &["commit", "-aqm", "opt in"]);
+    put(
+        &dir,
+        "src/lib.rs",
+        &WITH_TESTS.replace("v.first().copied().unwrap_or(0)", "v[0]"),
+    );
+    put(&dir, "tests/journey.rs", TEST_FILE);
+    let panics = |extra: &[&str]| {
+        let mut all = places(&json(&check(&nu, &dir, &target, extra)));
+        all.retain(|(rule, _, _)| rule.starts_with("PANIC-"));
+        all
+    };
+    assert_eq!(
+        panics(&["--base", "HEAD"]),
+        vec![place("PANIC-2", "src/lib.rs", 5)]
+    );
+    let audit = panics(&["--base", "HEAD", "--audit"]);
+    assert!(
+        audit.iter().any(|(_, file, _)| file == "tests/journey.rs"),
+        "{audit:?}"
+    );
+    assert!(
+        audit
+            .iter()
+            .any(|(_, file, line)| file == "src/lib.rs" && *line == 16),
+        "{audit:?}"
+    );
+}
+
+#[test]
+fn writer_mode_follows_the_crates_lints() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("all-warn");
+    let manifest = fs::read_to_string(dir.join("Cargo.toml")).expect("Cargo.toml");
+    let lints =
+        "[workspace]\n[workspace.lints.clippy]\nall = \"warn\"\n[lints]\nworkspace = true\n";
+    put(&dir, "Cargo.toml", &format!("{manifest}{lints}"));
+    git(&dir, &["commit", "-aqm", "all = warn"]);
+    put(&dir, "src/lib.rs", SMALL_EDIT);
+    let writer = json(&check(&nu, &dir, &target, &["--base", "HEAD"]));
+    assert_eq!(places(&writer), Vec::new(), "{writer}");
+    assert!(!command(&writer).contains("unwrap_used"), "{writer}");
+    assert!(command(&writer).contains("-W clippy::ptr_arg"), "{writer}");
+    let audit = json(&check(&nu, &dir, &target, &["--audit"]));
+    assert!(
+        command(&audit).contains("-W clippy::unwrap_used"),
+        "{audit}"
+    );
+    assert!(
+        places(&audit).contains(&place("PANIC-1", "src/lib.rs", 5)),
+        "{audit}"
+    );
+    // The instance's deny list opts in too.
+    let yaml = "gates:\n  lint:\n    clippy_deny: [\"clippy::unwrap_used\"]\n";
+    put(&dir, "rust-tops.yaml", yaml);
+    let opted = json(&check(&nu, &dir, &target, &["--base", "HEAD"]));
+    assert_eq!(
+        places(&opted),
+        vec![place("PANIC-1", "src/lib.rs", 5)],
+        "{opted}"
+    );
+}
+
+#[test]
+fn writer_judgment_follows_the_changed_lines() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("judgment");
+    let added = "\n/// Copy.\npub fn copy(v: &[i32]) -> Vec<i32> {\n    v.to_vec().clone()\n}\n";
+    put(&dir, "src/lib.rs", &format!("{SMALL_LIB}{added}"));
+    let ids = judgment_ids(&json(&check(&nu, &dir, &target, &["--base", "HEAD"])));
+    for want in ["API-4", "API-6", "OWN-2", "DOC-5"] {
+        assert!(ids.iter().any(|id| id == want), "{want}: {ids:?}");
+    }
+    for unwanted in ["UNSAFE-5", "PANIC-7", "TRAIT-3", "CONC-3"] {
+        assert!(!ids.iter().any(|id| id == unwanted), "{unwanted}: {ids:?}");
+    }
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted);
+}
+
+#[test]
+fn every_judgment_rule_has_a_trigger() {
+    let source = fs::read_to_string(script()).expect("script");
+    let block = source.split_once("const TRIGGERS = [").expect("TRIGGERS").1;
+    let block = block.split_once("\n]").expect("end").0;
+    let mut have: Vec<&str> = block
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("{id: \""))
+        .filter_map(|l| l.split('"').next())
+        .collect();
+    have.sort_unstable();
+    let rules = catalog();
+    let mut want: Vec<&str> = rules
+        .iter()
+        .filter(|r| rule_str(r, "kind") == "judgment" && for_style(r))
+        .map(|r| rule_str(r, "id"))
+        .collect();
+    want.sort_unstable();
+    assert_eq!(have, want);
+}
+
+#[test]
+fn writer_output_is_byte_identical_and_vendor_is_skipped() {
+    let Some(nu) = nu_or_skip() else { return };
+    let run = |label: &str| {
+        let (dir, target) = small(label);
+        put(&dir, "src/lib.rs", SMALL_EDIT);
+        put(&dir, "vendor/dep/src/lib.rs", "pub fn get_x(&self) {}\n");
+        let writer = check(&nu, &dir, &target, &["--base", "HEAD"]);
+        let audit = check(&nu, &dir, &target, &[]);
+        assert!(!writer.contains("vendor/"), "{writer}");
+        assert!(!audit.contains("vendor/"), "{audit}");
+        writer
+    };
+    let first = run("same-a");
+    assert_eq!(first, run("same-b"));
+    for word in [
+        "cargo-tops-style",
+        "/tmp",
+        "/var/folders",
+        "/Users",
+        "/home",
+    ] {
+        assert!(!first.contains(word), "output names a path: {word}");
+    }
+}
+
+#[test]
+fn committed_only_needs_a_base_and_a_bad_base_is_not_ok() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("flags");
+    for extra in [&["--committed-only"][..], &["--base", "no-such-ref"][..]] {
+        let doc = json(&check(&nu, &dir, &target, extra));
+        assert_eq!(
+            doc.get("ok"),
+            Some(&serde_json::Value::Bool(false)),
+            "{doc}"
+        );
+        assert!(doc.get("error").is_some(), "{doc}");
+        assert!(doc.get("data").is_none(), "{doc}");
+    }
+}
+
+#[test]
+fn a_changed_last_line_of_a_chain_is_found() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("chain");
+    opt_in(&dir);
+    let chain = |last: &str| {
+        let body = format!("    v.iter()\n        .copied()\n        .next()\n        {last}\n");
+        SMALL_LIB.replace("    v.first().copied().unwrap_or(0)\n", &body)
+    };
+    put(&dir, "src/lib.rs", &chain(".unwrap_or(0)"));
+    git(&dir, &["commit", "-aqm", "chain"]);
+    put(&dir, "src/lib.rs", &chain(".unwrap()"));
+    let doc = json(&check(&nu, &dir, &target, &["--base", "HEAD"]));
+    assert_eq!(
+        places(&doc),
+        vec![place("PANIC-1", "src/lib.rs", 5)],
+        "{doc}"
+    );
+    let found = findings(&doc);
+    assert!(found.iter().all(|f| f.get("end").is_none()), "{doc}");
+}
+
+fn assert_refused_as_dirty(doc: &serde_json::Value) {
+    assert_eq!(
+        doc.get("ok"),
+        Some(&serde_json::Value::Bool(false)),
+        "{doc}"
+    );
+    assert_eq!(
+        doc.get("error").and_then(serde_json::Value::as_str),
+        Some("--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"),
+        "{doc}"
+    );
+    assert!(doc.get("data").is_none(), "{doc}");
+}
+
+#[test]
+fn committed_only_refuses_a_shifted_tracked_edit() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (dir, target) = small("shifted");
+    opt_in(&dir);
+    git(&dir, &["commit", "-aqm", "opt in"]);
+    put(&dir, "src/lib.rs", SMALL_EDIT);
+    git(&dir, &["commit", "-aqm", "unwrap"]);
+    let args = ["--base", "HEAD~1", "--committed-only"];
+    let hit = vec![place("PANIC-1", "src/lib.rs", 5)];
+    let doc = json(&check(&nu, &dir, &target, &args));
+    assert_eq!(places(&doc), hit, "{doc}");
+    // Three lines on top move the unwrap off the committed range.
+    let shifted = format!("//! One.\n//! Two.\n//! Three.\n{SMALL_EDIT}");
+    put(&dir, "src/lib.rs", &shifted);
+    assert_refused_as_dirty(&json(&check(&nu, &dir, &target, &args)));
+    git(&dir, &["add", "."]);
+    assert_refused_as_dirty(&json(&check(&nu, &dir, &target, &args)));
+    let working = json(&check(&nu, &dir, &target, &["--base", "HEAD~1"]));
+    let moved = vec![place("PANIC-1", "src/lib.rs", 8)];
+    assert_eq!(places(&working), moved, "{working}");
+    git(&dir, &["reset", "-q", "--hard"]);
+    put(&dir, "src/bin/new.rs", "fn main() {}\n");
+    let doc = json(&check(&nu, &dir, &target, &args));
+    assert_eq!(places(&doc), hit, "{doc}");
+    assert!(
+        command(&doc).starts_with("git -C . status --porcelain"),
+        "{doc}"
     );
 }

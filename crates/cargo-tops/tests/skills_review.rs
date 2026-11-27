@@ -253,6 +253,17 @@ fn findings(doc: &Json) -> Vec<(String, u64)> {
         .unwrap_or_default()
 }
 
+/// A tracked edit would move hits off HEAD's lines, so the run is refused.
+fn assert_refused_as_dirty(doc: &Json) {
+    assert_eq!(ok(doc), Some(false), "{doc}");
+    assert_eq!(
+        doc.get("error").and_then(Json::as_str),
+        Some("--committed-only needs a clean tree: commit or stash the tracked changes, or drop --committed-only"),
+        "{doc}"
+    );
+    assert!(doc.get("data").is_none(), "{doc}");
+}
+
 #[test]
 fn style_reports_only_findings_inside_the_review_range() {
     let Some(nu) = nu_or_skip() else { return };
@@ -277,13 +288,11 @@ fn style_reports_only_findings_inside_the_review_range() {
     let rule = unwrap_rule_id();
     assert!(all.to_string().contains(&rule));
 
-    let committed = json(&run(
-        &nu,
-        &script,
-        &repo,
-        &[&args[..], &["--committed-only"]].concat(),
-        &target,
-    ));
+    let only = [&args[..], &["--committed-only"]].concat();
+    assert_refused_as_dirty(&json(&run(&nu, &script, &repo, &only, &target)));
+    // The untracked module stays: it moves no tracked line.
+    git(&repo, &["checkout", "--", "src/lib.rs"]);
+    let committed = json(&run(&nu, &script, &repo, &only, &target));
     assert_eq!(
         findings(&committed),
         vec![("src/lib.rs".to_string(), lines - 3)],
@@ -331,44 +340,113 @@ fn style_runs_in_different_dirs_are_byte_identical() {
     }
 }
 
-#[test]
-fn style_refuses_another_nushell_minor() {
-    let Some(nu) = nu_or_skip() else { return };
-    let root = temp("style-minor");
-    let repo = style_repo(&root);
-    let version = Command::new(&nu)
+/// The running nu's version, as `(major, minor, text)`.
+fn nu_version(nu: &Path) -> (u32, u32, String) {
+    let out = Command::new(nu)
         .arg("--version")
         .output()
         .expect("nu --version");
-    let found = String::from_utf8(version.stdout)
+    let text = String::from_utf8(out.stdout)
         .expect("utf-8")
         .trim()
         .to_string();
-    let minor: u32 = found
-        .split('.')
-        .nth(1)
-        .expect("minor")
-        .parse()
-        .expect("number");
-    let wrong = format!("0.{}.0", if minor == 0 { 1 } else { minor - 1 });
-    fs::write(
-        repo.join("rust-tops.lock"),
-        format!("[tools]\nnushell = \"{wrong}\"\n"),
-    )
-    .expect("lock");
+    let mut parts = text.split('.').map(|p| p.parse().expect("number"));
+    let (major, minor) = (parts.next().expect("major"), parts.next().expect("minor"));
+    (major, minor, text)
+}
+
+/// `style` on the style repo with a lock that asks for `required`.
+fn style_with_lock(nu: &Path, label: &str, required: &str) -> Json {
+    let root = temp(label);
+    let repo = style_repo(&root);
+    let lock = format!("[tools]\nnushell = \"{required}\"\n");
+    fs::write(repo.join("rust-tops.lock"), lock).expect("lock");
     let args = ["style", "--base", "base", "--path", "."];
-    let refused = json(&run(
-        &nu,
+    json(&run(
+        nu,
         &skills_tree(&root),
         &repo,
         &args,
         &root.join("target"),
-    ));
+    ))
+}
+
+#[test]
+fn style_refuses_an_older_nushell_and_takes_a_newer_minor() {
+    let Some(nu) = nu_or_skip() else { return };
+    let (major, minor, found) = nu_version(&nu);
+    let wrong = format!("{major}.{}.0", minor + 1);
+    let refused = style_with_lock(&nu, "style-older", &wrong);
     assert_eq!(ok(&refused), Some(false), "{refused}");
     assert_eq!(
         refused.get("error").and_then(Json::as_str),
         Some(format!("nu {wrong} required, found {found}").as_str())
     );
+    let older = format!("{major}.{}.0", minor.saturating_sub(1));
+    let ran = style_with_lock(&nu, "style-newer", &older);
+    assert!(ran.get("error").is_none(), "{ran}");
+    assert!(!findings(&ran).is_empty(), "{ran}");
+}
+
+const SMALL_LIB: &str = "//! Fixture.\n\n/// First.\npub fn first(v: &[i32]) -> i32 {\n    v.first().copied().unwrap_or(0)\n}\n\n/// Gone.\npub fn gone() {}\n";
+
+const SMALL_EDIT: &str =
+    "//! Fixture.\n\n/// First.\npub fn first(v: &[i32]) -> i32 {\n    *v.first().unwrap()\n}\n";
+
+/// A small library, then a staged change with an added one-line file
+/// (`+1`), an edited line (`-5 +5`) and a pure deletion (`+6,0`).
+fn hunk_repo(root: &Path) -> PathBuf {
+    let repo = root.join("repo");
+    fs::create_dir_all(repo.join("src/bin")).expect("mkdir");
+    let manifest = "[package]\nname = \"small\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
+    fs::write(repo.join("Cargo.toml"), manifest).expect("Cargo.toml");
+    fs::write(repo.join(".gitignore"), "target\nCargo.lock\n").expect("gitignore");
+    fs::write(repo.join("src/lib.rs"), SMALL_LIB).expect("lib.rs");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "base"]);
+    git(&repo, &["branch", "base"]);
+    fs::write(repo.join("src/lib.rs"), SMALL_EDIT).expect("lib.rs");
+    fs::write(repo.join("src/bin/tool.rs"), "fn main() {}\n").expect("tool.rs");
+    git(&repo, &["add", "."]);
+    repo
+}
+
+#[test]
+fn style_reads_count_less_and_deletion_hunks() {
+    let Some(nu) = nu_or_skip() else { return };
+    let root = temp("style-hunks");
+    let repo = hunk_repo(&root);
+    let script = skills_tree(&root);
+    let target = root.join("target");
+    let want = vec![
+        ("src/bin/tool.rs".to_string(), 1),
+        ("src/lib.rs".to_string(), 5),
+    ];
+    let args = ["style", "--base", "base", "--path", "."];
+    let doc = json(&run(&nu, &script, &repo, &args, &target));
+    assert_eq!(findings(&doc), want, "{doc}");
+    git(&repo, &["commit", "-qm", "change"]);
+    let committed = [&args[..], &["--committed-only"]].concat();
+    let doc = json(&run(&nu, &script, &repo, &committed, &target));
+    assert_eq!(findings(&doc), want, "{doc}");
+}
+
+#[test]
+fn no_subcommand_reports_its_own_invocation() {
+    let Some(nu) = nu_or_skip() else { return };
+    let root = temp("no-command");
+    let script = skills_tree(&root);
+    let doc = json(&run(&nu, &script, &root, &[], &root.join("target")));
+    assert_eq!(ok(&doc), Some(false), "{doc}");
+    assert_eq!(
+        at(&doc, &["command"]).as_str(),
+        Some("nu rust-tops-review.nu")
+    );
+    let error = at(&doc, &["error"]).as_str().unwrap_or("");
+    for name in ["files", "diff", "style", "answers"] {
+        assert!(error.contains(name), "{name}: {error}");
+    }
 }
 
 // --- `answers` ----------------------------------------------------------------
@@ -516,11 +594,11 @@ fn answers_reads_the_lock_beside_the_file_not_the_working_directory() {
     .expect("cwd lock");
     fs::write(
         root.join("sub/rust-tops.lock"),
-        "[tools]\nnushell = \"0.1.0\"\n",
+        "[tools]\nnushell = \"9.0.0\"\n",
     )
     .expect("file lock");
     let refused = answers_from(&nu, &script, &root, "sub/answers.toml");
     assert_eq!(ok(&refused), Some(false), "{refused}");
     let error = at(&refused, &["error"]).as_str().unwrap_or("");
-    assert!(error.starts_with("nu 0.1.0 required"), "{error}");
+    assert!(error.starts_with("nu 9.0.0 required"), "{error}");
 }
