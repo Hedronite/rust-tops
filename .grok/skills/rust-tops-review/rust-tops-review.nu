@@ -129,8 +129,21 @@ def fail [command: string, error: string] {
   {ok: false, command: $command, error: ($error | str trim | str substring 0..<400)} | to json
 }
 
-def minor [v: string] {
-  $v | split row "." | first 2 | str join "."
+# [major minor patch] of a version string, or null.
+def semver [v: string] {
+  let m = ($v | parse --regex '^(?<a>\d+)\.(?<b>\d+)(?:\.(?<c>\d+))?')
+  if ($m | is-empty) { return null }
+  let p = ($m | first)
+  [($p.a | into int) ($p.b | into int) (if ($p.c | is-empty) { 0 } else { $p.c | into int })]
+}
+
+# The same major, and not older than the lock asks.
+def nu-ok [required: string, found: string] {
+  let r = (semver $required)
+  let f = (semver $found)
+  if $r == null or $f == null { return false }
+  if $f.0 != $r.0 { return false }
+  $f.1 > $r.1 or ($f.1 == $r.1 and $f.2 >= $r.2)
 }
 
 def find-lock [start: string] {
@@ -144,13 +157,13 @@ def find-lock [start: string] {
   }
 }
 
-# The error text when this nu is not the pinned minor, else null.
+# The error text when this nu cannot stand in for the pinned one, else null.
 def nu-mismatch [start: string] {
   let lock = (find-lock $start)
   let doc = if $lock == null { {} } else { try { open --raw $lock | from toml } catch { {} } }
   let required = ($doc | get -o tools.nushell | default $DEFAULT_NU)
   let found = (version | get version)
-  if (minor $required) != (minor $found) { $"nu ($required) required, found ($found)" } else { null }
+  if (nu-ok $required $found) { null } else { $"nu ($required) required, found ($found)" }
 }
 
 def style-dir [] {
@@ -167,14 +180,14 @@ def changed-ranges [diff: string] {
   mut rows = []
   for l in ($diff | lines) {
     if ($l | str starts-with "+++ ") {
-      let p = ($l | str substring 4..)
+      let p = ($l | str substring 4.. | str trim --right --char "\t")
       $cur = if $p == "/dev/null" { "" } else if ($p | str starts-with "b/") { $p | str substring 2.. } else { $p }
     } else if $cur != "" and ($l | str starts-with "@@ ") {
       let m = ($l | parse --regex '^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,(?<count>\d+))? @@')
       if not ($m | is-empty) {
         let h = ($m | first)
         let start = ($h.start | into int)
-        let count = if $h.count == "" { 1 } else { $h.count | into int }
+        let count = if ($h.count | is-empty) { 1 } else { $h.count | into int }
         if $count > 0 {
           $rows = ($rows | append {file: $cur, start: $start, end: ($start + $count - 1)})
         }
@@ -275,5 +288,5 @@ def "main answers" [file: string] {
 }
 
 def main [] {
-  {ok: false, command: "git diff", error: "pass files or diff", exit: 2} | to json
+  {ok: false, command: "nu rust-tops-review.nu", error: "pass files, diff, style or answers", exit: 2} | to json
 }

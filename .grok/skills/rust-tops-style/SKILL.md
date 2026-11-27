@@ -5,13 +5,26 @@ description: Check Rust style with clippy and Nushell probes, then decide only t
 
 # rust-tops-style
 
-Nushell (`nu`) is required, at the minor `rust-tops.lock` names under `[tools] nushell` (default 0.108.0). Run the script. Do not re-derive its findings by reading code.
+Nushell (`nu`) is required: the version `rust-tops.lock` names under `[tools] nushell` (default 0.108.0), or a newer one of the same major. Run the script. Do not re-derive its findings by reading code.
+
+The script runs `cargo clippy`, which builds the crate. Run it on the machine where this project's cargo builds belong, not on one that only edits or controls.
 
 ```bash
-nu rust-tops-style.nu check [--path .] [--base <ref>]
+nu rust-tops-style.nu check --base <ref> [--path .] [--committed-only]   # writer
+nu rust-tops-style.nu check [--audit] [--path .]                         # audit
 ```
 
-`--path` is a crate or workspace directory. Findings outside it are dropped. `--base <ref>` keeps only findings on lines changed since `<ref>`.
+`--path` is a crate or workspace directory. Findings outside it are dropped.
+
+**Writer mode** (`--base <ref>`) is for a draft:
+
+- It compares the working tree with `<ref>` itself: staged, unstaged and untracked `.rs` lines count. Use `--base HEAD` for uncommitted work. `--committed-only` takes `<ref>...HEAD` instead; run it on a clean tree.
+- Only findings on changed lines are kept, and `ok` speaks for those alone.
+- Clippy restriction lints (`unwrap_used`, `indexing_slicing` and the like) run only if the crate turns them on: its `[lints]` tables, its source, or `gates.lint.clippy_deny` in `rust-tops.yaml`.
+- `PANIC-1` and `PANIC-2` are reported for library and binary code only, not for `tests/`, `*_test.rs` or `#[cfg(test)]` code.
+- `data.judgment` holds the rules the changed non-test lines give a reason to ask. A tests-only change gets none.
+
+**Audit mode** (no `--base`, or `--audit`, which ignores `--base`) checks the whole tree with every catalog lint and every judgment rule.
 
 MIT. Rules distilled from BeautifulRust v1.5.0 (40db61c6), rewritten. Copyright (c) 2026 Morgan Linton. See LICENSES/BeautifulRust-MIT.txt.
 
@@ -22,14 +35,14 @@ One JSON object: `ok`, `command` (the exact argv) and either `data` or `error`.
 - `command`: the exact argv of each external command run, in order, joined by ` && `, with paths relative to `--path`; a command that runs none gives the script's own invocation.
 - `data.findings`: `{rule, kind, file, line, col, message, fix}`, sorted by file, line, column, rule. `rule` is an ID in `rules.toml`, beside this file. `fix` is the catalog's fix for that rule.
 - `data.judgment`: the rules no tool can decide, as `{id, rule}`.
-- `ok` is true only when the script ran and found nothing. A failed build is `ok: false` with an `error`. A wrong Nushell minor is `ok: false` with `nu <lock> required, found <version>`.
+- `ok` is true only when the script ran and found nothing. A failed build is `ok: false` with an `error`. An older or other-major Nushell is `ok: false` with `nu <lock> required, found <version>`.
 - Same tree, same bytes. The script prints no verdict.
 
 ## What to do
 
 1. Run `check`. Fix each finding the way its `fix` says, then run it again.
 2. Fix at the cause. Do not add `#[allow]` or `#[expect]` to quiet a finding unless the reason names the rule.
-3. Answer each `data.judgment` rule yourself, against the code you changed. These are the IDs:
+3. Answer each `data.judgment` rule yourself, against the code you changed. These are all the IDs:
 
 - `API-4`: A function must not take ownership and then clone, or borrow and then clone to get ownership.
 - `API-5`: impl Into parameters earn their cost only in library entry points that are called often.
