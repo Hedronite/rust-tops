@@ -1,0 +1,67 @@
+[package]
+name = "poire-rust"
+version = "0.2.0"
+edition = "2024"
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+description = "Rust-POIRE 0.2 checked exemplars: healthy forms and lint-proven counter-examples"
+publish = false
+
+[dependencies]
+hmac = "0.13"
+sha2 = "0.11"
+tokio = { version = "1", default-features = false, features = ["io-util", "macros", "rt", "sync"] }
+zeroize = "1"
+
+[dev-dependencies]
+proptest = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+# Library profile of tops-strict, as in examples/parser-codec, plus two
+# lints the counter-examples prove: manual_let_else and format_push_string.
+all = { level = "warn", priority = -1 }
+needless_pass_by_value = "warn"
+implicit_clone = "warn"
+missing_errors_doc = "warn"
+unwrap_used = "warn"
+expect_used = "deny"
+panic_in_result_fn = "warn"
+indexing_slicing = "warn"
+let_underscore_must_use = "warn"
+needless_collect = "warn"
+panic = "warn"
+missing_panics_doc = "warn"
+missing_assert_message = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+fn_params_excessive_bools = "warn"
+struct_excessive_bools = "warn"
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+rc_buffer = "warn"
+exhaustive_enums = "warn"
+string_add = "warn"
+wildcard_imports = "warn"
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+manual_let_else = "warn"
+format_push_string = "warn"
+too_many_lines = "deny"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+module_inception = "allow"
+enum_glob_use = "allow"
