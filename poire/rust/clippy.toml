@@ -1,0 +1,11 @@
+# Rust-TOPS drop-in. Place at crate root as clippy.toml.
+# allow-unwrap-in-tests is live: the strict table warns on unwrap_used.
+# allow-dbg-in-tests is live: the strict table warns on dbg_macro.
+# expect_used and print_stdout are [lib] lints, so they are not keys here.
+# cognitive_complexity and type_complexity are off, so their thresholds are not keys.
+# `cargo tops init` writes avoid-breaking-exported-api = false for a binary class.
+too-many-lines-threshold = 40
+too-many-arguments-threshold = 6
+max-fn-params-bools = 0
+allow-unwrap-in-tests = true
+allow-dbg-in-tests = true
